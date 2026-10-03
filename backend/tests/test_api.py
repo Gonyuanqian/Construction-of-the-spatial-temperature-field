@@ -97,17 +97,25 @@ def test_dist_不存在时应用照样起得来(tmp_path, monkeypatch):
     """
     monkeypatch.setattr(paths, "DIST", tmp_path / "并不存在的 dist")
     app = create_app()                       # 不抛异常
-    assert TestClient(app).get("/api/health").json() == {"status": "ok"}
+    c = TestClient(app)
+    assert c.get("/api/health").json() == {"status": "ok"}
+    # 断言根路径 **404** 才算真的验了守卫：Task 5 之后真实的 frontend/dist 已经存在，
+    # 若 monkeypatch 没生效，挂上去的就是真 dist，`/` 会返回 200 而不是 404 ——
+    # 只断言「没抛异常」的话，这一条从此就分不出守卫到底有没有起作用。
+    assert c.get("/").status_code == 404
 
 
 def test_dist_存在时根路径返回_index_html(tmp_path, monkeypatch):
     """生产形态：一个进程同时供 API 与前端（spec §二）。"""
     dist = tmp_path / "dist"
     dist.mkdir()
-    (dist / "index.html").write_text("<h1>温度场</h1>", encoding="utf-8")
+    # 哨兵串必须**唯一**：真实 dist/index.html 的标题是「人参棚空间温度场重建系统」，
+    # 也含「温度场」三个字。Task 5 一构建出 dist，原来拿「温度场」当断言就再也分不清
+    # 「monkeypatch 生效了」与「serve 的是真 dist」—— 这条测试会当场变成空过。
+    (dist / "index.html").write_text("<h1>临时 dist 哨兵 9f3c1a</h1>", encoding="utf-8")
     monkeypatch.setattr(paths, "DIST", dist)
     app = create_app()
     c = TestClient(app)
-    assert "温度场" in c.get("/").text
+    assert "临时 dist 哨兵 9f3c1a" in c.get("/").text
     # 挂载点在最后注册，不许把 /api 吃掉
     assert c.get("/api/health").json() == {"status": "ok"}
