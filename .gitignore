@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Office 锁文件（WPS / Excel 打开时生成）
+~$*
+
+# 标定的敏感性曲面（可由 calibrate.py 再生；bundle_*.json 要提交）
+backend/configs/sensitivity_*.csv
+
+# 上传的数据集（用户自带，不进仓库）
+backend/configs/uploads/
+
+# Node
+node_modules/
+frontend/dist/
+*.local
+
+# 编辑器
+.idea/
+.vscode/
+*.swp
