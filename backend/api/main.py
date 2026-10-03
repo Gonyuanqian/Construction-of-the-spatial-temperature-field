@@ -1,0 +1,58 @@
+"""FastAPI 应用。
+
+启动（开发）：
+    cd backend && python -m uvicorn api.main:app --port 8503 --reload
+端口 8503 写在 `paths.API_PORT`（单一真源），不靠命令行参数 —— 免得谁直接敲 uvicorn 时落回 8000，
+前端却还以为它在 8503。
+"""
+from __future__ import annotations
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from . import paths
+from .routes import dataset as dataset_routes
+
+VITE_DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(title="人参棚空间温度场重建系统 API", version="0.1.0")
+    # 开发时前端在 5173，与 API 不同源。生产形态是同源（下面的静态托管），
+    # 那份 CORS 配置不起作用也不碍事。
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=VITE_DEV_ORIGINS,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.include_router(dataset_routes.router, prefix="/api")
+
+    @app.get("/api/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    # 生产形态：一个进程同时供 API 与前端构建产物（spec §二）。
+    # 必须带守卫 —— StaticFiles 在目录不存在时构造就抛错，那会让
+    # 「没跑过 npm run build 的人连 API 都起不来」。
+    # 挂在最后：路由按注册顺序匹配，挂载点 / 会吃掉所有剩下的路径。
+    # 走 paths.DIST 而不是 `from .paths import DIST`：后者在 import 时就把值绑死了，
+    # 测试里 monkeypatch 不到 —— 那两条守卫测试会静默地测到真的 dist 上去。
+    if paths.DIST.is_dir():
+        app.mount("/", StaticFiles(directory=str(paths.DIST), html=True),
+                  name="static")
+
+    return app
+
+
+app = create_app()
+
+
+def main() -> None:
+    import uvicorn
+    uvicorn.run("api.main:app", host="127.0.0.1", port=paths.API_PORT, reload=False)
+
+
+if __name__ == "__main__":
+    main()
