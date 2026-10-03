@@ -14,9 +14,14 @@
 ⚠️ 内容不同就**拒绝**，一个字节都不写。内容变了必须重标，不许迁移 ——
     那正是 `load_for` 返回 None 本来想拦住的事。
 
-**删除规则**：只清理**同一个 `configs/` 目录内**的旧包。
-跨项目迁移（`--original` 指向另一个项目）时旧包原样保留 ——
-那个项目必须零改动，而那些文件是别人几十分钟的标定成果，删了不可逆。
+⚠️ 包还得**确实属于那个旧数据集**（`dataset_sig` == 旧数据集现在的指纹）。
+    包在、新旧数据集也一样，但旧数据集在标定之后被重新导出过 ——
+    这种情况下那套参数早就失效了，同样必须拒绝。
+
+**删除规则**：只清理**新数据集所属项目目录里**的旧包。
+    判据是「数据集在哪」，**不是**调用方给的 `--bundle` 说在哪 ——
+    后者可以被误指到旧项目的 configs/ 上，那一刀就落在别人几十分钟的
+    标定成果上，而且不可逆。
 """
 from __future__ import annotations
 
@@ -37,6 +42,15 @@ def sha256_file(path: pathlib.Path) -> str:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def is_within(child: pathlib.Path, parent: pathlib.Path) -> bool:
+    """child 是否在 parent 这棵树里面。"""
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -66,10 +80,26 @@ def main(argv: list[str] | None = None) -> int:
         print("  内容变了就不是「搬了个家」，必须重新标定。", file=sys.stderr)
         return 2
 
-    # 2) 指纹必须在数据集**已经落到最终位置之后**算 —— mtime 是指纹的一部分
+    raw = json.loads(old_bundle.read_text(encoding="utf-8"))
+
+    # 2) 包必须**确实属于这个旧数据集**。
+    #
+    # 上一步只证明了「新旧数据集内容相同」，没说包跟旧数据集对得上。
+    # 旧数据集若在标定之后被重新导出过（哪怕只是多了一行），它的指纹就变了，
+    # 包里那套参数对当前数据已经失效 —— 而 `CalibrationBundle.matches()` 不会拦，
+    # 因为指纹是**本脚本自己新算的**，一路放行、不报任何错。
+    old_sig = dataset_signature(old_ds)
+    if raw.get("dataset_sig") != old_sig:
+        print("拒绝迁移：这份标定包不是这个数据集标出来的。", file=sys.stderr)
+        print(f"  包里的 dataset_sig：{raw.get('dataset_sig')}", file=sys.stderr)
+        print(f"  旧数据集现在的指纹：{old_sig}", file=sys.stderr)
+        print("  旧数据集在标定之后变过，参数对它已经失效，必须重新标定。",
+              file=sys.stderr)
+        return 2
+
+    # 3) 指纹必须在数据集**已经落到最终位置之后**算 —— mtime 是指纹的一部分
     new_sig = dataset_signature(new_ds)
 
-    raw = json.loads(old_bundle.read_text(encoding="utf-8"))
     groups_sig = raw["groups_sig"]
     expected = target.parent / f"bundle_{new_sig}_{groups_sig}.json"
 
@@ -91,19 +121,25 @@ def main(argv: list[str] | None = None) -> int:
     expected.parent.mkdir(parents=True, exist_ok=True)
     expected.write_text(json.dumps(migrated, ensure_ascii=False, indent=2) + "\n",
                         encoding="utf-8")
-    # 3) 清理旧包 —— **只在同一个 configs/ 目录里才清理**。
+
+    # 4) 清理旧包 —— 两道条件都满足才删。
     #
-    # 跨项目迁移时旧包住在**另一个项目**里（P1 的实际情形：
-    # --original ../空间温度场的构建/configs/…）。那个项目必须零改动，
-    # 删掉它就等于抹掉别人几十分钟的标定成果，而且不可逆。
-    # 同一目录内的重迁移（数据集在项目内挪了位置）才该清理 ——
-    # 否则 configs/ 里留一个永远匹配不上的死包，误导后来的人。
-    if old_bundle.parent == expected.parent and old_bundle != expected \
-            and old_bundle.exists():
+    # (a) 同一个目录：新旧包写在同一个 configs/ 里，才谈得上「清掉旧的」。
+    # (b) 同一个项目：那个目录得在**新数据集所属的项目**里。
+    #
+    # 只看 (a) 是不够的，而且是危险的：`expected.parent` 完全来自调用方给的
+    # `--bundle`，把它误指到旧项目的 configs/（它的语义是「新包写到哪」，
+    # 而重迁移时最顺手的写法正是「写回原处」），(a) 就成立了，
+    # unlink 直接落在旧项目那份不可逆的标定成果上。
+    # 所以 (b) 的判据取**数据集的位置**，那是调用方没法用 --bundle 绕开的。
+    same_dir = old_bundle.parent.resolve() == expected.parent.resolve()
+    same_project = is_within(old_bundle.parent, new_ds.parent)
+
+    if same_dir and same_project and old_bundle != expected and old_bundle.exists():
         old_bundle.unlink()
         print(f"  已删除旧包 {old_bundle}")
-    elif old_bundle.exists() and old_bundle.parent != expected.parent:
-        print(f"  旧包在另一个目录，原样保留：{old_bundle}")
+    elif old_bundle.exists():
+        print(f"  旧包原样保留（不在新数据集所属的项目目录内）：{old_bundle}")
     print(f"\n迁移完成：{expected}")
     return 0
 
