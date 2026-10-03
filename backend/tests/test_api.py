@@ -5,7 +5,9 @@
 """
 from __future__ import annotations
 
+import os
 import pathlib
+import subprocess
 import sys
 
 import pytest
@@ -21,6 +23,22 @@ from api import paths                      # noqa: E402
 @pytest.fixture(scope="module")
 def client() -> TestClient:
     return TestClient(create_app())
+
+
+def test_不靠_pytest_的_pythonpath_也能_import_api():
+    """README 的首选启动命令 `python -m uvicorn api.main:app --port 8503` **不走 pytest**，
+    所以 `pyproject.toml` 里的 `pythonpath = ["src"]` 对它不生效。
+
+    没有这条测试，那条命令会在用户机器上以 `ModuleNotFoundError: No module named 'tfield'`
+    收场，而**所有测试依然全绿** —— 因为 pytest 恰好替我们把 `src/` 放上了 sys.path。
+    测试全绿、README 的命令却跑不起来，正是最该被钉住的那种差距。
+    """
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    r = subprocess.run([sys.executable, "-c", "import api.main; print('imported')"],
+                       cwd=str(BACKEND), capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "imported" in r.stdout
 
 
 def test_health(client):
