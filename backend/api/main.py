@@ -11,6 +11,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from tfield.calibration import TOOL_VERSION
+
 from . import paths
 from .routes import dataset as dataset_routes
 
@@ -18,7 +20,11 @@ VITE_DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="人参棚空间温度场重建系统 API", version="0.1.0")
+    # version 取自 `tfield.calibration.TOOL_VERSION`，不写字面量：
+    # 标定包的 `tool_version` 用的是同一个数，两处各写一份就会漂 ——
+    # 漂开之后 OpenAPI 文档说一个版本、盘上的标定包说另一个，
+    # 验收对盘时不知道该信谁。这里与 /api/health 也共用同一个来源。
+    app = FastAPI(title="人参棚空间温度场重建系统 API", version=TOOL_VERSION)
     # 开发时前端在 5173，与 API 不同源。生产形态是同源（下面的静态托管），
     # 那份 CORS 配置不起作用也不碍事。
     app.add_middleware(
@@ -31,7 +37,10 @@ def create_app() -> FastAPI:
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
-        return {"status": "ok"}
+        # spec §5.1：健康接口的契约是「存活 **+ 后端库版本**」。
+        # 只回 ok 会让前端无从回答「跑着的后端是哪个版本」——
+        # 而多版本并存（Streamlit 版还在一台机器上）时这正是第一个要看的数。
+        return {"status": "ok", "version": TOOL_VERSION}
 
     # 生产形态：一个进程同时供 API 与前端构建产物（spec §二）。
     # 必须带守卫 —— StaticFiles 在目录不存在时构造就抛错，那会让

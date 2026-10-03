@@ -17,7 +17,11 @@ BACKEND = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
 from api.main import create_app            # noqa: E402
+from api import main as api_main           # noqa: E402
 from api import paths                      # noqa: E402
+
+# 放在 api.* 之后 import：`api/__init__.py` 负责把 backend/src 放上 sys.path。
+from tfield.calibration import TOOL_VERSION  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -45,6 +49,36 @@ def test_health(client):
     r = client.get("/api/health")
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
+
+
+def test_health_报出后端库版本(client):
+    """spec §5.1：`/api/health` 的契约是「存活 **+ 后端库版本**」。
+
+    只回 `{"status": "ok"}` 是漏了一半 —— 界面上要靠它回答
+    「跑着的后端到底是哪个版本」，验收时也要靠它对上盘。
+
+    ⚠️ 断言刻意写成 `== TOOL_VERSION`，**不写** `== "0.1.0"`：
+    写死字面量的话，实现里也写死同一个字面量时，这条测试照样通过 ——
+    它就成了「两个巧合相等」，而不是「版本取自唯一真源」。
+    这正是 TDD 在这里的价值：实现之前跑一遍，它是红的。
+    """
+    assert client.get("/api/health").json()["version"] == TOOL_VERSION
+
+
+def test_FastAPI_的版本号与健康接口同源(monkeypatch):
+    """`create_app(version=...)` 里的那个字面量也得取自 TOOL_VERSION。
+
+    否则会出现三个数各说各话：健康接口一个、OpenAPI 文档一个、
+    标定包的 tool_version 又是一个 —— 对盘的时候就不知道该信谁。
+
+    ⚠️ 断言不能是 `create_app().version == TOOL_VERSION`：只要实现里
+    写死 `"0.1.0"`，而 TOOL_VERSION 现在**正好**也是 `"0.1.0"`，
+    这条就在实现之前通过了 —— 两个巧合相等，不是同源。
+    把 TOOL_VERSION 换成一个哨兵值再建 app，才真的问出了
+    「这个数是从模块属性读的，还是写死的」。
+    """
+    monkeypatch.setattr(api_main, "TOOL_VERSION", "9.9.9-哨兵")
+    assert create_app().version == "9.9.9-哨兵"
 
 
 def test_数据集接口报得出身份(client):
@@ -116,7 +150,7 @@ def test_dist_不存在时应用照样起得来(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "DIST", tmp_path / "并不存在的 dist")
     app = create_app()                       # 不抛异常
     c = TestClient(app)
-    assert c.get("/api/health").json() == {"status": "ok"}
+    assert c.get("/api/health").json()["status"] == "ok"
     # 断言根路径 **404** 才算真的验了守卫：Task 5 之后真实的 frontend/dist 已经存在，
     # 若 monkeypatch 没生效，挂上去的就是真 dist，`/` 会返回 200 而不是 404 ——
     # 只断言「没抛异常」的话，这一条从此就分不出守卫到底有没有起作用。
@@ -136,4 +170,9 @@ def test_dist_存在时根路径返回_index_html(tmp_path, monkeypatch):
     c = TestClient(app)
     assert "临时 dist 哨兵 9f3c1a" in c.get("/").text
     # 挂载点在最后注册，不许把 /api 吃掉
-    assert c.get("/api/health").json() == {"status": "ok"}
+    #
+    # 只断言 status，不再断言整个 body 相等：静态托管的守卫跟「健康接口
+    # 有几个字段」本来无关，全字典相等会把那两件事耦在一起 ——
+    # health 每加一个字段（比如 spec §5.1 要的 version），两条守卫测试
+    # 都要跟着改，而它们真正要守的东西一个字都没变。
+    assert c.get("/api/health").json()["status"] == "ok"
