@@ -67,17 +67,20 @@ def get_calibration() -> dict[str, Any]:
             "note": CALIBRATION_NOTE,
         }
 
+    # 原始记录先留一份：「最差的那一折」必须从**原始数值**里挑（见 _worst_fold）。
+    # 一旦先过了 `_jsonable`，NaN 已成 None，再对它 float(...) 就是 TypeError → 500。
+    raw_metrics = bundle.metrics.to_dict(orient="records")
     metrics = [
         {k: (str(v) if k in ("fold", "region", "group", "tag") else _jsonable(v))
          for k, v in row.items()}
-        for row in bundle.metrics.to_dict(orient="records")
+        for row in raw_metrics
     ]
     per_point = [
         {k: (str(v) if k in ("shed", "position", "layer", "group") else _jsonable(v))
          for k, v in row.items()}
         for row in bundle.per_point.to_dict(orient="records")
     ]
-    worst = max(metrics, key=lambda r: float(r["mae"]))
+    worst = _worst_fold(raw_metrics)
     fold_kinds = sorted({str(r["fold_kind"]) for r in metrics})
 
     return {
@@ -100,13 +103,14 @@ def get_calibration() -> dict[str, Any]:
         "ab": {k: _finite(v) for k, v in bundle.ab.items()} if bundle.ab is not None else None,
         "fold_kind": fold_kinds[0] if len(fold_kinds) == 1 else None,
         "n_folds": len(metrics),
-        "worst_fold": {"fold": worst["fold"], "mae": _finite(worst["mae"])},
+        # worst 可能为 None：一折都没有有限 MAE 时，不硬报一折（见 _worst_fold）。
+        "worst_fold": worst,
         "ab_note": _AB_NOTE,
         "note": CALIBRATION_NOTE,
     }
 
 
-def _finite(v: float) -> float | None:
+def _finite(v: float | None) -> float | None:
     """把非有限浮点（NaN / ±Inf）翻成 None。
 
     与 `routes/dataset.py::_finite` **同一手法**（照抄，不另发明一种）：
@@ -116,9 +120,41 @@ def _finite(v: float) -> float | None:
 
     标定包的 `metrics` / `per_point` / `ab` 是从盘上包读进来的 pandas 数值，
     `float(cell)` 对 NaN 单元格**照样返回 NaN**，不挡就会 500。
+
+    ⚠️ 开头的 None 短路不是洁癖：这条路径上会把**已经置空过一次**的值再送进来
+    （例如 `_jsonable` 已翻过的 NaN），`float(None)` 会抛。加上它之后
+    `_finite` 对自己幂等，怎么重复过都不出错。
     """
+    if v is None:
+        return None
     f = float(v)
     return f if math.isfinite(f) else None
+
+
+def _worst_fold(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """MAE 最大的一折 —— 从**原始**记录里挑，一折都没有有限 MAE 时返回 None。
+
+    ⚠️ 不能拿已过 `_jsonable` 的那一份挑：那时 NaN 已是 None，`float(None)`
+    直接抛 TypeError → HTTP 500。也不能「全 NaN 时硬报第一折」——
+    把这些折都报成「最差」是句谎话，而这一页最怕的就是口径不清。
+    """
+    worst_row: dict[str, Any] | None = None
+    worst_mae: float | None = None
+    for row in rows:
+        v = row.get("mae")
+        if v is None:
+            continue
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(f):
+            continue
+        if worst_mae is None or f > worst_mae:
+            worst_mae, worst_row = f, row
+    if worst_row is None:
+        return None
+    return {"fold": str(worst_row["fold"]), "mae": _finite(worst_row["mae"])}
 
 
 def _jsonable(v):

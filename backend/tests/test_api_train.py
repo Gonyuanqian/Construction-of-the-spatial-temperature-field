@@ -152,6 +152,70 @@ def test_最差的那一折由后端指出来(client):
     assert b["worst_fold"]["mae"] == pytest.approx(worst["mae"], abs=1e-12)
 
 
+def test_某一折_mae_是_NaN_时判最差不_500_而是报_null(monkeypatch):
+    """「最差的那一折」必须从**原始**数值里挑，不能从已置空的那一份里挑。
+
+    ⚠️ 这一条盯的是一个真会 500 的写法：`metrics` 一旦先过 `_jsonable`，
+    NaN 单元格就变成 None，再对它 `float(...)` 直接抛
+    `TypeError: float() argument must be ... not 'NoneType'` → HTTP 500。
+    这不是假想输入 —— 同一个包里 `search.trials` 就成片是 NaN。
+    """
+    import json
+    from dataclasses import replace as dc_replace
+
+    from api.routes import calibration as cal_routes
+    from tfield.calibration import load_for
+    from tfield.data.loader import load_dataset, test_data_path
+
+    ds = load_dataset(test_data_path())
+    bundle = load_for(ds, C.DEFAULT_FEATURE_GROUPS, root=BACKEND / "configs")
+    assert bundle is not None
+
+    # 改的是**内存里的副本**，盘上的包一个字节都不动
+    metrics = bundle.metrics.copy(deep=True)
+    bad_fold = str(metrics.loc[0, "fold"])
+    metrics.loc[0, "mae"] = float("nan")
+    broken = dc_replace(bundle, metrics=metrics)
+
+    monkeypatch.setattr(cal_routes, "load_for", lambda *a, **k: broken)
+    c = TestClient(create_app())
+    r = c.get("/api/calibration")
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    by_fold = {m["fold"]: m for m in body["metrics"]}
+    assert by_fold[bad_fold]["mae"] is None           # 非有限值翻成 null
+    assert body["worst_fold"] is not None
+    assert body["worst_fold"]["fold"] != bad_fold     # 不把 NaN 那折报成最差
+    json.dumps(body, allow_nan=False)
+
+
+def test_全折_mae_都是_NaN_时_worst_fold_为_None(monkeypatch):
+    """一折都没有有限 MAE 时不许硬报一折 —— 把所有折都报成「最差」里的第一折，
+    在这一页（最容易误读口径的一页）是句谎话。契约扩展：`worst_fold` 现在可为 null。"""
+    from dataclasses import replace as dc_replace
+
+    from api.routes import calibration as cal_routes
+    from tfield.calibration import load_for
+    from tfield.data.loader import load_dataset, test_data_path
+
+    ds = load_dataset(test_data_path())
+    bundle = load_for(ds, C.DEFAULT_FEATURE_GROUPS, root=BACKEND / "configs")
+    assert bundle is not None
+    metrics = bundle.metrics.copy(deep=True)
+    metrics["mae"] = float("nan")
+    broken = dc_replace(bundle, metrics=metrics)
+
+    monkeypatch.setattr(cal_routes, "load_for", lambda *a, **k: broken)
+    c = TestClient(create_app())
+    r = c.get("/api/calibration")
+    assert r.status_code == 200, r.text
+    b = r.json()
+    assert b["worst_fold"] is None
+    assert all(m["mae"] is None for m in b["metrics"])
+    assert len(b["metrics"]) == 8
+
+
 def test_ab_两组都报_且_gap_是负的这件事写在说明里(client):
     b = client.get("/api/calibration").json()
     ab = b["ab"]
