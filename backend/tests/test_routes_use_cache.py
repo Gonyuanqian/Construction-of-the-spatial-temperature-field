@@ -23,11 +23,23 @@
 - `from .. import deps` 然后 `deps.get_dataset(...)`（模块导入 + 属性取用）；
 - `from ..deps import get_dataset`（只取那一个名字）。
 
-**已知且有意接受的残余（边界，不是漏）**：用字符串字面量的
-`getattr(deps, "load_dataset")(p)` 或 `getattr(deps, "DatasetCache")().get(p)`
-**仍能逃过本守卫** —— 字符串落在 `Constant` 节点上，AST 看不见它的语义。
-这是**裁定接受的残余**：现实威胁低（要刻意写 `getattr`），而封它要么写得极绕、
-要么误伤正常代码。**别把这条守卫当成滴水不漏。**
+**已知且有意接受的残余（边界，不是漏）** —— 三条**都会**逃过本守卫，
+都是**裁定接受的残余**：
+
+1. **字符串字面量 getattr**：`getattr(deps, "load_dataset")(p)` 或
+   `getattr(deps, "DatasetCache")().get(p)` —— 字符串落在 `Constant` 节点上，
+   AST 看不见它的语义。
+2. **完整点号路径**：`import api.deps` 后写 `api.deps._CACHE`（或 `import api`
+   后 `api.deps._CACHE`）—— 属性链的 `.value` 是**嵌套 Attribute** 而非 Name，
+   属性取用检查（要求 `node.value` 是 `ast.Name`）匹配不到。
+3. **把 `deps` 当参数传进别的函数**，在函数里访问 `x._CACHE` —— 静态追不到。
+
+**这道守卫的性质**：它是一道**黑名单式的语法守卫**，**原理上不可能穷尽** ——
+补了点号路径还有 `globals()["_CACHE"]`，补了它还有
+`getattr(importlib.import_module("api.deps"), "_CACHE")`。它抓的是**人真会犯的错**
+（写 `load_dataset`、自建 `DatasetCache`、顶层取 `_CACHE`），**不是刻意构造的绕过**。
+**别把这条守卫当成滴水不漏。** 谁要挡刻意绕过，得**换抓手**：去**读盘那一层**计数
+（`pd.read_excel` 之类 choke point）—— 任何绕过最终都得读那个 xlsx —— 那是另一件事。
 
 **为什么用 AST 不用裸文本**：裸文本会把注释与文档字符串误伤 ——
 `dataset.py` 的 `_load()` docstring 里正写着 `DatasetCache.key_of` 这个词。
@@ -125,7 +137,11 @@ def _offences_in(tree: ast.AST) -> list[str]:
             and node.value.id in deps_aliases
             and node.attr not in ALLOWED_FROM_DEPS
         ):
-            out.append(f"{node.lineno}: deps.{node.attr}（只许 deps.get_dataset）")
+            # 消息用**源码里实际写的那个别名**（可能是 `d` 而不是 `deps`），
+            # 否则 `import api.deps as d` + `d._CACHE` 会报成 `deps._CACHE`，
+            # 跟源码对不上，把诊断带偏。
+            alias = node.value.id
+            out.append(f"{node.lineno}: {alias}.{node.attr}（只许 {alias}.get_dataset）")
     return out
 
 
