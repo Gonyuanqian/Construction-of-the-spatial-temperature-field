@@ -241,6 +241,41 @@ describe('页③ 空间温度场的构建', () => {
     expect(w.text()).toContain('没有施加竖直软单调投影')
   })
 
+  it('该点无定义时不画曲线，也不谈曲线口径', async () => {
+    // `vCurve` 上的 `c.defined` 与 `curveNote` 上的同一个判断，都在**没有任何测试**
+    // 的情况下活着（评审者的破坏性探针：把 `c.defined` 去掉，15 条全绿）。
+    // 真断了会是这样：后端明说这一点无定义，页面上却照画一条线，而那句
+    // 「该点无定义…不画曲线」**无声消失** —— 看图的人于是以为那条线是真的。
+    // 这与 Review Focus 第 3 条（曲线被说成施加了投影）是同一类撒谎。
+    stub({ ...OK, '/api/field/curve': { ...CURVE, defined: false } })
+    const w = mountView()
+    await flushPromises()
+    charts(w)[0].vm.$emit('pick', { seriesIndex: 1, value: [1, 1] })
+    await flushPromises()
+    expect(charts(w).length).toBe(2)                    // 第三条（曲线）不该出现
+    expect(w.text()).toContain('该点无定义（拱外或在无测量带里），不画曲线。')
+    expect(w.text()).not.toContain('没有施加竖直软单调投影')   // 别去谈一条不存在的线
+  })
+
+  it('点中别棚的格子，ΔT 面板跟着换棚', async () => {
+    // `activeShed` 的注释写着「点中别棚的格子就跟着走」—— 没有这条测试，它就只是
+    // 一句注释。真断了会是这样：读数报的是 p2，ΔT 面板画的还是 p1，两块面板
+    // 各说各的，谁都不报错。与 Review Focus 第 1 条「两条路径漂了不报错」同源。
+    // 下标 6 是 p2 的热力场：每棚占连续 5 个系列（`SERIES_PER_SHED`），
+    // 块内偏移 1 才是热力场（偏移 0 是拱外遮罩），所以 p2 是 1*5+1。
+    // 发 5 也能走到 p2 —— `shedOfSeries` 只看块号 —— 但那模拟的是「点拱外遮罩」，
+    // 不是点热力场上的格子；这里要的是后者。
+    stub(OK)
+    const w = mountView()
+    await flushPromises()
+    charts(w)[0].vm.$emit('pick', { seriesIndex: 6, value: [1, 1] })
+    await flushPromises()
+    expect(w.text()).toContain('p2')                    // 读数认的是 p2
+    expect(
+      urls.some((u) => u.includes('/api/field/compare') && u.includes('shed=p2')),
+    ).toBe(true)                                        // ΔT 也真的按 p2 重取了
+  })
+
   it('换时刻会重新取场', async () => {
     // 名字只说这条测试真做的事：夹具对任何 t_index 都回同一个 time，
     // 「显示的时刻跟着变」在这里断言不了 —— 写进名字就是一句空话。
