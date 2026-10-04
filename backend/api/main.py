@@ -7,9 +7,15 @@
 """
 from __future__ import annotations
 
+import os
+from typing import Any
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException
+from starlette.responses import FileResponse, Response
+from starlette.types import Scope
 
 from tfield.calibration import TOOL_VERSION
 
@@ -20,6 +26,40 @@ from .routes import features as features_routes
 from .routes import field as field_routes
 
 VITE_DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+
+class SPAStaticFiles(StaticFiles):
+    """静态产物 + SPA history 回退。
+
+    **为什么需要它**：前端用 `createWebHistory()`，真实路径是 `/data` 与 `/train`。
+    开发形态（Vite 5173）自带回退，没问题；生产形态只起 8503 一个进程时，
+    `StaticFiles(html=True)` **只对「目录请求」**回 `index.html`，任何「不是真实
+    文件」的路径一律 404 —— 于是 F5 或直接粘 `/train` 地址看到的是 404 而不是系统。
+
+    **为什么用子类，不用 `@app.get("/{full_path:path}")` 全局 catch-all**：
+    catch-all 会把 `/assets/**` 一起吞掉 —— 真实产物反过来变成 404，或者回一张
+    index.html（MIME 全错，浏览器拒绝执行脚本，页面白屏）。子类只在**基类已经
+    判定 404 之后**才插手，产物文件走的是同一条 `file_response`，MIME 一个字节不变。
+
+    **为什么 `/api/` 要重新抛出**：回退做宽了，「接口名写错」（`/api/date`）会被
+    回一张 200 的 index.html，前端路由再把未知路径重定向回页① —— 报错信号彻底
+    消失，比一个诚实的 404 危险得多。
+    """
+
+    def __init__(self, *, directory: str, **kwargs: Any) -> None:
+        super().__init__(directory=directory, html=True, **kwargs)
+        # 回退目标在构造时算好：不用 `paths.DIST`，否则测试里 monkeypatch 不到，
+        # 而且请求线程里再拼路径纯属多余。
+        self._index = os.path.join(directory, "index.html")
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        try:
+            return await super().get_response(path, scope)
+        except HTTPException as exc:
+            if exc.status_code == 404 and not scope["path"].startswith("/api/"):
+                # 交给前端路由去分派（`/:rest(.*)*` 会落回页①）。
+                return FileResponse(self._index)
+            raise
 
 
 def create_app() -> FastAPI:
@@ -55,8 +95,7 @@ def create_app() -> FastAPI:
     # 走 paths.DIST 而不是 `from .paths import DIST`：后者在 import 时就把值绑死了，
     # 测试里 monkeypatch 不到 —— 那两条守卫测试会静默地测到真的 dist 上去。
     if paths.DIST.is_dir():
-        app.mount("/", StaticFiles(directory=str(paths.DIST), html=True),
-                  name="static")
+        app.mount("/", SPAStaticFiles(directory=str(paths.DIST)), name="static")
 
     return app
 
