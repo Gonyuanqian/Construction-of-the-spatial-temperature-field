@@ -36,6 +36,15 @@ onMounted(() => {
 
 const palette = readPalette()
 
+/**
+ * 右侧「时间 × 高度」热图画的是**哪一个棚**。
+ *
+ * 上格与下格遍历 ts.shed_mean / detrended_mean 的每一个棚（三棚合看），
+ * 右格只有一棚 —— 所以这个棚号必须同时出现在**图**（series 名）与**图注**里，
+ * 而两处只能有一个来源：写死两遍，改一处忘一处，图上与图注上就是两个棚。
+ */
+const HEAT_SHED = 'p1'
+
 const v1 = computed(() =>
   ds.data.value && arch.data.value
     ? buildSensorLayoutOption(ds.data.value, arch.data.value, palette)
@@ -43,7 +52,7 @@ const v1 = computed(() =>
 
 const v2 = computed(() =>
   ts.data.value && th.data.value && ds.data.value
-    ? buildDiurnalResidualOption(ts.data.value, th.data.value, 'p1', palette)
+    ? buildDiurnalResidualOption(ts.data.value, th.data.value, HEAT_SHED, palette)
     : null)
 
 // 任何一路挂了都要报出**是哪一路**（后端的 detail 原话），不许吞成一片空白。
@@ -55,6 +64,13 @@ const failure = computed(() =>
 <template>
   <section>
     <h2>数据导入与检查</h2>
+
+    <!-- 页名许诺的「导入」本轮没有入口，必须自己说出来 —— 与「被砍掉的五项检查」
+         是同一条道理：界面上不写，就等于假装它不存在。 -->
+    <p class="note">
+      本页读的是随系统交付的那份数据集，只读。换数据集要把新文件放到位、再重新标定
+      一次，界面上还没有入口，和「空间温度场的构建」一样排在后续计划里。
+    </p>
 
     <p v-if="failure" role="alert" class="alert">{{ failure }}</p>
 
@@ -137,7 +153,8 @@ const failure = computed(() =>
       <p v-else-if="ts.error.value || th.error.value || ds.error.value" class="note">时序没取到，见上方提示。</p>
       <p v-else class="note">正在取时序…</p>
       <p v-if="th.data.value" class="note">
-        右侧热图的来源：{{ th.data.value.source }}（{{ th.data.value.x_label }}）。
+        右侧热图只画 {{ HEAT_SHED }} 棚（上面两格是三座棚合看）：
+        {{ th.data.value.source }}（{{ th.data.value.x_label }}）。
       </p>
     </div>
   </section>

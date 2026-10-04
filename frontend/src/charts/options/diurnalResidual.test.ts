@@ -78,6 +78,14 @@ describe('V2 的 option', () => {
     expect(heat.data[4]).toEqual([0, 1, 38])       // 第二层的第一列
   })
 
+  it('右格的名字里带着棚号 —— 它只画一棚，另两格是三棚合看', () => {
+    // 串成一条游标的三格里，右格是唯一「只画一棚」的。不写棚号，
+    // 读者会把它当成与另两格同范围的图（最终评审 M1）。
+    const o = buildDiurnalResidualOption(TS, TH, 'p1', PALETTE)
+    const heat = (o.series as Array<Record<string, any>>).find((x) => x.type === 'heatmap')!
+    expect(heat.name).toContain('p1')
+  })
+
   it('换棚就换那一棚的数据，热图的行标签跟着变', () => {
     const other: LayerTimeHeightPayload = {
       ...TH,

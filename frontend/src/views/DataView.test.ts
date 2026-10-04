@@ -159,6 +159,30 @@ describe('页① 数据导入与检查', () => {
     expect(w.text()).toContain('数据集不存在')
   })
 
+  it('页① 说清了「换数据集」这块还没有入口', async () => {
+    // 页名与导航标签是「数据导入与检查」，spec §2.1 的第 1 块也确实是
+    // 「数据集导入 —— 换数据集」。但本轮只交付了**只读的**身份卡，没有换数据集的
+    // 入口（那要新接口、缓存失效、以及指纹一变 ②③④ 全锁的一整套，不在本轮）。
+    // 名字许诺了、界面上没有、还不说 —— 这正是「被砍掉的五项检查」那条
+    // Review Focus 的同一形态，所以按同样的办法钉住：**自己说出来**。
+    stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH,
+           '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH })
+    const w = mountView()
+    await flushPromises()
+    expect(w.text()).toContain('换数据集')
+  })
+
+  it('右侧热图说明了它只画哪一个棚（同页另外两格是三棚合看）', async () => {
+    // 上格与下格遍历 ts.shed_mean / detrended_mean 的**每一个**棚，右格却只有
+    // 一棚。三格共用一条游标、并排摆着，读者会默认它们同范围 —— 却不同。
+    // 所以右格必须在页面上写明是哪一棚，不能只把棚号藏在代码里。
+    stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH,
+           '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH })
+    const w = mountView()
+    await flushPromises()
+    expect(w.text()).toContain('只画 p1 棚')
+  })
+
   it('数据集身份旁边带出处标记（随包 / 现场重算 / 只有验收测试守）', async () => {
     stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH,
            '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH })

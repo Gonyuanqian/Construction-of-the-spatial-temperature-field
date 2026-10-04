@@ -75,7 +75,10 @@ def create_app() -> FastAPI:
     # 标定包的 `tool_version` 用的是同一个数，两处各写一份就会漂 ——
     # 漂开之后 OpenAPI 文档说一个版本、盘上的标定包说另一个，
     # 验收对盘时不知道该信谁。这里与 /api/health 也共用同一个来源。
-    app = FastAPI(title="人参棚空间温度场重建系统 API", version=TOOL_VERSION)
+    # 标题与前端 `design/copy.ts` 里的 SYSTEM_TITLE 是同一个名字（`/docs` 上给
+    # 人看的就是它）。前端那边有一条守卫扫全仓盯着这个名字，这里不写名字的
+    # 第二份定义 —— 跨语言拼不出单一来源，就靠那条守卫把两处钉成同一个串。
+    app = FastAPI(title="棚式空间温度场重建系统 API", version=TOOL_VERSION)
     # 开发时前端在 5173，与 API 不同源。生产形态是同源（下面的静态托管），
     # 那份 CORS 配置不起作用也不碍事。
     app.add_middleware(

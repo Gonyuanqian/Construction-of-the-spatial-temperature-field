@@ -22,12 +22,31 @@ import { MODES, NAV_ITEMS, SYSTEM_TITLE } from './copy'
 const fwd = (p: string): string => p.replaceAll('\\', '/')
 const SRC = fwd(fileURLToPath(new URL('..', import.meta.url))).replace(/\/+$/, '')
 const FRONTEND = fwd(fileURLToPath(new URL('../..', import.meta.url))).replace(/\/+$/, '')
+const REPO = fwd(fileURLToPath(new URL('../../..', import.meta.url))).replace(/\/+$/, '')
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
     if (statSync(p).isDirectory()) walk(p, out)
     else out.push(p)
+  }
+  return out
+}
+
+// 走仓库根用的剪枝版：node_modules 一个目录就上万文件，扫完再筛等不起。
+// 排除的是**产物与外来物**（构建产物、依赖、git 内部），不是「不方便的代码」——
+// 守卫够不着的目录，就是它守不住的地方，所以这张排除表要短、要说得清。
+const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', '.superpowers',
+  '__pycache__', '.venv', 'venv'])
+const SKIP_FILES = new Set(['package-lock.json'])
+const TEXT_EXT = ['.ts', '.vue', '.py', '.md', '.html', '.css', '.js']
+
+function walkRepo(dir: string, out: string[] = []): string[] {
+  for (const name of readdirSync(dir)) {
+    if (SKIP_DIRS.has(name) || SKIP_FILES.has(name)) continue
+    const p = join(dir, name)
+    if (statSync(p).isDirectory()) walkRepo(p, out)
+    else if (TEXT_EXT.some((e) => p.endsWith(e))) out.push(p)
   }
   return out
 }
@@ -126,6 +145,33 @@ describe('文案只有一个来源', () => {
       '/src/design/copy.ts',
       '/index.html',
     ])
+  })
+
+  it('标题在仓库其余地方也逐字一致，旧名不再残留', () => {
+    // 上面那条只扫 frontend/src 与 index.html —— 于是同一个标题在 README.md 与
+    // backend/api/main.py 里又各写了一遍，写的还是计划 1 的旧名（人参棚…），
+    // 整整漂了一份计划都没人发现：界面说「棚式…」、README 与 /docs 说旧名，
+    // 而验收时对盘要核的正是这个名字。
+    //
+    // 这一条是本组守卫的**补盲**：扫描集扩到仓库根。诚实说清它够不着什么 ——
+    // .json/.docx/.png 不扫（只扫源码与文档），构建产物与 node_modules 不扫
+    // （那是生成物，不是源头）；旧名是按「人参棚 + 空间温度场」这个**系统名组合**
+    // 拦的，不是按「人参棚」——数据集文件名里也有这三个字，那是数据资产的名字，
+    // 改了反而错。
+    //
+    // 字面量为什么拆开写：这条守卫扫的是**源码文本**，而它自己就是一个源码文件。
+    // 整串写在这里的话，它第一个举报的就是自己。拆开拼，才既扫得着别人、又不自指。
+    const RETIRED = ['人参棚', '空间温度场'].join('')
+    const files = walkRepo(REPO).map(fwd)
+    const retired = files.filter((p) => readFileSync(p, 'utf8').includes(RETIRED))
+    expect(retired.map((p) => p.slice(REPO.length)),
+      `旧名「${RETIRED}…」还残留在：`).toEqual([])
+
+    // 正着也钉一遍：这两处必须写着令牌里的那个名字。
+    for (const rel of ['/README.md', '/backend/api/main.py']) {
+      const text = readFileSync(fwd(join(REPO, rel)), 'utf8')
+      expect(text, `${rel} 没写系统标题`).toContain(SYSTEM_TITLE)
+    }
   })
 
   it('index.html 的 <title> 与令牌一致', () => {

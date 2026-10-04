@@ -239,9 +239,10 @@ def test_dist_存在时根路径返回_index_html(tmp_path, monkeypatch):
     """生产形态：一个进程同时供 API 与前端（spec §二）。"""
     dist = tmp_path / "dist"
     dist.mkdir()
-    # 哨兵串必须**唯一**：真实 dist/index.html 的标题是「人参棚空间温度场重建系统」，
-    # 也含「温度场」三个字。Task 5 一构建出 dist，原来拿「温度场」当断言就再也分不清
-    # 「monkeypatch 生效了」与「serve 的是真 dist」—— 这条测试会当场变成空过。
+    # 哨兵串必须**唯一**：真实 dist/index.html 里写着系统标题（「棚式空间温度场
+    # 重建系统」），也含「温度场」三个字。Task 5 一构建出 dist，原来拿「温度场」
+    # 当断言就再也分不清「monkeypatch 生效了」与「serve 的是真 dist」——
+    # 这条测试会当场变成空过。
     (dist / "index.html").write_text("<h1>临时 dist 哨兵 9f3c1a</h1>", encoding="utf-8")
     monkeypatch.setattr(paths, "DIST", dist)
     app = create_app()
