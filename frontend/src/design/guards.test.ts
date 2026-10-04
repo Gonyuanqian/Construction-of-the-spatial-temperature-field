@@ -13,7 +13,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
-import { MODES, NAV_ITEMS, SYSTEM_TITLE } from './copy'
+import { FIELD_VIEWS, MODES, NAV_ITEMS, SYSTEM_TITLE } from './copy'
 
 // Windows 上 import.meta.url 会把中文目录名百分号编码（%E7%A9%BA…），而 pathname 不解码；
 // 只替换盘符前的斜杠（原写法）在非 ASCII 路径下会指向一个不存在的目录。
@@ -190,7 +190,9 @@ describe('文案只有一个来源', () => {
   })
 
   it('每个未开放的项都带一句给人看的理由', () => {
-    for (const item of [...MODES, ...NAV_ITEMS]) {
+    // 三个清单一起管：模式、页面导航、页③ 的视图切换。
+    // 少收一个，那个清单里的"未开放"就会退化成一句"本轮不做"。
+    for (const item of [...MODES, ...NAV_ITEMS, ...FIELD_VIEWS]) {
       if (!item.enabled) {
         expect(item.why.length, `${item.label} 没写为什么未开放`).toBeGreaterThan(10)
       }

@@ -24,6 +24,11 @@ onMounted(() => void health.run())
       <span v-else class="item off" :title="item.why">{{ item.label }}</span>
     </template>
 
+    <!-- 页面自带的侧栏控件从这里投进来（页③ 的视图切换与时刻游标）。
+         页① ② 不用它，所以它平时是空的 —— :empty 时不占高度，
+         免得那两页的下方多出一块莫名其妙的空白。 -->
+    <div id="rail-extra" class="rail-extra" />
+
     <hr class="rule" />
 
     <!-- 未开放的两项把理由写在这里，而不是藏进 title：
@@ -60,4 +65,6 @@ onMounted(() => void health.run())
 .whys { list-style: none; padding: 0; margin: 0; }
 .whys li { margin-bottom: var(--gap-s); }
 .backend { margin-top: auto; }
+.rail-extra:empty { display: none; }
+.rail-extra { margin-top: var(--gap-m); display: flex; flex-direction: column; gap: var(--gap-s); }
 </style>

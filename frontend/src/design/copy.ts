@@ -48,5 +48,21 @@ export const NAV_ITEMS = [
   },
 ] as const
 
+/**
+ * 页③ 的两种视图。**次序是信息**：先切面（快，先让人看懂场），再三维
+ * （spec 2026-10-04 §2.3）。未开放的那一项必须带一句给人看的理由 ——
+ * 与 `MODES` / `NAV_ITEMS` 同一条规矩，`guards.test.ts` 一起管着。
+ */
+export const FIELD_VIEWS = [
+  { key: 'section', label: '断面', enabled: true, why: '' },
+  {
+    key: 'volume',
+    label: '三维',
+    enabled: false,
+    why: '排在下一份计划（V7 棚体三维场）：它要先有后端的体积接口，以及 Three.js。' +
+      '先做切面，是因为一张二维的场已经能回答"这片场长什么样"。',
+  },
+] as const
+
 export type ModeItem = (typeof MODES)[number]
 export type NavItem = (typeof NAV_ITEMS)[number]
