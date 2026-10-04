@@ -133,10 +133,16 @@ describe('两张温度图共用一个色标，差异图另用一个', () => {
     expect(o.visualMap[1].min).toBe(-o.visualMap[1].max)
   })
 
-  it('两个色标条都不可拖拽', () => {
+  it('两条色标条都可以拖着看，区间外压暗而不隐去', () => {
+    // 与切面场（sectionField）同一条规格：拖一段高亮该区间（spec §七 V5）。
+    // 同样地，区间外只压暗、不隐去 —— 这张图的头等大事是「夜里 ΔT 是 0」，
+    // 拖动把格子弄没了，读者第一眼看到的就是一张假的空图。
     const o = opt(makePayload())
-    expect(o.visualMap[0].calculable).toBe(false)
-    expect(o.visualMap[1].calculable).toBe(false)
+    for (const vm of o.visualMap) {
+      expect(vm.calculable).toBe(true)
+      expect(vm.outOfRange.opacity).toBeGreaterThan(0)
+      expect(vm.outOfRange.opacity).toBeLessThan(0.5)
+    }
   })
 })
 

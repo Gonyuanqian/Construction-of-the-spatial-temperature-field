@@ -98,11 +98,20 @@ describe('三格共享一个色标（Review Focus 4）', () => {
     expect(o.series[11].type).toBe('heatmap')
   })
 
-  it('色标条不可拖拽', () => {
-    // 拖动 visualMap 的把手会**过滤**数据（超范围的格子不画）。
-    // 在这张图上那等于「拖着拖着有些格子消失了」——
-    // 色标条在这里是图例，不是控制器。
-    expect(opt(makePayload()).visualMap.calculable).toBe(false)
+  it('色标条可以拖着看：拖一段把区间外压暗，而不是让格子消失', () => {
+    // spec §七 V5 把「色标条是可以拖着看的：拖一段 → 高亮该温度区间的区域。
+    // 静态 PNG 做不到这件事」列为四个属于 Web 的做法之一 —— 这是这一格该有的功能。
+    //
+    // 但拖动 visualMap 的把手，ECharts 默认是**过滤**：超范围的格子**不画**。
+    // 在这张图上那等于「拖着拖着有些格子消失了」，而这张图存在的理由是让人
+    // 并排比三个棚 —— 少一格就白比了。所以用 `outOfRange.opacity` 把它们
+    // **压暗**：高亮兑现了，数据一个不少。
+    const vm = opt(makePayload()).visualMap
+    expect(vm.calculable).toBe(true)
+    // 两个界都断言：0 就是「不画」（又回到被否掉的那个方案）；
+    // 太亮则压暗无从谈起，「高亮」就没了。
+    expect(vm.outOfRange.opacity).toBeGreaterThan(0)
+    expect(vm.outOfRange.opacity).toBeLessThan(0.5)
   })
 
   it('色标的颜色来自唯一来源，且是正向 cividis', () => {

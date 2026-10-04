@@ -86,15 +86,19 @@ export function buildSectionFieldOption(
     yAxis,
     // ⚠️ **一个对象，不是数组**。数组就是三格各算各的色标 —— 这张图就白画了。
     // seriesIndex 恰好是三条热力场（每棚块内偏移 1）。
-    // calculable: false —— 拖把手会过滤数据（超范围的格子不画），
-    // 而这里色标条是图例，不是控制器。
+    // 色标条**可以拖着看**（spec §七 V5：拖一段 → 高亮该温度区间，静态 PNG 做不到）。
+    // 拖把手时 ECharts 默认把区间外的格子**不画** —— 在这张图上那等于
+    // 「拖着拖着有些格子消失了」，三格并排的意义就没了。所以 outOfRange
+    // 只给 opacity，把它们**压暗**：高亮兑现，数据一个不少。
+    // 未拖动时选中区间就是整段，outOfRange 不生效，初始画面与从前逐像素相同。
     visualMap: {
       type: 'continuous',
       min: payload.vmin,
       max: payload.vmax,
       seriesIndex: payload.sheds.map((_, i) => i * SERIES_PER_SHED + 1),
       inRange: { color: tempStops() },
-      calculable: false,
+      outOfRange: { opacity: 0.08 },
+      calculable: true,
       orient: 'horizontal',
       left: 'center',
       bottom: 0,

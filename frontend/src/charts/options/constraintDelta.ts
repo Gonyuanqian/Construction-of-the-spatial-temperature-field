@@ -87,7 +87,9 @@ export function buildConstraintDeltaOption(
       nameTextStyle: { color: p.inkMuted, fontSize: 10 },
     })),
     // 两个色标：温度一套、差异一套。各自绑住自己的那些热力场。
-    // calculable: false —— 拖把手会过滤数据，而这里两张条都是图例。
+    // 两条都**可以拖着看**（spec §七 V5）。拖动的效果是区间外**压暗**，
+    // 不是隐去 —— 这张图的头等大事是夜里「ΔT 是 0」，拖动把格子弄没了，
+    // 读者第一眼看到的就是一张假的空图。未拖动时选中区间即整段，画面不变。
     visualMap: [
       {
         type: 'continuous',
@@ -95,7 +97,8 @@ export function buildConstraintDeltaOption(
         max: payload.vmax,
         seriesIndex: [0, SERIES_PER_PANEL],
         inRange: { color: tempStops() },
-        calculable: false,
+        outOfRange: { opacity: 0.08 },
+        calculable: true,
         orient: 'horizontal',
         left: '16%',
         bottom: 0,
@@ -112,7 +115,8 @@ export function buildConstraintDeltaOption(
         max: payload.delta_vmax,
         seriesIndex: [2 * SERIES_PER_PANEL],
         inRange: { color: deltaStops() },
-        calculable: false,
+        outOfRange: { opacity: 0.08 },
+        calculable: true,
         orient: 'horizontal',
         left: '68%',
         bottom: 0,
