@@ -1,0 +1,194 @@
+"""页② 的数据面：特征构造表与标定包。
+
+这一页最容易误读，所以有一条测试专门守那句**口径**：
+「最优」最优的对象是这一份数据集 + 这一组特征组 + 留一测点这个准则，
+而且只在 A 组上挑出来的；没有包时用的是兜底参数，不是最优。
+那句话必须**随数据一起从后端来** —— 让前端各自去写，迟早写成
+「最优参数」四个字，而那是这张页面最大的谎。
+"""
+from __future__ import annotations
+
+import pathlib
+import sys
+
+import pytest
+from fastapi.testclient import TestClient
+
+BACKEND = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(BACKEND))
+
+from api import deps                                     # noqa: E402
+from api.main import create_app                          # noqa: E402
+from tfield import config as C                           # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def client() -> TestClient:
+    return TestClient(create_app())
+
+
+# ── 特征构造表 ──
+
+def test_特征组表覆盖四组且列名来自后端库(client):
+    b = client.get("/api/features").json()
+    assert b["default_groups"] == list(C.DEFAULT_FEATURE_GROUPS)
+    assert [g["group"] for g in b["groups"]] == list(C.DEFAULT_FEATURE_GROUPS)
+    by_group = {g["group"]: g for g in b["groups"]}
+    assert by_group["coord"]["columns"] == ["x", "y", "z"]
+    assert by_group["zbasis"]["columns"] == ["z2", "z3"]
+    assert by_group["meteo"]["columns"] == [
+        "bg_temp", "bg_rh", "bg_light", "hour", "frac_day"]
+    assert by_group["interaction"]["columns"] == [
+        "bg_temp_x_z", "bg_light_x_z", "bg_temp_x_light"]
+    assert all(g["n_columns"] == len(g["columns"]) for g in b["groups"])
+    assert all(g["what"] for g in b["groups"])
+
+
+def test_特征组的列名与后端库不是各写一份(client):
+    """列名是**唯一真源**在 `tfield.features.add_feature_groups` ——
+    接口必须从它那里取，不能手抄。手抄的那一份会在有人加特征时静默过期。"""
+    import pandas as pd
+
+    from tfield.features import add_feature_groups
+
+    b = client.get("/api/features").json()
+    zero = pd.DataFrame({k: [0.0] for k in
+                         ("x", "y", "z", "bg_temp", "bg_rh", "bg_light",
+                          "hour", "frac_day")})
+    for g in b["groups"]:
+        expect = list(add_feature_groups(zero, (g["group"],)).columns)
+        assert g["columns"] == expect, f"{g['group']} 的列名与后端库不一致"
+
+
+def test_全列清单等于四组的并集(client):
+    b = client.get("/api/features").json()
+    union: list[str] = []
+    for g in b["groups"]:
+        for c in g["columns"]:
+            if c not in union:
+                union.append(c)
+    assert b["all_columns"] == union
+
+
+def test_两条不加特征的说明在(client):
+    """它们是从 `tfield.features` 的模块说明里搬过来的 —— 有测试盯着源文件里还在。"""
+    b = client.get("/api/features").json()
+    joined = "".join(b["notes"])
+    assert "滞后" in joined and "湿度" in joined
+    src = (BACKEND / "src" / "tfield" / "features.py").read_text(encoding="utf-8")
+    assert "不加滞后特征" in src and "不加测点湿度" in src, "后端库的说明变了，这边要跟着改"
+
+
+# ── 标定包 ──
+
+def test_标定包在_且报得出参数与指标(client):
+    b = client.get("/api/calibration").json()
+    assert b["present"] is True, "本项目 configs/ 下应当有迁移过来的标定包"
+    assert b["created_at"] == "2026-10-03T13:22:00+00:00"
+    assert b["tool_version"] == "0.1.0"
+    assert b["groups_sig"] == "d6294c09"
+    assert b["feature_groups"] == list(C.DEFAULT_FEATURE_GROUPS)
+    assert b["n_folds"] == 8 and b["fold_kind"] == "position"
+    assert len(b["metrics"]) == 8 and len(b["per_point"]) == 24
+
+    # 参数与搜索空间成对出现 —— 「这个值是从哪挑出来的」要答得出
+    keys = {t["key"] for t in b["tuned_keys"]}
+    assert "metric.power" in keys and "trend.n_estimators" in keys
+    assert all({"key", "value", "space"} == set(t) for t in b["tuned_keys"])
+    params = {p["param"]: p["value"] for p in b["params"]}
+    assert params["metric.power"] == "0.5"
+    assert params["metric.ly"] == "1"            # ly 固定 1.0，从未进过搜索空间
+    assert params["cross_shed"] == "关"
+
+
+def test_每个调过的参数都报得出它的搜索空间(client):
+    """**两个键空间不一样**：`tuned_keys` 里叫 `metric.power`，`search.space` 里叫 `idw.power`；
+    `cross_shed` 在搜索侧挂了 `idw.` 前缀。映射漏一条，那一维的空间就会显示成「—」，
+    看起来像「这一维没搜过」—— 而它其实搜过，只是没报出来。
+
+    这条测试就是拿 `bundle.tuned_keys` 的**每一个**键去问「空间呢」。
+    """
+    b = client.get("/api/calibration").json()
+    empty = [t["key"] for t in b["tuned_keys"] if t["space"] == "—"]
+    assert empty == [], f"这些参数报了值却没报搜索空间：{empty}"
+
+    by_key = {t["key"]: t for t in b["tuned_keys"]}
+    assert by_key["metric.power"]["space"]          # 0.5、0.7、1、1.5、2… 至少两个候选
+    assert "、" in by_key["metric.power"]["space"], "只有一个候选的话就不是搜出来的"
+    assert by_key["cross_shed"]["space"] in ("关、开", "开、关")
+
+
+def test_逐折与逐点是标定包里的原数_不是现算的(client):
+    """页② 显示的性能数字必须**逐位等于包里那一份**。
+
+    重新评估一遍会得到一个略微不同的数（同样的折、同样的参数，浮点求和顺序不同），
+    于是页面上的数与盘上包里的数对不上 —— 验收对盘时这是最尴尬的一种错。
+    """
+    import json
+
+    from tfield.calibration import load_for
+    from tfield.data.loader import load_dataset, test_data_path
+
+    b = client.get("/api/calibration").json()
+    ds = load_dataset(test_data_path())
+    bundle = load_for(ds, C.DEFAULT_FEATURE_GROUPS, root=BACKEND / "configs")
+    assert bundle is not None
+
+    m = {r["fold"]: r["mae"] for r in b["metrics"]}
+    for _, row in bundle.metrics.iterrows():
+        key = row["fold"]
+        assert m[key] == float(row["mae"]), f"第 {key} 折的 MAE 不是包里那一个"
+    pp = {(r["shed"], r["position"]): r["mae"] for r in b["per_point"]}
+    for _, row in bundle.per_point.iterrows():
+        assert pp[(row["shed"], row["position"])] == float(row["mae"])
+
+
+def test_最差的那一折由后端指出来(client):
+    """「最差的是哪一折」是读数，不是算术 —— 但它仍然是数值比较，
+    所以由后端定，前端不排。"""
+    b = client.get("/api/calibration").json()
+    worst = max(b["metrics"], key=lambda r: r["mae"])
+    assert b["worst_fold"]["fold"] == worst["fold"]
+    assert b["worst_fold"]["mae"] == pytest.approx(worst["mae"], abs=1e-12)
+
+
+def test_ab_两组都报_且_gap_是负的这件事写在说明里(client):
+    b = client.get("/api/calibration").json()
+    ab = b["ab"]
+    assert ab["mae_a"] == pytest.approx(0.115698, abs=1e-6)
+    assert ab["mae_b"] == pytest.approx(0.162401, abs=1e-6)
+    assert ab["gap"] == pytest.approx(ab["mae_a"] - ab["mae_b"], abs=1e-9)
+    assert ab["gap"] < 0
+
+
+def test_口径说明必须随包一起来(client):
+    """这是这一页最大的谎最容易出现的地方。"""
+    b = client.get("/api/calibration").json()
+    note = b["note"]
+    for frag in ("兜底", "留一测点", "A 组"):
+        assert frag in note, f"口径说明里少了「{frag}」—— 那几个字是这个数唯一的前提"
+
+
+def test_lz_落在搜索下界时要自己说出来(client):
+    """本项目的包 lz = 0.005 = 搜索下界。那不是已收敛，是「还没扫够」。"""
+    b = client.get("/api/calibration").json()
+    assert b["params"] and b["lz_note"], "lz 贴着下界时必须有提示，不许静默"
+    assert "搜索下界" in b["lz_note"]
+
+
+def test_没有标定包时也要答得出来(monkeypatch, tmp_path):
+    """空状态是行动的邀请，不是一片空白（spec §8.5）。
+
+    没有包时界面要能显示**兜底参数**，并明说它不是最优。
+    """
+    from api.routes import calibration as cal_routes
+
+    monkeypatch.setattr(cal_routes, "CONFIGS_ROOT", tmp_path)
+    c = TestClient(create_app())
+    b = c.get("/api/calibration").json()
+
+    assert b["present"] is False
+    assert b["reason"] and "标定" in b["reason"]
+    assert b["metrics"] == [] and b["per_point"] == []
+    assert {p["param"] for p in b["params"]} >= {"metric.lx", "metric.lz", "metric.power"}
+    assert "兜底" in b["note"]
