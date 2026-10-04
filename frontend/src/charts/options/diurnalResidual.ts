@@ -124,6 +124,9 @@ export function buildDiurnalResidualOption(
   // 那就等于给缺测时刻编了一个数）。全格缺失时退回 [0, 1] 的可画区间。
   const finite = rows.flat().filter((v): v is number => v !== null)
 
+  // 热图在 series 里的下标：折线数量随数据变（24 路棚温 + 各棚均值），
+  // 所以不能写死「第 3 条」—— 记下它推进去时的位置，visualMap 要靠它定位。
+  const heatIndex = series.length
   series.push({
     name: '时间 × 高度',
     type: 'heatmap',
@@ -147,6 +150,11 @@ export function buildDiurnalResidualOption(
     },
     visualMap: {
       show: true,
+      // ⚠️ 必须写 seriesIndex。ECharts 5 的顶层 visualMap 默认作用于**所有**
+      // series，数据维度默认取最后一个 —— 对折线来说最后一个维度正好也是温度，
+      // 于是两条折线会被 cividis 重染，而 lineStyle 里的调色板色还在，
+      // 「没有第八个颜色」那条测试会静默通过。钉死在热图这一条上。
+      seriesIndex: heatIndex,
       min: finite.length ? Math.min(...finite) : 0,
       max: finite.length ? Math.max(...finite) : 1,
       calculable: false,

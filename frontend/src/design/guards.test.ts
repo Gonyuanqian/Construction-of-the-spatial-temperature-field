@@ -88,13 +88,29 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
   it('十六进制色值只允许出现在两个地方：tokens.css 与 cividis 的采样点', () => {
     // cividis 是一个**色标名**，不是颜色 —— canvas 的渐变要的是真颜色，
     // 所以它只能写成字面量。除此之外任何地方的十六进制都要走令牌。
-    const allowed = ['design/tokens.css', 'charts/options/diurnalResidual.ts']
+    //
+    // tokens.css 的例外是**整文件**的：它本来就是令牌的唯一定义处。
+    // diurnalResidual.ts 不能整文件放过 —— 那等于说「这文件里的十六进制不管」，
+    // 而这张图的颜色正出自那里，日后塞一个没走令牌的色照样通过。
+    // 所以对它做**定点**断言：文件里的十六进制必须与 cividis 采样点集合相等。
+    // 多一个（夹带了别的颜色）红，少一个（采样点被删）也红。
+    const STOPS = ['#00224E', '#12456F', '#4C6C7F', '#7C7B78', '#BE8353', '#EB9A31', '#FFE945']
+    const TOKENS = 'design/tokens.css'
+    const CIVIDIS = 'charts/options/diurnalResidual.ts'
     const hits: string[] = []
     for (const p of ALL_SRC.filter((x) => !x.endsWith('.test.ts'))) {
       const rel = p.slice(SRC.length).replace(/\\/g, '/')
-      if (allowed.includes(rel.slice(1)) || allowed.includes(rel)) continue
-      for (const m of readFileSync(p, 'utf8').matchAll(/#[0-9A-Fa-f]{6}\b/g)) {
-        hits.push(`${rel}: ${m[0]}`)
+      const name = rel.slice(1)
+      if (name === TOKENS || rel === TOKENS) continue
+      const hexes = [...readFileSync(p, 'utf8').matchAll(/#[0-9A-Fa-f]{6}\b/g)]
+        .map((m) => m[0].toUpperCase())
+      if (name === CIVIDIS || rel === CIVIDIS) {
+        const stops = new Set(STOPS.map((s) => s.toUpperCase()))
+        const got = new Set(hexes)
+        for (const h of got) if (!stops.has(h)) hits.push(`${rel}: 多出的色值 ${h}`)
+        for (const s of stops) if (!got.has(s)) hits.push(`${rel}: 缺少 cividis 采样点 ${s}`)
+      } else {
+        for (const h of hexes) hits.push(`${rel}: ${h}`)
       }
     }
     expect(hits).toEqual([])

@@ -105,5 +105,18 @@ describe('V2 的 option', () => {
     const vm = o.visualMap as { inRange: { color: string[] } }
     expect(vm.inRange.color[0]).toBe('#00224E')
     expect(vm.inRange.color[vm.inRange.color.length - 1]).toBe('#FFE945')
+    // visualMap 必须**只**作用在热图上。不写 seriesIndex 时，ECharts 5 会
+    // 按「最后一个维度」给所有 series 染色 —— 两条折线也会被 cividis 重染，
+    // 而折线的调色板色仍留在 lineStyle 里，上面那几条会静默通过。
+    const seriesArr = o.series as Array<Record<string, any>>
+    const heatIndex = seriesArr.findIndex((x) => x.type === 'heatmap')
+    expect((o.visualMap as { seriesIndex?: number }).seriesIndex).toBe(heatIndex)
+    // 折线只许用调色板里的色（ink 背景、steel 细线、leaf 均值）——
+    // 与上一条互为表里：一个钉住 visualMap 的作用域，一个钉住线的颜色。
+    const lineColours = seriesArr
+      .filter((x) => x.type === 'line')
+      .map((x) => (x.lineStyle.color as string).toUpperCase())
+    const paletteLine = new Set([PALETTE.ink, PALETTE.steel, PALETTE.leaf].map((c) => c.toUpperCase()))
+    expect(lineColours.every((c) => paletteLine.has(c))).toBe(true)
   })
 })
