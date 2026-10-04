@@ -199,7 +199,7 @@ describe('页② 模型训练', () => {
     expect(rowA).toContain('—')
   })
 
-  it('上屏的文字里没有被禁的连接符与 markdown 星号', async () => {
+  it('上屏的文字里没有被禁的连接符与 markdown 标记', async () => {
     stub({ '/api/features': FEATURES, '/api/calibration': CAL })
     const w = mount(TrainView)
     await flushPromises()
@@ -207,6 +207,7 @@ describe('页② 模型训练', () => {
     // 单个「—」是表格里「无值」的占位，不禁；被禁的是连接词用的成对破折号。
     expect(text).not.toContain('——')
     expect(text).not.toContain('**')            // markdown 星号不许漏成字面字符
+    expect(text).not.toContain('`')             // markdown 反引号同理
     expect(text).not.toContain(' · ')           // 中点元信息串
     expect(text).not.toContain('→')
     expect(text).not.toContain('↳')
