@@ -63,6 +63,19 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
     expect(hits, '色值必须来自 tokens.css，但发现：\n' + hits.join('\n')).toEqual([])
   })
 
+  it('palette.ts 只按名字读令牌，不重打一遍色值', () => {
+    // 图表要的是真颜色字符串（canvas 不认 var(--ink)），所以 palette.ts 得把
+    // 令牌读成值。但**读**不等于**抄**：色值只在 tokens.css 里存在一次。
+    // 若这里把十六进制重打一遍，单一来源就名存实亡 —— 而现有的守卫只扫 .vue，看不见它。
+    const text = readFileSync(join(SRC, 'design', 'palette.ts'), 'utf8')
+    for (const t of ['--paper', '--ink', '--ink-muted', '--steel',
+                     '--leaf', '--leaf-soft', '--net']) {
+      expect(text, `palette.ts 没有读令牌 ${t}`).toContain(t)
+    }
+    const hexes = [...text.matchAll(/#[0-9A-Fa-f]{6}\b/g)].map((m) => m[0])
+    expect(hexes, `palette.ts 不许重打色值：${hexes.join('、')}`).toEqual([])
+  })
+
   it('温度色标是正向 cividis，不是 cividis_r', () => {
     const css = readFileSync(join(SRC, 'design', 'tokens.css'), 'utf8')
     expect(css).toMatch(/--temp-scale:\s*cividis\s*;/)
