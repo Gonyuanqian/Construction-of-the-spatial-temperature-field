@@ -32,13 +32,9 @@ export const MODES = [
 export const NAV_ITEMS = [
   { key: 'data', label: '数据导入与检查', to: '/data', enabled: true, why: '' },
   { key: 'train', label: '模型训练', to: '/train', enabled: true, why: '' },
-  {
-    key: 'field',
-    label: '空间温度场的构建',
-    to: '/field',
-    enabled: false,
-    why: '排在下一份计划里：它要先有后端的管线缓存、切面与三维体积接口。位置留在这里，因为四页的次序本身是信息。',
-  },
+  // 位置留在这里而不是排到最后：四页的次序**本身是信息** ——
+  // 先看数据、再训模型、再构建场、最后谈影响，与流水线的次序一致。
+  { key: 'field', label: '空间温度场的构建', to: '/field', enabled: true, why: '' },
   {
     key: 'impact',
     label: '影响分析',

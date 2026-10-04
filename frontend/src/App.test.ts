@@ -62,12 +62,14 @@ describe('应用外壳', () => {
     for (const item of NAV_ITEMS) expect(rail.text()).toContain(item.label)
   })
 
-  it('未开放的两项是禁用的按钮，不是链接', async () => {
+  it('未开放的项是禁用的按钮，不是链接', async () => {
     stubFetch()
     const w = await mountApp()
     const rail = w.get('nav[aria-label="页面"]')
     const links = rail.findAll('a').map((a) => a.text())
-    expect(links).toEqual(['数据导入与检查', '模型训练'])
+    // 按 NAV_ITEMS 推导，不写死清单：写死的清单会在**页面开放的当天过期**，
+    // 而"打开一个页面"恰恰就是本任务在做的事。同一个文件第 71 行就是这么写的。
+    expect(links).toEqual(NAV_ITEMS.filter((i) => i.enabled).map((i) => i.label))
     for (const item of NAV_ITEMS.filter((i) => !i.enabled)) {
       expect(rail.text()).toContain(item.why)   // 理由看得见，不藏在 title 里
     }

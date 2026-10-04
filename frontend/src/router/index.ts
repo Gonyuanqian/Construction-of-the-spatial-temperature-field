@@ -5,6 +5,7 @@ import {
 
 import { NAV_ITEMS } from '../design/copy'
 import DataView from '../views/DataView.vue'
+import FieldView from '../views/FieldView.vue'
 import TrainView from '../views/TrainView.vue'
 
 /**
@@ -15,7 +16,9 @@ import TrainView from '../views/TrainView.vue'
  * 要么加 `@vite-ignore` —— 而那会让它在运行时去取一个没被编译过的 `.vue`，
  * 构建能过、页面白屏。两页而已，直接引进来最省事。
  */
-const VIEWS: Record<string, Component> = { data: DataView, train: TrainView }
+const VIEWS: Record<string, Component> = {
+  data: DataView, train: TrainView, field: FieldView,
+}
 
 /**
  * 只注册导航里 enabled 的那些页。
