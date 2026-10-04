@@ -54,5 +54,9 @@ def get_features() -> dict[str, Any]:
         "default_groups": list(C.DEFAULT_FEATURE_GROUPS),
         "groups": groups,
         "all_columns": union,
+        #: 全列清单的列数。**必须由后端报**：前端 `all_columns.length` 是前端在做
+        #: 计数，撞「前端不做任何数值计算」；而「各组 n_columns 之和」与「并集长度」
+        #: 组分一旦重叠就会静默不一致。并集长度只有这里一个真源。
+        "n_all_columns": len(union),
         "notes": list(NOTES),
     }

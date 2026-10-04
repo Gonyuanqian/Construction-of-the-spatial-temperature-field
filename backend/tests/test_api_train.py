@@ -70,6 +70,21 @@ def test_全列清单等于四组的并集(client):
     assert b["all_columns"] == union
 
 
+def test_全列数由后端给出_且等于并集长度(client):
+    """全列清单的**列数**由后端报，前端不做任何计数。
+
+    「按各组 n_columns 之和」与「并集长度」是两个来源；组分一旦重叠，两者会
+    静默不一致 —— 这正是「前端不做任何数值计算」这条约束要防的事。所以这个数
+    只有一个真源：后端算出来的并集长度。
+
+    ⚠️ 写死 13 是有意的：只断言 `== len(all_columns)` 是拿同一个计算比自己，
+    等于没测。13 = 3（coord）+ 2（zbasis）+ 5（meteo）+ 3（interaction）。
+    """
+    b = client.get("/api/features").json()
+    assert b["n_all_columns"] == 13
+    assert b["n_all_columns"] == len(b["all_columns"])
+
+
 def test_两条不加特征的说明在(client):
     """它们是从 `tfield.features` 的模块说明里搬过来的 —— 有测试盯着源文件里还在。"""
     b = client.get("/api/features").json()

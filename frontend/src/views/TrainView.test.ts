@@ -8,10 +8,16 @@ const FEATURES = {
   groups: [
     { group: 'coord', columns: ['x', 'y', 'z'], n_columns: 3, what: '场的基本骨架' },
     { group: 'zbasis', columns: ['z2', 'z3'], n_columns: 2, what: '竖直方向的结构' },
-    { group: 'meteo', columns: ['bg_temp', 'bg_rh'], n_columns: 2, what: '时刻的外部条件' },
-    { group: 'interaction', columns: ['bg_temp_x_z'], n_columns: 1, what: '坐标 × 气象' },
+    { group: 'meteo', columns: ['bg_temp', 'bg_rh', 'bg_light', 'hour', 'frac_day'],
+      n_columns: 5, what: '时刻的外部条件' },
+    { group: 'interaction', columns: ['bg_temp_x_z', 'bg_light_x_z', 'bg_temp_x_light'],
+      n_columns: 3, what: '坐标 × 气象' },
   ],
-  all_columns: ['x', 'y', 'z', 'z2', 'z3', 'bg_temp', 'bg_rh', 'bg_temp_x_z'],
+  all_columns: ['x', 'y', 'z', 'z2', 'z3', 'bg_temp', 'bg_rh', 'bg_light', 'hour',
+                'frac_day', 'bg_temp_x_z', 'bg_light_x_z', 'bg_temp_x_light'],
+  // 后端给的全列计数（= 并集长度）。四组互不重叠，3+2+5+3 = 13，
+  // 与 all_columns.length 一致 —— mock 别自相矛盾。
+  n_all_columns: 13,
   notes: ['不加滞后特征：本版是重建任务。', '不加测点湿度：目标点的湿度同样是未知量。'],
 }
 
@@ -67,13 +73,11 @@ describe('页② 模型训练', () => {
     stub({ '/api/features': FEATURES, '/api/calibration': CAL })
     const w = mount(TrainView)
     await flushPromises()
-    const text = w.text()
-    const i1 = text.indexOf('特征值的构造')
-    const i2 = text.indexOf('最优参数的选择')
-    const i3 = text.indexOf('模型训练')
-    expect(i1).toBeGreaterThanOrEqual(0)
-    expect(i2).toBeGreaterThan(i1)
-    expect(i3).toBeGreaterThan(i2)
+    // 直接断言三个 <h3>：三段小标题互不相同，既无歧义又更强 ——
+    // 用 `text.indexOf('模型训练')` 会被页顶 <h2>模型训练</h2> 抢先命中（索引 0），
+    // 测的就不是次序了。这条同时钉住「次序」与「恰好三段」。
+    const h3 = w.findAll('h3').map((e) => e.text())
+    expect(h3).toEqual(['特征值的构造', '最优参数的选择', '模型训练'])
   })
 
   it('特征构造表逐组列出列名与列数', async () => {

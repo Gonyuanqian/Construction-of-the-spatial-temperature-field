@@ -123,6 +123,12 @@ export interface FeaturesPayload {
   default_groups: string[]
   groups: FeatureGroupRow[]
   all_columns: string[]
+  /**
+   * 全列清单的列数，**由后端给**（= `all_columns` 并集长度）。
+   * 不由前端 `all_columns.length` 数：「各组 n_columns 之和」与「并集长度」
+   * 组分一旦重叠就会静默不一致 —— 这是「前端不做任何数值计算」要防的事。
+   */
+  n_all_columns: number
   notes: string[]
 }
 

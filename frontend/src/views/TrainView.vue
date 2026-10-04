@@ -37,14 +37,7 @@ const worstFold = computed(() => cal.data.value?.worst_fold?.fold ?? '')
 
 <template>
   <section>
-    <!--
-      页面标题避开与第三段小标题「模型训练」**逐字相同**。
-      「三段的次序就是流水线的次序」是本页要读的信息之一，验收测试按**首次出现**
-      的位置钉住它（`text.indexOf('模型训练')`）。若标题也用同一串字，次序断言会
-      被页顶标题抢先命中（索引 0）而失真 —— 测的不是次序了，是标题。标题改写成
-      把三段流水线直说出来，正文一字未动。
-    -->
-    <h2>特征、参数与训练</h2>
+    <h2>模型训练</h2>
 
     <p v-if="failure" role="alert" class="alert">{{ failure }}</p>
 
@@ -70,7 +63,7 @@ const worstFold = computed(() => cal.data.value?.worst_fold?.fold ?? '')
       </table>
       <p v-if="features.data.value" class="note">
         默认四组全上：{{ features.data.value.default_groups.join('、') }}。
-        合计 <span class="num">{{ features.data.value.all_columns.length }}</span> 列。
+        合计 <span class="num">{{ features.data.value.n_all_columns }}</span> 列。
       </p>
       <ul v-if="features.data.value" class="note">
         <li v-for="n in features.data.value.notes" :key="n">{{ n }}</li>
