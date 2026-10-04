@@ -6,9 +6,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from tfield import config as C
-from tfield.data.loader import load_dataset
 
-from .. import paths
+from .. import deps, paths
 
 router = APIRouter(tags=["dataset"])
 
@@ -16,10 +15,10 @@ router = APIRouter(tags=["dataset"])
 @router.get("/dataset")
 def get_dataset() -> dict[str, Any]:
     path = paths.dataset_path()
-    if not path.exists():
+    try:
+        ds = deps.get_dataset(path)
+    except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"数据集不存在：{path}")
-
-    ds = load_dataset(path)
     ts = ds.wide[C.COL_TIMESTAMP]
     return {
         "signature": ds.signature,
