@@ -104,18 +104,20 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
     expect(bad.map((p) => p.slice(SRC.length))).toEqual([])
   })
 
-  it('十六进制色值只允许出现在两个地方：tokens.css 与 cividis 的采样点', () => {
-    // cividis 是一个**色标名**，不是颜色 —— canvas 的渐变要的是真颜色，
-    // 所以它只能写成字面量。除此之外任何地方的十六进制都要走令牌。
+  it('十六进制色值只允许出现在两个地方：tokens.css 与色标采样点', () => {
+    // 色标名不是颜色，所以采样点只能写成字面量；除此之外任何地方的十六进制
+    // 都要走令牌。
     //
-    // tokens.css 的例外是**整文件**的：它本来就是令牌的唯一定义处。
-    // diurnalResidual.ts 不能整文件放过 —— 那等于说「这文件里的十六进制不管」，
-    // 而这张图的颜色正出自那里，日后塞一个没走令牌的色照样通过。
-    // 所以对它做**定点**断言：文件里的十六进制必须与 cividis 采样点集合相等。
-    // 多一个（夹带了别的颜色）红，少一个（采样点被删）也红。
-    const STOPS = ['#00224E', '#12456F', '#4C6C7F', '#7C7B78', '#BE8353', '#EB9A31', '#FFE945']
+    // tokens.css 的例外是**整文件**的（它本来就是令牌的唯一定义处）。
+    // charts/scale.ts 例外但**定点**：文件里的十六进制必须与两条色标的采样点
+    // 集合**相等** —— 多一个（夹带了别的颜色）红，少一个（被删了）也红。
+    // 早先这个例外挂在 options/diurnalResidual.ts 上，色标搬到 scale.ts 之后
+    // 必须一起搬：守卫指着一个不再含色值的文件，等于那七个值从此没人守。
+    const TEMP_STOPS = ['#00224E', '#12456F', '#4C6C7F', '#7C7B78', '#BE8353', '#EB9A31', '#FFE945']
+    const DELTA_STOPS = ['#053061', '#2166AC', '#4393C3', '#92C5DE', '#D1E5F0', '#F7F7F7',
+      '#FDDBC7', '#F4A582', '#D6604D', '#B2182B', '#67001F']
     const TOKENS = 'design/tokens.css'
-    const CIVIDIS = 'charts/options/diurnalResidual.ts'
+    const SCALES = 'charts/scale.ts'
     const hits: string[] = []
     for (const p of ALL_SRC.filter((x) => !x.endsWith('.test.ts'))) {
       const rel = p.slice(SRC.length).replace(/\\/g, '/')
@@ -123,11 +125,11 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
       if (name === TOKENS || rel === TOKENS) continue
       const hexes = [...readFileSync(p, 'utf8').matchAll(/#[0-9A-Fa-f]{6}\b/g)]
         .map((m) => m[0].toUpperCase())
-      if (name === CIVIDIS || rel === CIVIDIS) {
-        const stops = new Set(STOPS.map((s) => s.toUpperCase()))
+      if (name === SCALES || rel === SCALES) {
+        const want = new Set([...TEMP_STOPS, ...DELTA_STOPS].map((s) => s.toUpperCase()))
         const got = new Set(hexes)
-        for (const h of got) if (!stops.has(h)) hits.push(`${rel}: 多出的色值 ${h}`)
-        for (const s of stops) if (!got.has(s)) hits.push(`${rel}: 缺少 cividis 采样点 ${s}`)
+        for (const h of got) if (!want.has(h)) hits.push(`${rel}: 多出的色值 ${h}`)
+        for (const w of want) if (!got.has(w)) hits.push(`${rel}: 缺少色标采样点 ${w}`)
       } else {
         for (const h of hexes) hits.push(`${rel}: ${h}`)
       }

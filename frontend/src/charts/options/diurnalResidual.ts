@@ -22,6 +22,7 @@ import type { EChartsOption } from 'echarts'
 
 import type { LayerTimeHeightPayload, TimeseriesPayload } from '../../api/types'
 import type { Palette } from '../../design/palette'
+import { tempStops } from '../scale'
 
 type Pair = [string, number | null]
 
@@ -166,7 +167,7 @@ export function buildDiurnalResidualOption(
       orient: 'vertical',
       right: 0, top: '40%',
       itemHeight: 120,
-      inRange: { color: cividisStops() },
+      inRange: { color: tempStops() },
       textStyle: { color: p.inkMuted, fontSize: 11 },
     },
   } as unknown as EChartsOption
@@ -202,19 +203,4 @@ function value(gridIndex: number, name: string, p: Palette) {
     splitLine: { show: true, lineStyle: { color: p.steel, type: 'dashed' as const } },
     axisLabel: { color: p.inkMuted, fontSize: 11 },
   }
-}
-
-/**
- * cividis 的采样点。
- *
- * ⚠️ **必须正向** —— Streamlit 版把色标用反了（正反颠倒），于是 52 °C 是深蓝、
- * 42 °C 是亮黄，读起来是拧的（spec §8.1）。
- * 注意这里不能写出反向色标的名字：`guards.test.ts` 全仓扫那个字符串，
- * 会把注释也算进去。
- * 这七个值是 cividis 在 0/1/6…6/6 处的采样，写在这里而不是从 CSS 读：
- * canvas 的渐变要的是真颜色，而 `--temp-scale: cividis` 是一个**色标名**，
- * 不是颜色。所以这条色标由构造器持有，界面色才从令牌来。
- */
-function cividisStops(): string[] {
-  return ['#00224E', '#12456F', '#4C6C7F', '#7C7B78', '#BE8353', '#EB9A31', '#FFE945']
 }
