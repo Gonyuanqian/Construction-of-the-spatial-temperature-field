@@ -44,7 +44,12 @@ def test_页2要的两个接口一起打(client):
 
 
 def test_缓存让第二次全量请求快得多(client):
-    """页① 打四个接口。第一次要读 xlsx（2.7–3.3 s），之后不该再读。"""
+    """页① 打四个接口。第一次要读 xlsx，之后不该再读。
+
+    这是**粗兜底**，别删。它抓得住「缓存整体坏掉」；但本机 cold≈0.8 s、
+    热三个≈0.8 s，合计仍 < 1.5 s —— **单个端点绕开缓存它抓不住**。
+    直接的判据在下面那条（计数加载器）。
+    """
     import time
 
     client.get("/api/dataset")            # 预热，保证缓存里有了
@@ -53,3 +58,45 @@ def test_缓存让第二次全量请求快得多(client):
         client.get(path)
     elapsed = time.time() - t0
     assert elapsed < 1.5, f"四个接口花了 {elapsed:.2f} s —— 缓存没吃上"
+
+
+@pytest.mark.parametrize("first", PAGE_1)
+def test_四个接口共用同一份缓存_合计只加载一次(monkeypatch, client, first):
+    """**直接的判据**（评审 3a）：缓存重置后连打页① 的四个端点，合计只加载一次。
+
+    照 `test_deps.py::test_api_的数据集接口真的走了缓存` 的计数加载器写法 ——
+    把 `api.deps._CACHE` 换成一台带计数的**真**缓存（返回真 Dataset，不是假对象：
+    路由拿到它要读 wide / sheds / layout 才拼得出响应体）。
+
+    ⚠️ **计数要装在两处**：只换 `_CACHE` 的话，计数发生在**缓存命中路径**上，
+    一个端点若绕开缓存直接 `load_dataset()`，那次加载根本不过计数器 ——
+    合计仍是 1，测试静默放行（这正是自评时踩到的）。所以同时把
+    `tfield.data.loader.load_dataset` 也换成计数版，把「绕过缓存的直接调用」
+    一并数进来。局限：若某路由在**模块顶层** `from tfield.data.loader import
+    load_dataset`，那个绑定在 monkeypatch 之前就固定了，数不到；本项目四个路由
+    都走 `deps`，不受影响。
+
+    参数化 `first` 是让四个端点轮流当第一个请求：任何一种次序下合计都必须是 1。
+    """
+    import tfield.data.loader as loader_mod
+
+    from api import deps
+    from api.deps import DatasetCache
+
+    real_load = loader_mod.load_dataset
+    calls: list[pathlib.Path] = []
+
+    def counting(path):
+        calls.append(pathlib.Path(path))
+        return real_load(path)
+
+    monkeypatch.setattr(loader_mod, "load_dataset", counting)             # 直接调用
+    monkeypatch.setattr(deps, "_CACHE", DatasetCache(loader=counting))   # 经由缓存
+
+    order = [first] + [p for p in PAGE_1 if p != first]
+    for path in order:
+        assert client.get(path).status_code == 200, path
+    assert len(calls) == 1, (
+        f"页① 的四个端点合计加载了 {len(calls)} 次数据集 —— 有的接口绕开了缓存"
+        f"（首个请求：{first}）"
+    )

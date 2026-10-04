@@ -8,10 +8,16 @@
  * 这一条覆盖的是「挂载期与首次取数期」的崩溃。真浏览器的渲染
  * （canvas、CSS 布局）不在这里 —— 见计划里的 Ruling。
  *
- * 另有一条**被禁字形**的端到端扫描（裁定 R9）：把标题、导航、两页正文
- * 一起渲染出来，再扫渲染后的文本。后端与页② 各自有一条同名守卫，但它们
- * 只看自己那一个文件；「页面上到底显示了什么」是**两页 × 后端文案**合起来
- * 的结果，所以判据要放在这里。
+ * 另有一条**被禁字形**的扫描（裁定 R9）：把标题、导航、两页一起渲染出来，
+ * 扫渲染后的文本。但它扫到的是**渲染结果与 mock 载荷** —— mock 里
+ * `checks: []`、`checks_note: ''`、`notes: []`，所以页① 与 features 由
+ * **真实后端**产出的文案不经过这里。
+ *
+ * 分工（谁守哪一份，别让两边都以为对方在守）：
+ * - **前端守这条**：标题、导航、以及页面从 mock 载荷渲染出来的文本；
+ * - **后端守真实文案**：`backend/tests/test_on_screen_copy.py` 扫
+ *   `/api/dataset`、`/api/dataset/timeseries`、`/api/dataset/layer-timeheight`、
+ *   `/api/features` 的**真实响应体**；`test_api_train.py` 扫标定包那一份。
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
