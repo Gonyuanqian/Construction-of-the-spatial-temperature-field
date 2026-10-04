@@ -66,7 +66,11 @@ WHITELIST = frozenset({"deps.py"})
 
 #: 从 `api.deps` 取名字时**唯一**允许的名字。别往这儿加 —— 加之前先回答
 #: 「为什么这个模块能直接拿缓存/加载器，而不是走 get_dataset()」。
-ALLOWED_FROM_DEPS = frozenset({"get_dataset"})
+#:
+#: `get_pipeline` 是第二个，理由同形：`get_pipeline()` 内部先调 `get_dataset()`，
+#: 它**不绕过**数据集缓存，而是把「管线只构建一次」这条性质收到一个可计数的
+#: 落点上（`PipelineCache.n_builds`）。路由不许自己 new FieldPipeline。
+ALLOWED_FROM_DEPS = frozenset({"get_dataset", "get_pipeline"})
 
 #: 与 `api.deps` 无关的、任何位置都不许直接取用的通用黑名单（直取后端库/缓存类）。
 FORBIDDEN_ANYWHERE = frozenset({"load_dataset", "DatasetCache"})
@@ -177,3 +181,8 @@ def test_api_层从_deps_只许取_get_dataset():
         + "\n  ".join(offenders)
         + "\n请改成 `deps.get_dataset()` —— 否则缓存计数守卫会因为绑定拷死而静默放行。"
     )
+
+
+def test_白名单只有两个出口():
+    """白名单是一份**写死的声明**。它悄悄变长，是这道守卫失效的第一种方式。"""
+    assert ALLOWED_FROM_DEPS == frozenset({"get_dataset", "get_pipeline"})
