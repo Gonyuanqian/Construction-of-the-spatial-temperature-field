@@ -142,3 +142,74 @@ def test_认不出的_preset_是_400(client):
     r = client.get("/api/field/sections", params={"preset": "ultra"})
     assert r.status_code == 400
     assert "preset" in r.json()["detail"]
+
+
+CURVE_POINT = {"shed": "p1", "x": 0.80, "z": 1.10}    # 正好是一个实测点位
+
+
+def test_曲线的形状与状态码(client):
+    r = client.get("/api/field/curve", params=CURVE_POINT)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    for k in ("shed", "x", "y", "z", "label", "n_times", "time", "values",
+              "defined", "note"):
+        assert k in body, f"载荷少了 {k}"
+    assert body["shed"] == "p1"
+    assert body["y"] == 3.0
+    assert len(body["time"]) == body["n_times"]
+    assert len(body["values"]) == body["n_times"]
+    assert body["defined"] is True
+
+
+def test_曲线的口径写明了没有竖直软单调投影(client):
+    """Review Focus 3：单点没有竖直邻点，所以这条曲线天生不含软投影。
+
+    实现里偷偷投影一下（只能靠编一个邻点）就是造数；图上不写清楚就是撒谎。
+    这条测试钉的是**载荷里自带那句口径** —— 界面上要显示的就是它。
+    """
+    note = client.get("/api/field/curve", params=CURVE_POINT).json()["note"]
+    assert "没有" in note and "竖直" in note and "投影" in note, (
+        f"曲线的口径没写清楚：{note!r}"
+    )
+
+
+def test_拱外的点返回全_null_且_defined_是假(client):
+    """拱外的点「无定义」—— 不是一个特别低或特别高的数，是**没有数**。"""
+    body = client.get("/api/field/curve",
+                      params={"shed": "p1", "x": 2.05, "z": 1.30}).json()
+    assert body["defined"] is False
+    assert all(v is None for v in body["values"])
+    assert len(body["values"]) == body["n_times"]
+
+
+def test_无测量带里的点也返回全_null(client):
+    """z > 1.10 m 的带里**有**外推值，但那个数没有实测支撑，单点查询不报。
+
+    这一段与切面图上的斜纹是同一条口径的两种呈现。
+    """
+    body = client.get("/api/field/curve",
+                      params={"shed": "p1", "x": 1.00, "z": 1.25}).json()
+    assert body["defined"] is False
+    assert all(v is None for v in body["values"])
+
+
+def test_曲线与后端库逐位相等(client):
+    """与 Task 2 同一条判据：后端库是唯一的 oracle。
+
+    ⚠️ 这里**必须**用 `predict_points` 一次算完，不能写成
+    「for t in range(n_times): field_at(...)」—— 那是 1308 次完整的二维场构建。
+    """
+    from api.deps import get_pipeline
+
+    body = client.get("/api/field/curve", params=CURVE_POINT).json()
+    pipe = get_pipeline()
+    coords = np.array([[body["x"], body["y"], body["z"]]], dtype=float)
+    want = pipe.predict_points(coords, np.arange(body["n_times"])).reshape(-1)
+    for i, got in enumerate(body["values"]):
+        assert got == float(want[i]), f"t={i}: 接口 {got!r} != 库 {float(want[i])!r}"
+
+
+def test_认不出的棚是_400(client):
+    r = client.get("/api/field/curve", params={"shed": "p9", "x": 1.0, "z": 0.5})
+    assert r.status_code == 400
+    assert "shed" in r.json()["detail"]

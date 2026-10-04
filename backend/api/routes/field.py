@@ -15,7 +15,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 
 from tfield import config as C
-from tfield.field.arch import arch_height
+from tfield.field.arch import arch_height, arch_mask
 from tfield.field.build import section_field
 from tfield.field.constraints import MonotonicConfig
 from tfield.field.grid import GRID_PRESETS, GridSpec
@@ -155,4 +155,57 @@ def get_sections(
             "三格共享同一个色标范围。拱外不画。z 高于 "
             f"{C.MAX_MEASURED_Z:.2f} m 是无测量带，带内是外推值，不报数。"
         ),
+    }
+
+
+def _finite_or_none(values: np.ndarray) -> list[float | None]:
+    """一维的 NaN → None。与 `_grid_or_none` 同一条理由：`allow_nan=False`。"""
+    return [float(v) if np.isfinite(v) else None for v in np.asarray(values).ravel()]
+
+
+CURVE_NOTE = (
+    "这条曲线没有施加竖直软单调投影：软投影要同一时刻的竖直邻点，"
+    "单点没有邻点可投影。相邻时刻之间的差是真实的；竖直方向的单调性"
+    "在单点上无从谈起。"
+)
+
+
+@router.get("/field/curve")
+def get_curve(
+    shed: str = Query(..., description="棚号"),
+    x: float = Query(..., description="棚长方向坐标 / m"),
+    z: float = Query(..., description="高度 / m"),
+) -> dict[str, Any]:
+    """某个点在整个时间轴上的温度。拱外或落在无测量带里 → 全 null、「无定义」。"""
+    if shed not in C.SHED_ORDER:
+        allowed = "、".join(C.SHED_ORDER)
+        raise HTTPException(400, f"认不出的 shed：{shed!r}（可选：{allowed}）")
+
+    pipe = deps.get_pipeline()
+    n_times = int(pipe.ds.wide.shape[0])
+    y = float(C.SHED_Y[shed])
+
+    # 拱内判定用库自己的 arch_mask（1×1 网格）—— 界面上不重算几何，
+    # 后台也不重打一遍规则。库改了拱的定义，这里跟着改，不会漂。
+    inside = bool(arch_mask(np.array([[x]]), np.array([[z]]))[0, 0])
+    defined = inside and z <= C.MAX_MEASURED_Z
+
+    if defined:
+        coords = np.array([[x, y, z]], dtype=float)
+        # 一次算完这个点的所有时刻。写成逐时刻循环就是 1308 次二维场构建。
+        values = pipe.predict_points(coords, np.arange(n_times)).reshape(-1)
+    else:
+        values = np.full(n_times, np.nan)
+
+    return {
+        "shed": shed,
+        "x": float(x),
+        "y": y,
+        "z": float(z),
+        "label": f"{shed}  x {x:.2f}  z {z:.2f}",
+        "n_times": n_times,
+        "time": [str(v) for v in pipe.ds.wide[C.COL_TIMESTAMP]],
+        "values": _finite_or_none(values),
+        "defined": bool(defined),
+        "note": CURVE_NOTE,
     }
