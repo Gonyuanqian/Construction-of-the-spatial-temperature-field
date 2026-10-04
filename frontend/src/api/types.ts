@@ -72,3 +72,38 @@ export interface ArchPayload {
   arch: [number, number][]
   sheds: ShedInfo[]
 }
+
+export interface TimeseriesPayload {
+  n_times: number
+  time: string[]
+  /**
+   * ⚠️ 全部数值列都是 `number | null`。路由对每个数过 `_finite`
+   * （`dataset.py:_finite`），非有限浮点翻成 None；`allow_nan=False`
+   * 不吃 NaN/Inf。某一时刻某列缺失，线上就是 null —— 不是 0。
+   */
+  bg_temp: (number | null)[]
+  sensors: Record<string, (number | null)[]>       // key = "p1|x0.15_z0.4"
+  shed_mean: Record<string, (number | null)[]>
+  detrended: Record<string, (number | null)[]>
+  detrended_mean: Record<string, (number | null)[]>
+  /** 固定 ±3 °C，由后端给出：纵轴范围也是判断的一部分（见路由 docstring）。 */
+  detrended_domain: [number, number]
+  note: string
+}
+
+export interface LayerTimeHeightShed {
+  labels: string[]
+  z: number[]
+  /** 某一层某时刻全缺失时，groupby.mean() 给 NaN，路由已翻成 null。 */
+  values: (number | null)[][]
+}
+
+export interface LayerTimeHeightPayload {
+  step: number
+  n_times: number
+  n_columns: number
+  time: string[]
+  x_label: string
+  source: string
+  sheds: Record<string, LayerTimeHeightShed>
+}

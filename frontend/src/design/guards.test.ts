@@ -84,6 +84,21 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
       readFileSync(p, 'utf8').includes('cividis_r'))
     expect(bad.map((p) => p.slice(SRC.length))).toEqual([])
   })
+
+  it('十六进制色值只允许出现在两个地方：tokens.css 与 cividis 的采样点', () => {
+    // cividis 是一个**色标名**，不是颜色 —— canvas 的渐变要的是真颜色，
+    // 所以它只能写成字面量。除此之外任何地方的十六进制都要走令牌。
+    const allowed = ['design/tokens.css', 'charts/options/diurnalResidual.ts']
+    const hits: string[] = []
+    for (const p of ALL_SRC.filter((x) => !x.endsWith('.test.ts'))) {
+      const rel = p.slice(SRC.length).replace(/\\/g, '/')
+      if (allowed.includes(rel.slice(1)) || allowed.includes(rel)) continue
+      for (const m of readFileSync(p, 'utf8').matchAll(/#[0-9A-Fa-f]{6}\b/g)) {
+        hits.push(`${rel}: ${m[0]}`)
+      }
+    }
+    expect(hits).toEqual([])
+  })
 })
 
 describe('文案只有一个来源', () => {
