@@ -1,0 +1,44 @@
+/* 设计令牌 —— 颜色与字体的唯一来源（spec §六 硬约束 2、§八）。
+ *
+ * 有一组测试盯着这件事：任何 .vue 里出现十六进制色值都会红。
+ * 所以这一条不是自觉，是判据。
+ */
+:root {
+  /* 界面：安静的暖中性，让位给唯一该抢眼的东西 —— 温度场（spec §8.1） */
+  --paper: #F7F6F2;        /* 页面底。不是纯白 —— 温度场贴纯白会发飘 */
+  --ink: #211F1C;          /* 正文。暖黑，不是把炭黑当黑 */
+  --ink-muted: #5C5850;    /* 次要文字：说明、口径、出处 */
+  --steel: #DEDCD6;        /* 线、分隔、表格框。镀锌管的冷灰偏暖 */
+  --leaf: #14532D;         /* 主色。人参叶的深绿，不是通用蓝 #2563EB */
+  --leaf-soft: #E7EFE9;    /* 选中态底纹 */
+  --net: #0B0F0D;          /* 遮阳网的近黑。只用于最大字重的标题 */
+
+  /* 字体：层级只靠字重与字号，不另找一套标题体（spec §8.2） */
+  --font-cn: "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif;
+  --font-latin: "IBM Plex Sans", var(--font-cn);
+  --font-num: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+  --w-body: 400;
+  --w-strong: 600;
+  --w-title: 700;
+  --size-title: 20px;
+  --size-h: 15px;
+  --size-body: 13px;
+  --size-note: 12px;
+  --lh-body: 1.65;
+
+  /* 版式：不用卡片，分区靠留白与细线（spec §8.3） */
+  --gap-s: 8px;
+  --gap-m: 16px;
+  --gap-l: 28px;
+  --gap-xl: 44px;
+  --rule: 1px solid var(--steel);
+  --sidebar-w: 176px;
+
+  /* 温度与误差色标 —— 只活在图表里，界面一处都不用它的颜色（spec §8.1）。
+     cividis 必须【正向】：反过来的话 52 °C 是深蓝、42 °C 是亮黄，读起来是拧的。 */
+  --temp-scale: cividis;
+  --err-scale: RdBu_r;
+  /* 「无测量带」的斜纹。它与 z > 1.10 m 那条虚线是同一套语言（spec §七 主张 2） */
+  --unknown-stripe: repeating-linear-gradient(
+    45deg, transparent 0 5px, rgba(33, 31, 28, 0.16) 5px 6px);
+}

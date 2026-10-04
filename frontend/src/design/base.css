@@ -1,0 +1,42 @@
+/* 全局基线。 */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body { margin: 0; padding: 0; }
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-cn);
+  font-size: var(--size-body);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 { margin: 0; font-weight: var(--w-title); line-height: 1.35; }
+h1 { font-size: var(--size-title); }
+h2 { font-size: var(--size-h); }
+h3 { font-size: var(--size-body); font-weight: var(--w-strong); }
+
+p { margin: 0 0 var(--gap-s); }
+ul { margin: 0; padding-left: 1.2em; }
+
+/* 数字对齐的地方才用等宽（spec §8.2：不做装饰性小标签） */
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+
+table { border-collapse: collapse; width: 100%; }
+th, td { border-bottom: var(--rule); padding: 4px 12px 4px 0; text-align: left; vertical-align: top; }
+th { font-weight: var(--w-strong); white-space: nowrap; }
+
+/* 说明与出处：次要文字，不是注释 */
+.note { color: var(--ink-muted); font-size: var(--size-note); }
+
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+
+:focus-visible { outline: 2px solid var(--leaf); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
