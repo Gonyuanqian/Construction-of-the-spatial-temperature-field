@@ -67,6 +67,30 @@ describe('ΔT 第四格的骨架', () => {
   })
 })
 
+describe('三个面板各说各的：前吃 before，后吃 after', () => {
+  it('「约束前」那格吃 before，「约束后」那格吃 after', () => {
+    // 破坏性探针（授权）已证：把 panels 调成 `[after, before, delta]`，**16 条全绿**。
+    // 后果不是「少了个断言」：三格的标题是另一组硬编码字符串（titles），换数据不换标题，
+    // 于是「约束前」那格画着约束后的场 —— 两张温度图共用同一色标、图上不报任何错，
+    // ΔT 格仍是「前−后」，三个面板的叙事整体反了，看的人得到相反的结论。
+    //
+    // 样本取 ix ≠ iz 的格子（after[0][1] === 9）：对角样本转置之后仍在数据里，
+    // 钉不住方向。取 ix=1, iz=0 的 9 一格同时挡住「换面板」与「整图转置」两种错。
+    const p = makePayload({
+      before: [[1, 2], [3, 4]],
+      after: [[1, 9], [3, 4]],
+    })
+    const o = opt(p)
+    expect(o.series[0].data).toContainEqual([1, 0, 2])   // 前：before[0][1]
+    expect(o.series[4].data).toContainEqual([1, 0, 9])   // 后：after[0][1]
+    // 反着再钉一遍：只写正例挡不住「两边都喂同一份」——那时两条断言都绿。
+    expect(o.series[0].data.some((x: any[]) => x[0] === 1 && x[1] === 0 && x[2] === 9),
+      '「约束前」那格画上了约束后的数').toBe(false)
+    expect(o.series[4].data.some((x: any[]) => x[0] === 1 && x[1] === 0 && x[2] === 2),
+      '「约束后」那格画上了约束前的数').toBe(false)
+  })
+})
+
 describe('两张温度图共用一个色标，差异图另用一个', () => {
   it('恰好两个 visualMap', () => {
     const o = opt(makePayload())
