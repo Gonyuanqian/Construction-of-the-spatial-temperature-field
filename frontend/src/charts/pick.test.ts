@@ -16,6 +16,10 @@ import { formatTemp, interpretPick, pickText } from './pick'
  * `stripes` 列的是斜纹格（`[ix, iz]`）：ix=2 那一整列，外加 iz=2、3 的 ix=3。
  * `max_measured_z = 2` —— 但判定**不看它**，判定只读 `stripes`（后端送来的那份事实）。
  * 拱外（null）在左上一角。
+ *
+ * **这个夹具的「不对称」是承重的**：4×4 是方阵，若四行四列的数也对称，
+ * 把 `values[iz][ix]` 写成 `values[ix][iz]` 照样会全绿 —— 而图会整个转置。
+ * 别为了「整齐」把它改成对称的。
  */
 function makeShed(): SectionShed {
   return {
@@ -103,10 +107,14 @@ describe('点选只有三种回答', () => {
 describe('三种回答的文案', () => {
   it('无测量带那句写明了阈值，且阈值来自载荷', () => {
     const payload = makePayload()
-    payload.max_measured_z = 1.1
+    payload.max_measured_z = 0.83
     const text = pickText({ kind: 'unmeasured', z: 1.4 }, payload)
-    expect(text).toContain('1.10')     // 阈值是载荷给的，不是写死在文案里的
+    expect(text).toContain('0.83')
     expect(text).toContain('不报数')
+    // 上面两条挡不住「把阈值写死进文案」—— 写死一个数，它照样能对上。
+    // 换一个载荷再问一次：真正从载荷读的文案会跟着变，写死的不会。
+    payload.max_measured_z = 1.1
+    expect(pickText({ kind: 'unmeasured', z: 1.4 }, payload)).not.toBe(text)
   })
 
   it('拱外那句说清是「无定义」而不是某个数', () => {
