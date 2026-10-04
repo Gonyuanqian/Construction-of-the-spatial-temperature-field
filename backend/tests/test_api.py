@@ -120,6 +120,84 @@ def test_数据集接口报出时间戳修复(client):
     assert fix["n_gaps"] == 0
 
 
+def test_数据集接口报出三项检查与那句说明(client):
+    """Review Focus #5：页① 只列三项，被砍的五项必须自己说出来。"""
+    body = client.get("/api/dataset").json()
+    assert [c["name"] for c in body["checks"]] == ["结构完整性", "时间轴", "缺失"]
+    assert [c["no"] for c in body["checks"]] == [1, 2, 3]
+    assert all(set(c) == {"no", "name", "what", "status", "evidence"}
+               for c in body["checks"])
+    for name in ("值域", "卡死", "跨棚离群", "质量标记", "对齐"):
+        assert name in body["checks_note"]
+
+
+def test_测点带上全时段均值(client):
+    """V1 要在每个测点旁边标注 5 天均值 —— 那是数值，由后端算（硬约束 1）。
+
+    三条一组（棚, 测点, 均值），不是八个测点共用一份均值：
+    同一个点位在三座棚里的均值不一样，只报一个数就把三座棚画成一样了。
+    **它挂在 `temperature` 上，不挂在 `positions` 上** —— 见 Step 7 的说明。
+    """
+    body = client.get("/api/dataset").json()
+    temp = body["temperature"]
+    assert len(temp) == len(body["sheds"]) * len(body["positions"]) == 24
+    assert all(set(t) == {"shed", "position", "mean", "min", "max"} for t in temp)
+    assert {t["shed"] for t in temp} == set(body["sheds"])
+    for t in temp:
+        assert t["min"] <= t["mean"] <= t["max"]
+        assert 0.0 < t["mean"] < 60.0
+
+
+def test_测点的几何形状没有被这次改动动到(client):
+    """`positions` 是**几何**，这一次只在别处加了观测量，几何一个字段都不该多。
+
+    这条测试同时守着「接口没被顺手改宽」—— `positions` 一宽，
+    所有读它的地方都要跟着想一遍「多出来的是不是几何」。
+    """
+    body = client.get("/api/dataset").json()
+    assert all(set(p) == {"id", "x", "z", "layer"} for p in body["positions"])
+
+
+def test_测点均值在退化输入下不会把_NaN_塞进响应体():
+    """⚠️ 本次改动真正的危险点。响应由 `JSONResponse` 序列化，它用
+    `json.dumps(..., allow_nan=False)` —— 任何 NaN/Inf 进了响应体就是
+    `ValueError` → HTTP 500，而不是 null。
+
+    两种退化输入都会算出非有限值：全缺失列 → 均值/极值全是 NaN；
+    空列 → pandas 的 min/max 直接抛 ValueError。两者都必须翻成 None。
+    末了的 `json.dumps(..., allow_nan=False)` 就是「没有非有限浮点逃出去」
+    这句话本身，而不是它的近似。
+    """
+    import json
+
+    import pandas as pd
+
+    from api.routes.dataset import _temperature_stats
+
+    class _AllMissing:
+        # p1 的两个测点：一个正常、一个全缺失。p2/p3 的列刻意不存在。
+        wide = pd.DataFrame({
+            "p1_x0.15_z0.4_temp_C": [25.0, 26.0],
+            "p1_x0.4_z0.7_temp_C": [None, None],
+        })
+        layout = {"x0.15_z0.4": None, "x0.4_z0.7": None}
+
+    class _Empty:
+        wide = pd.DataFrame({"p1_x0.15_z0.4_temp_C": pd.Series(dtype=float)})
+        layout = {"x0.15_z0.4": None}
+
+    for ds in (_AllMissing(), _Empty()):
+        stats = _temperature_stats(ds)
+        json.dumps(stats, allow_nan=False)         # 序列化器怎么配的，这里就怎么验
+        assert all(s["mean"] is None and s["min"] is None and s["max"] is None
+                   or all(v is not None and v == v and abs(v) != float("inf")
+                          for v in (s["mean"], s["min"], s["max"]))
+                   for s in stats)
+    ok = next(s for s in _temperature_stats(_AllMissing())
+              if s["position"] == "x0.15_z0.4")
+    assert ok["min"] <= ok["mean"] <= ok["max"] == 26.0
+
+
 def test_端口配置是_8503_不是别的():
     """Review Focus #5：不许悄悄落到别的端口上。"""
     assert paths.API_PORT == 8503
