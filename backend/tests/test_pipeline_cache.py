@@ -85,16 +85,30 @@ def test_没有标定包时键里是空串而不是_None():
 
 
 def test_超容量按_LRU_淘汰():
-    # 这个 cache 用内联 lambda 当 builder，所以不记账 —— 它只验淘汰次序本身。
-    c = PipelineCache(builder=lambda ds, g, b: f"pipe@{ds.signature}", capacity=2)
+    """容量 2，而且**必须记账** —— 只断言返回值的话，这条测试验不了 LRU。
+
+    `pipe@{signature}` 是确定的：不管命中的是缓存里的旧对象还是刚重建的新对象，
+    返回值都一样。若只断言返回值，「命中不提升（FIFO）」与「淘汰错了对象」两种
+    实现都能通过 —— 而这条测试的名字许诺的正是它们不能通过。
+    所以断言的是**构建次序**：a 只被构建过一次（说明第 3 步的命中确实把它提到了
+    队尾，否则第 4 步被淘汰的就是它），b 被构建过两次（说明第 4 步淘汰的确实是它）。
+    """
+    built: list = []
+
+    def builder(ds, groups, bundle):
+        built.append(ds.signature)
+        return f"pipe@{ds.signature}"
+
+    c = PipelineCache(builder=builder, capacity=2)
     b = FakeBundle("t1")
-    c.get(FakeDs("a"), GROUPS, b)
-    c.get(FakeDs("b"), GROUPS, b)
-    c.get(FakeDs("a"), GROUPS, b)      # a 命中，提到队尾
-    c.get(FakeDs("c"), GROUPS, b)      # 淘汰最久未用的 b
-    assert c.get(FakeDs("a"), GROUPS, b) == "pipe@a"   # a 还在
-    assert c.get(FakeDs("c"), GROUPS, b) == "pipe@c"   # c 还在
-    assert c.get(FakeDs("b"), GROUPS, b) == "pipe@b"   # b 被淘汰过，重新构建
+    c.get(FakeDs("a"), GROUPS, b)      # 建 a      → [a]
+    c.get(FakeDs("b"), GROUPS, b)      # 建 b      → [a, b]
+    c.get(FakeDs("a"), GROUPS, b)      # a 命中，提到队尾 → [b, a]
+    c.get(FakeDs("c"), GROUPS, b)      # 建 c，淘汰最久未用的 b → [a, c]
+    c.get(FakeDs("a"), GROUPS, b)      # 命中，不重建
+    c.get(FakeDs("c"), GROUPS, b)      # 命中，不重建
+    c.get(FakeDs("b"), GROUPS, b)      # 上一步被淘汰的是它，重建 → [c, b]
+    assert built == ["a", "b", "c", "b"]
 
 
 def test_并发下同一个键只构建一次():

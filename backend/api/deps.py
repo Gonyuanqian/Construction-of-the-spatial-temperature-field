@@ -88,8 +88,6 @@ def _build_pipeline(ds: Dataset, groups: tuple[str, ...], bundle) -> FieldPipeli
     这条路在界面上必须标成「未标定」—— 兜底参数与标定后的数**同折族、不同参数**，
     大小不可直接比。
     """
-    from . import paths
-    assert paths is not None  # 保持 import 形态一致；paths 在下面 get_pipeline 里真用
     cfg = bundle.config() if bundle is not None else PipelineConfig.fallback()
     return FieldPipeline(cfg, ds).fit(build_features(ds, groups), ds)
 
