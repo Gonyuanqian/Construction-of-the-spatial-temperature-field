@@ -213,3 +213,114 @@ def test_认不出的棚是_400(client):
     r = client.get("/api/field/curve", params={"shed": "p9", "x": 1.0, "z": 0.5})
     assert r.status_code == 400
     assert "shed" in r.json()["detail"]
+
+
+def test_对比的形状与状态码(client):
+    r = client.get("/api/field/compare", params={"shed": "p1", "t_index": 12})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    for k in ("shed", "y", "t_index", "time", "n_times", "preset", "x", "z",
+              "arch", "sensors", "max_measured_z", "before", "after", "delta",
+              "stripes", "vmin", "vmax", "delta_vmax", "light", "gate_open",
+              "gate_label", "identical", "note"):
+        assert k in body, f"载荷少了 {k}"
+    assert body["y"] == 3.0
+    assert len(body["before"]) == len(body["after"]) == len(body["delta"])
+
+
+def test_白天两张图确实不同(client):
+    """反过来的一天：门禁开着时，软投影必须真的动了这个场。
+
+    要是「开」与「关」算出来一模一样，那这个门禁就没在做事，
+    而第四格会是一整片零 —— 看起来像是「约束很温和」。
+    """
+    body = client.get("/api/field/compare", params={"shed": "p1", "t_index": 12}).json()
+    assert body["light"] > 0
+    assert body["gate_open"] is True
+    assert body["identical"] is False
+    assert body["delta_vmax"] > 0
+
+
+def test_夜里两张图逐位相同(client):
+    """spec §七 V5：门禁关闭时两张图**逐位相同** —— 图上照实说。
+
+    没有这一步，「夜里不变」就只是 docstring 里的一句话。
+    """
+    from api.deps import get_pipeline
+    from tfield.field.constraints import light_at
+
+    pipe = get_pipeline()
+    n_times = int(pipe.ds.wide.shape[0])
+    night = next((t for t in range(n_times) if light_at(pipe, t) == 0.0), None)
+    assert night is not None, (
+        "这 5 天里一个无光照的时刻都没有 —— 门禁「关」的那一态就没被测到"
+    )
+
+    body = client.get("/api/field/compare",
+                      params={"shed": "p1", "t_index": int(night)}).json()
+    assert body["light"] == 0.0
+    assert body["gate_open"] is False
+    assert body["identical"] is True
+    assert body["delta_vmax"] == 0.0
+    assert body["gate_label"] == "关（无光照，严格不变）"
+    assert body["before"] == body["after"], "夜里两张图不一样 —— 门禁没关上"
+
+
+def test_delta_是约束前减约束后(client):
+    """签号方向要在后端定死、在界面上写清。定在界面上的话，两处迟早不一致。"""
+    body = client.get("/api/field/compare", params={"shed": "p1", "t_index": 12}).json()
+    changed = 0
+    for iz, row in enumerate(body["delta"]):
+        for ix, d in enumerate(row):
+            b, a = body["before"][iz][ix], body["after"][iz][ix]
+            if b is None or a is None:
+                assert d is None, f"({ix},{iz}) 场是 null，delta 却不是"
+                continue
+            assert d == b - a, f"({ix},{iz}): delta {d!r} != before-after {b - a!r}"
+            if d != 0:
+                changed += 1
+    assert changed > 0, "白天居然一格都没变"
+
+
+def test_before_after_与切面图逐位相同(client, sections):
+    """**第四格画的必须就是第一格那片场。**
+
+    `field_at` 在 y 恰好等于某个棚的 y 时会短路到该断面（build.py:139-142），
+    所以 `compare` 的 before/after 与 `sections` 的对应格**逐位相等**。
+    两个面板画同一片场却各不相同，是最难查的一类错 —— 这条把它焊死。
+    """
+    t = sections["t_index"]
+    off = client.get("/api/field/sections",
+                     params={"t_index": t, "monotonic": False}).json()
+    on = client.get("/api/field/sections",
+                    params={"t_index": t, "monotonic": True}).json()
+    cmp = client.get("/api/field/compare", params={"shed": "p1", "t_index": t}).json()
+
+    cell_off = next(s for s in off["sheds"] if s["shed"] == "p1")["values"]
+    cell_on = next(s for s in on["sheds"] if s["shed"] == "p1")["values"]
+    assert cmp["before"] == cell_off, "第四格的「约束前」与切面图对不上"
+    assert cmp["after"] == cell_on, "第四格的「约束后」与切面图对不上"
+
+
+def test_delta_的范围是对称的(client):
+    """发散色标的中点必须在 0。不对称的话「没变」会被画成一个有颜色的格子。"""
+    body = client.get("/api/field/compare", params={"shed": "p1", "t_index": 12}).json()
+    m = body["delta_vmax"]
+    assert m >= 0
+    for row in body["delta"]:
+        for d in row:
+            if d is not None:
+                assert -m - 1e-12 <= d <= m + 1e-12
+
+
+def test_拱外是_null_且接口是_200(client):
+    """与 Task 2 同一条：`allow_nan=False` 会把 NaN 变成 500。"""
+    body = client.get("/api/field/compare", params={"shed": "p1", "t_index": 12}).json()
+    assert any(v is None for row in body["before"] for v in row)
+
+
+def test_对比的越界参数也是_400(client, sections):
+    assert client.get("/api/field/compare",
+                      params={"shed": "p1", "t_index": sections["n_times"]}).status_code == 400
+    assert client.get("/api/field/compare",
+                      params={"shed": "p1", "preset": "ultra"}).status_code == 400

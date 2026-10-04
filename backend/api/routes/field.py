@@ -16,8 +16,8 @@ from fastapi import APIRouter, HTTPException, Query
 
 from tfield import config as C
 from tfield.field.arch import arch_height, arch_mask
-from tfield.field.build import section_field
-from tfield.field.constraints import MonotonicConfig
+from tfield.field.build import field_at, section_field
+from tfield.field.constraints import MonotonicConfig, light_at
 from tfield.field.grid import GRID_PRESETS, GridSpec
 
 from .. import deps
@@ -208,4 +208,78 @@ def get_curve(
         "values": _finite_or_none(values),
         "defined": bool(defined),
         "note": CURVE_NOTE,
+    }
+
+
+@router.get("/field/compare")
+def get_compare(
+    shed: str = Query(..., description="棚号"),
+    t_index: int = Query(0, description="时刻下标"),
+    preset: str = Query(DEFAULT_PRESET, description="网格档位"),
+) -> dict[str, Any]:
+    """竖直软单调投影的前后对比。**门禁关闭时两张图逐位相同**（夜里无光照）。
+
+    这里走 `field_at(y = 该棚的 y)` 而不是 `section_field`：y 恰好撞上某个棚的 y 时
+    `field_at` 会短路到该断面（build.py:139-142），两条路径**逐位相等** ——
+    第四格画的因此就是第一格那片场。用 `section_field` 也行，但那样
+    「两张图必须同源」就只是一句约定，而不是一条可测的性质。
+    """
+    if shed not in C.SHED_ORDER:
+        allowed = "、".join(C.SHED_ORDER)
+        raise HTTPException(400, f"认不出的 shed：{shed!r}（可选：{allowed}）")
+
+    grid = _check_preset(preset)
+    pipe = deps.get_pipeline()
+    n_times = int(pipe.ds.wide.shape[0])
+    t_index = _check_t_index(t_index, n_times)
+    y = float(C.SHED_Y[shed])
+
+    before = field_at(pipe, y, t_index, grid)
+    after = field_at(pipe, y, t_index, grid, monotonic=MonotonicConfig(enabled=True))
+    light = float(light_at(pipe, t_index))
+    gate_open = light > 0
+
+    # ΔT = 约束前 − 约束后（spec §七 V5 的签号方向）。
+    # 正值 = 这一格被约束压低了；负值 = 被抬高了。
+    # 单调投影沿 z 投影（PAVA 把违反块换成块内加权均值），所以两个方向都真的会出现 ——
+    # 不能写成 abs()。写成 abs 的话图上就只剩「改了多少」，看不出改的方向，
+    # 而那正是这张图要回答的问题。
+    delta = np.asarray(before.values, dtype=float) - np.asarray(after.values, dtype=float)
+    finite = np.isfinite(delta)
+    delta_vmax = float(np.max(np.abs(delta[finite]))) if finite.any() else 0.0
+    vmin, vmax = temp_range(before.values, after.values)
+    identical = bool(np.array_equal(before.values, after.values, equal_nan=True))
+
+    return {
+        "shed": shed,
+        "y": y,
+        "t_index": t_index,
+        "time": str(pipe.ds.wide[C.COL_TIMESTAMP].iloc[t_index]),
+        "n_times": n_times,
+        "preset": preset,
+        "x": [float(v) for v in before.x],
+        "z": [float(v) for v in before.z],
+        "arch": _arch_polyline(),
+        "sensors": _sensors(),
+        "max_measured_z": float(C.MAX_MEASURED_Z),
+        "before": _grid_or_none(before.values),
+        "after": _grid_or_none(after.values),
+        "delta": _grid_or_none(delta),
+        # 与 /field/sections 送出的是**同一份事实**。前端不许自己从 x/z/max_measured_z
+        # 推一遍 —— 那是把后端的一条规则实现了第二遍（硬约束 1）。
+        # np.nonzero 返回 (行, 列) = (z, x)；契约要的是 [ix, iz]，所以接的时候倒过来。
+        "stripes": [[int(c), int(r)]
+                    for r, c in zip(*np.nonzero(before.outside_measured))],
+        "vmin": vmin,
+        "vmax": vmax,
+        "delta_vmax": delta_vmax,
+        "light": light,
+        "gate_open": gate_open,
+        "gate_label": "开（有光照）" if gate_open else "关（无光照，严格不变）",
+        "identical": identical,
+        "note": (
+            "竖直软单调投影的逐格差，签号是「约束前 − 约束后」："
+            "正值 = 这一格被约束压低了，负值 = 被抬高了。"
+            "左中两格共用同一个色标范围，右格用对称的发散色标（中点必须落在 0）。"
+        ),
     }
