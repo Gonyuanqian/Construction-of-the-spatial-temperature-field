@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { SectionsPayload, SectionShed } from '../../api/types'
 import type { Palette } from '../../design/palette'
+import { interpretPick, pickText } from '../pick'
 import {
   buildSectionFieldOption, cellTooltip, SERIES_PER_SHED, shedOfSeries,
 } from './sectionField'
@@ -127,8 +128,10 @@ describe('颜色只能来自那一个色标', () => {
   it('热力场的数据项是 [ix, iz, 值]，且不含 null', () => {
     const o = opt(makePayload())
     const d = o.series[1].data
-    expect(d).toContainEqual([0, 0, 1])
-    expect(d).toContainEqual([3, 3, 4])
+    // 样本必须 ix ≠ iz，且转置后的项不在数据里 —— 否则 [ix, iz, v] 与
+    // [iz, ix, v] 在这两条断言下同样为真，测试就钉不住自己的名字。
+    expect(d).toContainEqual([1, 0, 2])
+    expect(d).toContainEqual([3, 2, 4])
     expect(d.some((x: any[]) => x[2] === null), '拱外不该进热力场').toBe(false)
   })
 })
@@ -183,6 +186,26 @@ describe('点选的三种回答在图上都到得了', () => {
     const p = makePayload()
     p.sheds[0].values[1][1] = 43.216137
     expect(cellTooltip(p, 'p1', 1, 1)).toContain('43.22')
+  })
+
+  it('cellTooltip 就是 pickText(interpretPick(…))，不是第二套判定', () => {
+    // 判定散开写，「第四种回答」就会从其中一处漏出来（外推值被当成实测值，
+    // 不报错，只是让人以为自己看到的是真的）。这条把「只有一处」钉死：
+    // 只要 cellTooltip 自己重写哪怕一个字的措辞，这里就红。
+    const payload = makePayload()
+    const shed = payload.sheds[0]
+    const seen = new Set<string>()
+    for (let iz = 0; iz < shed.values.length; iz++) {
+      for (let ix = 0; ix < shed.values[iz].length; ix++) {
+        const r = interpretPick(payload, shed.shed, ix, iz)
+        seen.add(r.kind)
+        expect(cellTooltip(payload, shed.shed, ix, iz), `(${ix},${iz})`)
+          .toBe(pickText(r, payload))
+      }
+    }
+    // 顺带把「这一轮真的问过三种回答」也钉住 —— 否则夹具退化成只剩一种 kind 时，
+    // 上面的循环仍在跑、却什么都没覆盖到。
+    expect([...seen].sort()).toEqual(['outside', 'unmeasured', 'value'])
   })
 })
 
