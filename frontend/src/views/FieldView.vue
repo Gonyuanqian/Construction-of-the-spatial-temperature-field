@@ -119,8 +119,12 @@ const failure = computed(() =>
     <h2>空间温度场的构建</h2>
 
     <!-- 左栏控件。App.vue 把整列交给了 NavRail，所以这里投进它留的落点
-         （spec §8.3：左栏是窄的仪器侧栏，导航 + 视图切换 + 时刻游标）。 -->
-    <Teleport to="#rail-extra">
+         （spec §8.3：左栏是窄的仪器侧栏，导航 + 视图切换 + 时刻游标）。
+         `defer`：落点 `#rail-extra` 由 NavRail 渲染，与本页同在一棵树里；
+         Vue 挂载时**先把子挂完再把父插进文档**，所以本页挂载的那一刻，
+         `#rail-extra` 还没进文档、按字符串找不着。`defer` 把落点解析推迟到
+         整棵树挂完之后的 post-flush —— 那时落点已在文档里。 -->
+    <Teleport defer to="#rail-extra">
       <fieldset class="rail-box">
         <legend>视图</legend>
         <button

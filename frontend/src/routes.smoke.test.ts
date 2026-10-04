@@ -19,13 +19,31 @@
  *   `/api/dataset`、`/api/dataset/timeseries`、`/api/dataset/layer-timeheight`、
  *   `/api/features` 的**真实响应体**；`test_api_train.py` 扫标定包那一份。
  */
-import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory } from 'vue-router'
 
 import App from './App.vue'
 import { createAppRouter } from './router'
 import { NAV_ITEMS } from './design/copy'
+
+/**
+ * 挂到 `document.body` 上、每条用例后自动卸载。
+ *
+ * **为什么必须挂上去**：页③ 用 `<Teleport to="#rail-extra">` 把左栏控件投进
+ * NavRail 的落点，而字符串选择器的落点是**在 `document` 上**用 `querySelector`
+ * 找的 —— 落点必须真的在文档里才找得到。VTU 的 `mount` 默认把容器建在**游离**的
+ * div 里（源码里 `attachTo` 是可选分支，不给就 `app.mount(el)` 到一个没进文档的
+ * el）。脱离文档挂载时 `#rail-extra` 找不着，Teleport 子树一个都不挂载（每个
+ * vnode 的 `el` 都是 null），下一次取数回来的重渲染就对着这批从未挂载的旧 vnode
+ * 调 `patchElement` → `Cannot set properties of null (setting '__vnode')`。
+ *
+ * 真实浏览器里应用挂在 `#app` 上，落点找得到，所以**测试也必须挂上去**，
+ * 走浏览器那条路 —— 而不是把 Teleport stub 掉（那等于把这条覆盖又蒙上）。
+ * （落点**在挂载期**还进没进文档，是另一半问题，由 FieldView 的 `defer` 解决；
+ * 两者缺一不可，见 FieldView.vue 的注释。）
+ */
+enableAutoUnmount(afterEach)
 
 // EChart 在 jsdom 里没有 canvas，这里换掉它 —— 冒烟测的是路由，不是画图。
 // `vi.mock` 会被提升到文件顶端，放这里与放 beforeEach 里等价；写在模块作用域
@@ -123,7 +141,7 @@ describe('路由冒烟', () => {
       const router = createAppRouter(createMemoryHistory())
       await router.push(item.to)
       await router.isReady()
-      const w = mount(App, { global: { plugins: [router] } })
+      const w = mount(App, { attachTo: document.body, global: { plugins: [router] } })
       await flushPromises()
       expect(router.currentRoute.value.path).toBe(item.to)
       expect(w.text()).toContain(item.label)
