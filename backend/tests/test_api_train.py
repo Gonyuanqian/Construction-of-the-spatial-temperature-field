@@ -271,3 +271,23 @@ def test_没有标定包时也要答得出来(monkeypatch, tmp_path):
     assert b["metrics"] == [] and b["per_point"] == []
     assert {p["param"] for p in b["params"]} >= {"metric.lx", "metric.lz", "metric.power"}
     assert "兜底" in b["note"]
+
+
+def test_上屏文案干净_没有被禁的连接符与_markdown_星号(client):
+    """spec §8.5 禁的三种连接符（中点元信息串 / 带空格的破折号 / 箭头）与
+    会漏成字面字符的 `**`，只许出现在注释与 docstring 里；随响应体上屏的
+    纯文本必须干净。
+
+    ⚠️ 这条同时盯 `_params` 与 `_fallback_params` 两份文案 —— 「固定 1.0…」那句
+    两边各有一份，只测一份会漏掉另一份。
+    """
+    from api.routes.calibration import _fallback_params
+    from tfield.pipeline import PipelineConfig
+
+    b = client.get("/api/calibration").json()
+    rendered = [b["note"], b["reason"] or "", b["ab_note"], b["lz_note"] or ""]
+    rendered += [p["note"] for p in b["params"]]
+    rendered += [p["note"] for p in _fallback_params(PipelineConfig.fallback())]
+    for s in rendered:
+        for bad in ("——", "**", " · ", "→", "↳"):
+            assert bad not in s, f"上屏文案里出现了被禁的 {bad!r}：{s!r}"

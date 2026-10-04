@@ -30,18 +30,18 @@ CONFIGS_ROOT = paths.CONFIGS
 
 #: 口径说明。缺了它，页② 上那几个数就会被读成「这个模型的最好水平」。
 CALIBRATION_NOTE = (
-    "「最优」最优的对象是**这一份数据集 + 这一组特征组 + 留一测点这个准则**，"
-    "而且参数只在 A 组（调参组）上挑出来的 —— B 组（报告组）自始至终只报数。"
+    "「最优」最优的对象是这一份数据集 + 这一组特征组 + 留一测点这个准则，"
+    "而且参数只在 A 组（调参组）上挑出来的；B 组（报告组）自始至终只报数。"
     "没有标定包时用的是 `FALLBACK_*` 兜底参数：那不是最优，只是不在坏角上。"
-    "**兜底参数与标定后的数同折族、不同参数，两个数不可直接比大小。**"
+    "兜底参数与标定后的数同折族、不同参数，两个数不可直接比大小。"
 )
 
 NO_BUNDLE_REASON = (
-    "这一份数据集还没有标定包。下面报的是兜底参数 —— 它不是最优，"
+    "这一份数据集还没有标定包。下面报的是兜底参数：它不是最优，"
     "只是不在坏角上；要拿到最优参数需要跑一次标定。"
 )
 
-_AB_NOTE = ("gap = A 组 MAE − B 组 MAE。**负数是好消息**：A 组是挑参数用的那一组，"
+_AB_NOTE = ("gap = A 组 MAE − B 组 MAE。负数是好消息：A 组是挑参数用的那一组，"
             "它比 B 组好是必然的；这个差有多大，才说明「调参调出来的是不是只对 A 组有效」。")
 
 
@@ -229,7 +229,7 @@ def _params(bundle) -> list[dict[str, str]]:
     rows = [
         ("metric.power", m.power, "IDW 距离幂"),
         ("metric.lx", m.lx, "IDW 棚长方向尺度 / m"),
-        ("metric.ly", m.ly, "固定 1.0 —— 从未进过搜索空间"),
+        ("metric.ly", m.ly, "固定 1.0，从未进过搜索空间"),
         ("metric.lz", m.lz, "IDW 竖直方向尺度 / m"),
         ("cross_shed", bundle.cross_shed, "跨棚邻居是否参与（独立开关，不是 metric 字段）"),
     ]
@@ -245,7 +245,7 @@ def _fallback_params(cfg) -> list[dict[str, str]]:
     rows = [
         ("metric.power", m.power, "IDW 距离幂"),
         ("metric.lx", m.lx, "IDW 棚长方向尺度 / m"),
-        ("metric.ly", m.ly, "固定 1.0 —— 从未进过搜索空间"),
+        ("metric.ly", m.ly, "固定 1.0，从未进过搜索空间"),
         ("metric.lz", m.lz, "IDW 竖直方向尺度 / m"),
         ("cross_shed", cfg.cross_shed, "跨棚邻居是否参与"),
     ]
@@ -266,6 +266,6 @@ def _lz_note(bundle) -> str | None:
     lo = min(bundle.search.space["idw.lz"])
     if abs(bundle.metric.lz - lo) < 1e-12:
         return (f"⚠️ lz = {ported.fmt_value(bundle.metric.lz)} 落在搜索下界"
-                f"（{ported.fmt_value(lo)}）—— 这**不是**已收敛，而是「还没扫够」。"
+                f"（{ported.fmt_value(lo)}），这不是已收敛，而是「还没扫够」。"
                 f"可以解释为 IDW 主要吃同层邻居，但在外扩下界复测之前不要当成结论。")
     return None

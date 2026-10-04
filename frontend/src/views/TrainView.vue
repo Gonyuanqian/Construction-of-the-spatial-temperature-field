@@ -33,6 +33,17 @@ const failure = computed(() =>
   [features.error.value, cal.error.value].filter(Boolean).join('；'))
 
 const worstFold = computed(() => cal.data.value?.worst_fold?.fold ?? '')
+
+/**
+ * 指标渲染：v 为 null 时显示单个 em 破折号「—」（两侧不带空格）。
+ *
+ * ⚠️ 区分：spec §8.5 禁的是**两侧带空格的**破折号（以及中点元信息串与箭头
+ * 连接符）；裸的「—」是表格里「无值」的标准字形，不是被禁的那个东西。
+ * 后端把 NaN / ±Inf 翻成 null，这里遇到 null 就显示「无值」——
+ * 不许当 0，不许编一个数，更不许把那一行藏起来（那一折真实存在，藏就是漏报）。
+ */
+const fmt = (v: number | null, digits: number): string =>
+  v === null ? '—' : v.toFixed(digits)
 </script>
 
 <template>
@@ -45,7 +56,7 @@ const worstFold = computed(() => cal.data.value?.worst_fold?.fold ?? '')
     <div class="block">
       <h3>特征值的构造</h3>
       <p class="note">
-        模型看到的每一列都在下面。列名不是这一页写的，是从后端库的定义里问出来的 ——
+        模型看到的每一列都在下面。列名不是这一页写的，是从后端库的定义里问出来的；
         有人加了特征，这张表会跟着变。
       </p>
       <table v-if="features.data.value">
@@ -75,7 +86,7 @@ const worstFold = computed(() => cal.data.value?.worst_fold?.fold ?? '')
       <h3>最优参数的选择</h3>
 
       <p v-if="cal.data.value && !cal.data.value.present" class="unset">
-        <strong>未标定</strong> —— {{ cal.data.value.reason }}
+        <strong>未标定</strong>：{{ cal.data.value.reason }}
       </p>
       <p v-if="cal.data.value?.note" class="note caveat">
         {{ cal.data.value.note }}
@@ -114,7 +125,7 @@ const worstFold = computed(() => cal.data.value?.worst_fold?.fold ?? '')
 
       <template v-if="cal.data.value?.plateau.length">
         <h4>平台区间（最优 +1% 以内的范围）</h4>
-        <p class="note">这些值不是碰巧挑中的 —— 区间越宽，说明这个维度越不敏感。</p>
+        <p class="note">这些值不是碰巧挑中的；区间越宽，说明这个维度越不敏感。</p>
         <table>
           <thead><tr><th>维度</th><th>下界</th><th>上界</th></tr></thead>
           <tbody>
@@ -155,9 +166,9 @@ const worstFold = computed(() => cal.data.value?.worst_fold?.fold ?? '')
               </td>
               <td>{{ m.region }}</td>
               <td>{{ m.group }}</td>
-              <td class="num">{{ m.mae.toFixed(4) }}</td>
-              <td class="num">{{ m.rmse.toFixed(4) }}</td>
-              <td class="num">{{ m.r2.toFixed(4) }}</td>
+              <td class="num">{{ fmt(m.mae, 4) }}</td>
+              <td class="num">{{ fmt(m.rmse, 4) }}</td>
+              <td class="num">{{ fmt(m.r2, 4) }}</td>
               <td class="num">{{ m.n }}</td>
             </tr>
           </tbody>
@@ -169,10 +180,10 @@ const worstFold = computed(() => cal.data.value?.worst_fold?.fold ?? '')
           <table>
             <tbody>
               <tr><th>A 组 MAE（挑参数用的那一组）</th>
-                  <td class="num">{{ cal.data.value.ab.mae_a.toFixed(6) }}</td></tr>
+                  <td class="num">{{ fmt(cal.data.value.ab.mae_a, 6) }}</td></tr>
               <tr><th>B 组 MAE（自始至终只报数）</th>
-                  <td class="num">{{ cal.data.value.ab.mae_b.toFixed(6) }}</td></tr>
-              <tr><th>gap</th><td class="num">{{ cal.data.value.ab.gap.toFixed(6) }}</td></tr>
+                  <td class="num">{{ fmt(cal.data.value.ab.mae_b, 6) }}</td></tr>
+              <tr><th>gap</th><td class="num">{{ fmt(cal.data.value.ab.gap, 6) }}</td></tr>
             </tbody>
           </table>
           <p class="note">{{ cal.data.value.ab_note }}</p>
@@ -190,9 +201,9 @@ const worstFold = computed(() => cal.data.value?.worst_fold?.fold ?? '')
                 <td>{{ p.shed }}</td>
                 <td class="num">{{ p.position }}</td>
                 <td class="num">{{ p.layer }}</td>
-                <td class="num">{{ p.mae.toFixed(4) }}</td>
-                <td class="num">{{ p.rmse.toFixed(4) }}</td>
-                <td class="num">{{ p.r2.toFixed(4) }}</td>
+                <td class="num">{{ fmt(p.mae, 4) }}</td>
+                <td class="num">{{ fmt(p.rmse, 4) }}</td>
+                <td class="num">{{ fmt(p.r2, 4) }}</td>
                 <td class="num">{{ p.n }}</td>
               </tr>
             </tbody>
@@ -200,7 +211,7 @@ const worstFold = computed(() => cal.data.value?.worst_fold?.fold ?? '')
         </template>
 
         <p class="note">
-          这些数全部**原样来自标定包**（<Provenance kind="pack" />），不是这一页重算的 ——
+          这些数全部<strong>原样来自标定包</strong>（<Provenance kind="pack" />），不是这一页重算的；
           重算一遍会得到略微不同的数，于是页面上的数与盘上包里的数对不上。
         </p>
       </template>

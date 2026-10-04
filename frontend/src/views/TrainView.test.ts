@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
 import TrainView from './TrainView.vue'
+import { NAV_ITEMS } from '../design/copy'
 
 const FEATURES = {
   default_groups: ['coord', 'zbasis', 'meteo', 'interaction'],
@@ -33,10 +34,10 @@ const CAL = {
   tuned_keys: [{ key: 'metric.power', value: '0.5', space: '0.5、1、2' }],
   params: [
     { param: 'metric.power', value: '0.5', note: 'IDW 距离幂' },
-    { param: 'metric.ly', value: '1', note: '固定 1.0 —— 从未进过搜索空间' },
+    { param: 'metric.ly', value: '1', note: '固定 1.0，从未进过搜索空间' },
   ],
   plateau: [{ dim: 'power', lo: '0.5', hi: '2' }],
-  lz_note: '⚠️ lz = 0.005 落在搜索下界（0.005）—— 这不是已收敛。',
+  lz_note: '⚠️ lz = 0.005 落在搜索下界（0.005），这不是已收敛。',
   metrics: [
     { mae: 0.1172, rmse: 0.1641, r2: 0.999, fold_kind: 'position',
       fold: 'position:x0.15_z0.4', region: '切面内', group: 'A', n: 3924, tag: 'calibration' },
@@ -153,5 +154,61 @@ describe('页② 模型训练', () => {
     const w = mount(TrainView)
     await flushPromises()
     expect(w.text()).toContain('随标定包')
+  })
+
+  it('页标题就是导航里那条的标签（房规：页标题 = 导航标签）', async () => {
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.find('h2').text())
+      .toBe(NAV_ITEMS.find((i) => i.key === 'train')!.label)
+  })
+
+  it('某折的 MAE 是 null 时那行照样渲染，无值显示单个破折号「—」', async () => {
+    // 后端把 NaN/Inf 翻成 null（`calibration.py:_finite`），「这一折算不出来」
+    // 是合法状态。断言**渲染成功** —— 失败形态是未处理的 async rejection，
+    // 只写「mount 不抛」会假绿，所以这里要求那一折的行真的出现在表里。
+    stub({
+      '/api/features': FEATURES,
+      '/api/calibration': {
+        ...CAL,
+        metrics: [
+          { ...CAL.metrics[0] },
+          { ...CAL.metrics[1], mae: null, rmse: null, r2: null },
+        ],
+      },
+    })
+    const w = mount(TrainView)
+    await flushPromises()
+    const rows = w.findAll('tbody tr').map((r) => r.text())
+    const row = rows.find((t) => t.includes('position:x0.4_z0.7'))
+    expect(row, '这一折真实存在，指标为 null 不能让它整行消失').toBeDefined()
+    expect(row).toContain('—')
+  })
+
+  it('A/B 组的数也可以是 null，表格显示无值而不是崩', async () => {
+    stub({
+      '/api/features': FEATURES,
+      '/api/calibration': { ...CAL, ab: { mae_a: null, mae_b: 0.162401, gap: null } },
+    })
+    const w = mount(TrainView)
+    await flushPromises()
+    const rows = w.findAll('tbody tr').map((r) => r.text())
+    const rowA = rows.find((t) => t.includes('挑参数用的那一组'))
+    expect(rowA, 'A 组那一行要渲染出来').toBeDefined()
+    expect(rowA).toContain('—')
+  })
+
+  it('上屏的文字里没有被禁的连接符与 markdown 星号', async () => {
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    const text = w.text()
+    // 单个「—」是表格里「无值」的占位，不禁；被禁的是连接词用的成对破折号。
+    expect(text).not.toContain('——')
+    expect(text).not.toContain('**')            // markdown 星号不许漏成字面字符
+    expect(text).not.toContain(' · ')           // 中点元信息串
+    expect(text).not.toContain('→')
+    expect(text).not.toContain('↳')
   })
 })

@@ -143,12 +143,21 @@ export interface TunedKeyRow { key: string; value: string; space: string }
 export interface ParamRow { param: string; value: string; note: string }
 export interface PlateauRow { dim: string; lo: string; hi: string }
 export interface MetricRow {
-  mae: number; rmse: number; r2: number
+  /**
+   * ⚠️ mae / rmse / r2 都是 `number | null`。后端 `calibration.py:_jsonable`
+   * 对浮点再过一道 `_finite`，把 NaN / ±Inf 翻成 None（`allow_nan=False` 的
+   * JSONResponse 不吃 NaN）。「这一折的指标算不出来」在线上就是 null ——
+   * 不是 0，也不是整行缺失。后端为此专门写了测试（单折 MAE=NaN 记为 null），
+   * 所以这是**后端承认的合法状态**，前端必须容。
+   */
+  mae: number | null; rmse: number | null; r2: number | null
   fold_kind: string; fold: string; region: string; group: string; n: number; tag: string
 }
 export interface PerPointRow {
   sensor_id: number; shed: string; position: string; layer: string
-  group: string; n: number; mae: number; rmse: number; r2: number
+  group: string; n: number
+  /** ⚠️ 同 MetricRow：`_finite` 把非有限浮点翻成 null（逐点的 MAE/RMSE/R² 也一样）。 */
+  mae: number | null; rmse: number | null; r2: number | null
 }
 
 export interface CalibrationPayload {
@@ -181,10 +190,11 @@ export interface CalibrationPayload {
   metrics: MetricRow[]
   per_point: PerPointRow[]
   /**
-   * ⚠️ 可以是 null。没有标定包时没有 A/B 对照这一组数；有包时才是
-   * `{ mae_a, mae_b, gap }`。
+   * ⚠️ 整个 ab 块可以是 null（没有标定包时没有 A/B 对照这一组数）。
+   * 块内三个浮点也都可以是 null —— 它们同样过 `_finite`，非有限翻成 null
+   * （见 MetricRow 的说明）。
    */
-  ab: { mae_a: number; mae_b: number; gap: number } | null
+  ab: { mae_a: number | null; mae_b: number | null; gap: number | null } | null
   /** ⚠️ 可以是 null：没有包时没有折的种类。 */
   fold_kind: string | null
   n_folds: number
