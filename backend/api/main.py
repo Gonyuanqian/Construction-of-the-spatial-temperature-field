@@ -28,6 +28,14 @@ from .routes import field as field_routes
 VITE_DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
 
+def _is_api_path(path: str) -> bool:
+    """/api 与 /api/** 都算接口路径。**裸 `/api` 也要算** ——
+    只写 `startswith("/api/")` 的话，少一个斜杠的 `/api`（接口路径写错最常见
+    的形态）会漏进前端回退，被伪装成一张 200 的空页面。`scope["path"]` 不含
+    query，所以 `?x=1` 之类不必在这里处理。"""
+    return path == "/api" or path.startswith("/api/")
+
+
 class SPAStaticFiles(StaticFiles):
     """静态产物 + SPA history 回退。
 
@@ -41,9 +49,9 @@ class SPAStaticFiles(StaticFiles):
     index.html（MIME 全错，浏览器拒绝执行脚本，页面白屏）。子类只在**基类已经
     判定 404 之后**才插手，产物文件走的是同一条 `file_response`，MIME 一个字节不变。
 
-    **为什么 `/api/` 要重新抛出**：回退做宽了，「接口名写错」（`/api/date`）会被
-    回一张 200 的 index.html，前端路由再把未知路径重定向回页① —— 报错信号彻底
-    消失，比一个诚实的 404 危险得多。
+    **为什么 `/api` 与 `/api/**` 要重新抛出**：回退做宽了，「接口名写错」（`/api/date`）
+    会被回一张 200 的 index.html，前端路由再把未知路径重定向回页① —— 报错信号彻底
+    消失，比一个诚实的 404 危险得多。判据见 `_is_api_path`（裸 `/api` 也算）。
     """
 
     def __init__(self, *, directory: str, **kwargs: Any) -> None:
@@ -56,7 +64,7 @@ class SPAStaticFiles(StaticFiles):
         try:
             return await super().get_response(path, scope)
         except HTTPException as exc:
-            if exc.status_code == 404 and not scope["path"].startswith("/api/"):
+            if exc.status_code == 404 and not _is_api_path(scope["path"]):
                 # 交给前端路由去分派（`/:rest(.*)*` 会落回页①）。
                 return FileResponse(self._index)
             raise

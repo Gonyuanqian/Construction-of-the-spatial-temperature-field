@@ -84,3 +84,16 @@ def test_接口名写错仍然是_404_不是一张能打开的空页面(client):
     r = client.get("/api/这个接口根本不存在")
     assert r.status_code == 404, f"未知接口返回了 {r.status_code} —— 回退做宽了"
     assert r.headers["content-type"].startswith("application/json"), r.headers["content-type"]
+
+
+@pytest.mark.parametrize("path", ["/api", "/api/", "/api?x=1"])
+def test_裸_api_也要_404_JSON(client, path):
+    """只差一个斜杠也不能被伪装成页面。
+
+    回退守卫若写成 `scope["path"].startswith("/api/")`，裸 `/api` 会漏过去 ——
+    它不满足 `/api/` 前缀，于是被回一张 200 的 index.html。而「把接口路径写错」
+    最常见的形态恰恰就是少一个斜杠或漏一段（`/api`、`/api?t=1`）。
+    """
+    r = client.get(path)
+    assert r.status_code == 404, f"{path} 返回了 {r.status_code} —— 裸 /api 被回退成了页面"
+    assert r.headers["content-type"].startswith("application/json"), r.headers["content-type"]
