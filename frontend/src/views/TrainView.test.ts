@@ -1,0 +1,153 @@
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+
+import TrainView from './TrainView.vue'
+
+const FEATURES = {
+  default_groups: ['coord', 'zbasis', 'meteo', 'interaction'],
+  groups: [
+    { group: 'coord', columns: ['x', 'y', 'z'], n_columns: 3, what: '场的基本骨架' },
+    { group: 'zbasis', columns: ['z2', 'z3'], n_columns: 2, what: '竖直方向的结构' },
+    { group: 'meteo', columns: ['bg_temp', 'bg_rh'], n_columns: 2, what: '时刻的外部条件' },
+    { group: 'interaction', columns: ['bg_temp_x_z'], n_columns: 1, what: '坐标 × 气象' },
+  ],
+  all_columns: ['x', 'y', 'z', 'z2', 'z3', 'bg_temp', 'bg_rh', 'bg_temp_x_z'],
+  notes: ['不加滞后特征：本版是重建任务。', '不加测点湿度：目标点的湿度同样是未知量。'],
+}
+
+const CAL = {
+  present: true,
+  reason: null,
+  created_at: '2026-10-03T13:22:00+00:00',
+  tool_version: '0.1.0',
+  groups_sig: 'd6294c09',
+  dataset_sig: '6145fa9261e89f1b',
+  feature_groups: ['coord', 'zbasis', 'meteo', 'interaction'],
+  trend_kind: 'xgboost',
+  tuned_keys: [{ key: 'metric.power', value: '0.5', space: '0.5、1、2' }],
+  params: [
+    { param: 'metric.power', value: '0.5', note: 'IDW 距离幂' },
+    { param: 'metric.ly', value: '1', note: '固定 1.0 —— 从未进过搜索空间' },
+  ],
+  plateau: [{ dim: 'power', lo: '0.5', hi: '2' }],
+  lz_note: '⚠️ lz = 0.005 落在搜索下界（0.005）—— 这不是已收敛。',
+  metrics: [
+    { mae: 0.1172, rmse: 0.1641, r2: 0.999, fold_kind: 'position',
+      fold: 'position:x0.15_z0.4', region: '切面内', group: 'A', n: 3924, tag: 'calibration' },
+    { mae: 0.1374, rmse: 0.18, r2: 0.998, fold_kind: 'position',
+      fold: 'position:x0.4_z0.7', region: '切面内', group: 'A', n: 3924, tag: 'calibration' },
+  ],
+  per_point: [
+    { sensor_id: 0, shed: 'p1', position: 'x0.15_z0.4', layer: 'z0.4',
+      group: 'A', n: 1308, mae: 0.1077, rmse: 0.1666, r2: 0.9989 },
+  ],
+  ab: { mae_a: 0.115698, mae_b: 0.162401, gap: -0.046703 },
+  fold_kind: 'position',
+  n_folds: 2,
+  worst_fold: { fold: 'position:x0.4_z0.7', mae: 0.1374 },
+  ab_note: 'gap = A 组 MAE − B 组 MAE。负数是好消息。',
+  note: '「最优」最优的对象是这一份数据集 + 这一组特征组 + 留一测点这个准则，' +
+        '而且参数只在 A 组上挑出来的。没有标定包时用的是兜底参数，那不是最优。',
+}
+
+function stub(routes: Record<string, unknown>) {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    const hit = Object.keys(routes).find((k) => String(url).includes(k))
+    if (!hit) return new Response('{}', { status: 404 })
+    return new Response(JSON.stringify(routes[hit]), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    })
+  }))
+}
+
+describe('页② 模型训练', () => {
+  beforeEach(() => vi.restoreAllMocks())
+
+  it('三段的次序就是流水线的次序', async () => {
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    const text = w.text()
+    const i1 = text.indexOf('特征值的构造')
+    const i2 = text.indexOf('最优参数的选择')
+    const i3 = text.indexOf('模型训练')
+    expect(i1).toBeGreaterThanOrEqual(0)
+    expect(i2).toBeGreaterThan(i1)
+    expect(i3).toBeGreaterThan(i2)
+  })
+
+  it('特征构造表逐组列出列名与列数', async () => {
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    for (const g of FEATURES.groups) {
+      expect(w.text()).toContain(g.group)
+      for (const c of g.columns) expect(w.text()).toContain(c)
+    }
+  })
+
+  it('最优参数表把「当前值」和「从哪些值里挑的」并排放', async () => {
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.text()).toContain('metric.power')
+    expect(w.text()).toContain('0.5、1、2')
+  })
+
+  it('口径说明原样显示 —— 这一页最大的谎就在这句话缺位的时候', async () => {
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.text()).toContain('留一测点')
+    expect(w.text()).toContain('兜底参数')
+    expect(w.text()).toContain('只在 A 组上挑出来的')
+  })
+
+  it('lz 贴着搜索下界时那句警告看得见', async () => {
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.text()).toContain('不是已收敛')
+  })
+
+  it('逐折误差逐行渲染，最差的那一折标出来', async () => {
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.text()).toContain('position:x0.15_z0.4')
+    expect(w.text()).toContain('最差')
+  })
+
+  it('A/B 两组都报，负的 gap 自己解释清楚', async () => {
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.text()).toContain('0.115698')
+    expect(w.text()).toContain('0.162401')
+    expect(w.text()).toContain('负数是好消息')
+  })
+
+  it('没有标定包时说「未标定」，并提示跑一次标定', async () => {
+    stub({
+      '/api/features': FEATURES,
+      '/api/calibration': {
+        ...CAL, present: false,
+        reason: '这一份数据集还没有标定包。',
+        metrics: [], per_point: [], ab: null, worst_fold: null, lz_note: null,
+        params: [{ param: 'metric.lx', value: '2', note: '' }],
+      },
+    })
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.text()).toContain('未标定')
+    expect(w.text()).toContain('还没有标定包')
+    expect(w.text()).toContain('metric.lx')
+  })
+
+  it('随包数字与现场重算分得开（出处标记）', async () => {
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.text()).toContain('随标定包')
+  })
+})

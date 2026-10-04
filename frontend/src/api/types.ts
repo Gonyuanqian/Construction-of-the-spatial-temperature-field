@@ -107,3 +107,87 @@ export interface LayerTimeHeightPayload {
   source: string
   sheds: Record<string, LayerTimeHeightShed>
 }
+
+/* ------------------------------------------------------------------ *
+ * 页② 模型训练：特征构造表（Task 9 `/api/features`）
+ * ------------------------------------------------------------------ */
+
+export interface FeatureGroupRow {
+  group: string
+  columns: string[]
+  n_columns: number
+  what: string
+}
+
+export interface FeaturesPayload {
+  default_groups: string[]
+  groups: FeatureGroupRow[]
+  all_columns: string[]
+  notes: string[]
+}
+
+/* ------------------------------------------------------------------ *
+ * 页② 模型训练：标定包（Task 9 `/api/calibration`）
+ *
+ * 这里每一个量都是**随标定包**的（Provenance kind="pack"）——
+ * 标定当时算好、写在包里；页面只负责原样摆出来，不重算。
+ * ------------------------------------------------------------------ */
+
+export interface TunedKeyRow { key: string; value: string; space: string }
+export interface ParamRow { param: string; value: string; note: string }
+export interface PlateauRow { dim: string; lo: string; hi: string }
+export interface MetricRow {
+  mae: number; rmse: number; r2: number
+  fold_kind: string; fold: string; region: string; group: string; n: number; tag: string
+}
+export interface PerPointRow {
+  sensor_id: number; shed: string; position: string; layer: string
+  group: string; n: number; mae: number; rmse: number; r2: number
+}
+
+export interface CalibrationPayload {
+  present: boolean
+  /**
+   * ⚠️ 可以是 null。`present === false` 时给的是「为什么没有这一份包」，
+   * 页面据此说「未标定」；`present === true` 时没有这句话，是 null。
+   */
+  reason: string | null
+  /**
+   * ⚠️ 三个都是 `string | null`。它们来自标定包自身（生成时刻、工具版本、
+   * 分组签名）；**没有包时整组都不存在**，线上就是 null，不是空串 ——
+   * 空串会被读成「有包但字段是空的」。
+   */
+  created_at: string | null
+  tool_version: string | null
+  groups_sig: string | null
+  /** 数据集指纹总是有（就是当前数据集的身份），与有没有标定包无关。 */
+  dataset_sig: string
+  feature_groups: string[]
+  trend_kind: string
+  tuned_keys: TunedKeyRow[]
+  params: ParamRow[]
+  plateau: PlateauRow[]
+  /**
+   * ⚠️ 可以是 null。只有 lz 贴着搜索下界时后端才给这句警告；没有触发就是 null ——
+   * 页面不用「空字符串」也就不用判断「空 vs 没这句」。
+   */
+  lz_note: string | null
+  metrics: MetricRow[]
+  per_point: PerPointRow[]
+  /**
+   * ⚠️ 可以是 null。没有标定包时没有 A/B 对照这一组数；有包时才是
+   * `{ mae_a, mae_b, gap }`。
+   */
+  ab: { mae_a: number; mae_b: number; gap: number } | null
+  /** ⚠️ 可以是 null：没有包时没有折的种类。 */
+  fold_kind: string | null
+  n_folds: number
+  /**
+   * ⚠️ 可以是 null。正常情况下是 MAE 最差的那一折；
+   * 但当所有折的 MAE 都非有限（全 NaN）时，后端**报 null 而不是硬指一折**
+   * （见 `backend/api/routes/calibration.py`）—— 没有最差，就没有最差。
+   */
+  worst_fold: { fold: string; mae: number } | null
+  ab_note: string
+  note: string
+}
