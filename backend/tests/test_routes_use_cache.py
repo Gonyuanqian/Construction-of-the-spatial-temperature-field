@@ -1,26 +1,33 @@
 """源码级守卫：API 层只许经 `api.deps.get_dataset()`，不许自己碰数据集加载。
 
-**为什么需要它**（复查给的第三条绕过路径）：`test_end_to_end.py` 那条计数守卫
+**为什么需要它**（复查给的绕过路径）：`test_end_to_end.py` 那条计数守卫
 把 `tfield.data.loader.load_dataset` 与 `api.deps._CACHE` 都换成了计数版，
-但**改不到路由模块里已经拷死的那个引用**：
+但**改不到别处已经拷死的那个引用**：
 
-- 若某模块在**顶层**写 `from tfield.data.loader import load_dataset`，
-  绑定在 monkeypatch 之前就固定了 —— 计数装不上，那条测试**静默绿**；
-- 同类残余还有 `deps.load_dataset(...)` 直调、以及自建 `DatasetCache().get(...)`
-  （新实例不经 `_CACHE`）。
+- 某个模块在**顶层**写 `from tfield.data.loader import load_dataset` ——
+  绑定在 monkeypatch 之前就固定了，计数装不上，那条测试**静默绿**；
+- 同样地 `from api.deps import _CACHE` 抓走的是**旧对象**：计数守卫替换的是
+  `deps._CACHE` 这个**模块属性**，改不到副本，而旧对象的 `_loader` 是没被
+  patch 的真 `load_dataset` —— 结果是「计数守卫看到 1 次、数据集实际加载 2 次」，
+  三绿齐现（源码守卫绿、运行期计数绿、数据集真的重复加载）。
 
-这些都是「未来化回归会静默放行」的东西 —— 本项目已经吃过两次假绿的亏。
-运行期数不清，那就从**源码**上禁掉。
+**规则（不是名单）**：`backend/api/**` 下任何模块，从 `api.deps` 取名字时，
+**只能取 `get_dataset` 这一个**。取任何别的名字（`_CACHE`、`load_dataset`、
+`DatasetCache`、以及将来新增的任何私有名）一律红。
 
-**扫描根是 `backend/api/` 且递归**（不是只扫 `routes/`）。为什么收口到整个
-`api/`：只扫 `routes/` 的失败模式是**静默的** —— 新模块一旦落在 `routes/`
-之外，守卫全绿而实际什么都没扫到。收口后唯一合法持有者 `deps.py` 走一条
-**显式白名单**（见 `WHITELIST`），代价只有那一行，却把「新模块落在哪」这件事
-从「守卫看不见」变成「守卫盖得住」。
+为什么写成**规则**而不是往禁用名单里堆字符串：名单会烂 —— `deps.py` 每多一个
+私有名，就得再往名单里补一次，漏一次就是一个静默口子。规则只认「是不是从
+`api.deps` 取的名字」，与具体叫什么无关。
 
-`__init__.py` **不跳过**：`api/routes/__init__.py` 里完全可以写
-`from tfield.data.loader import load_dataset` 再 `__all__` 转出 —— 按名跳过
-就漏了这条路。所有 `*.py` 一视同仁走同一个 AST 检查。
+两种合法写法都放行：
+- `from .. import deps` 然后 `deps.get_dataset(...)`（模块导入 + 属性取用）；
+- `from ..deps import get_dataset`（只取那一个名字）。
+
+**已知且有意接受的残余（边界，不是漏）**：用字符串字面量的
+`getattr(deps, "load_dataset")(p)` 或 `getattr(deps, "DatasetCache")().get(p)`
+**仍能逃过本守卫** —— 字符串落在 `Constant` 节点上，AST 看不见它的语义。
+这是**裁定接受的残余**：现实威胁低（要刻意写 `getattr`），而封它要么写得极绕、
+要么误伤正常代码。**别把这条守卫当成滴水不漏。**
 
 **为什么用 AST 不用裸文本**：裸文本会把注释与文档字符串误伤 ——
 `dataset.py` 的 `_load()` docstring 里正写着 `DatasetCache.key_of` 这个词。
@@ -37,20 +44,34 @@ API = pathlib.Path(__file__).resolve().parents[1] / "api"
 ROUTES_DIRNAME = "routes"
 
 #: **显式白名单。** `api/deps.py` 是 `load_dataset` 与 `DatasetCache` 的**持有者** ——
-#: 它就是数据集缓存的正主、`get_dataset()` 的定义处，引用这两个名字天经地义。
+#: 它就是数据集缓存的正主、`get_dataset()` 的定义处，引用这些名字天经地义。
 #: 其余任何模块一律不许直接碰它们，只能走 `deps.get_dataset()`。
 #:
 #: 这是一条**写死在这儿的声明**，不是「按后缀/按目录自动放行」那种隐式过滤：
-#: 增删一行都必须改这个集合，diff 里一眼可见、review 时挡得住。
-#: 键是相对 `API` 的 posix 路径。
+#: 增删一行都必须改这个集合，diff 里一眼可见、review 时挡得住。键是相对 `API`
+#: 的 posix 路径（不是文件名 —— 复制成 `api/core/deps.py` 仍会当场变红）。
 WHITELIST = frozenset({"deps.py"})
 
-#: 不许直接取用的名字。取用它们的唯一合法路径是 `deps.get_dataset()`。
-FORBIDDEN = frozenset({"load_dataset", "DatasetCache"})
+#: 从 `api.deps` 取名字时**唯一**允许的名字。别往这儿加 —— 加之前先回答
+#: 「为什么这个模块能直接拿缓存/加载器，而不是走 get_dataset()」。
+ALLOWED_FROM_DEPS = frozenset({"get_dataset"})
+
+#: 与 `api.deps` 无关的、任何位置都不许直接取用的通用黑名单（直取后端库/缓存类）。
+FORBIDDEN_ANYWHERE = frozenset({"load_dataset", "DatasetCache"})
+
+#: 哪些 import 的 module 算「api.deps」：相对导入 `from ..deps import X` 的 module
+#: 就是 "deps"，绝对导入是 "api.deps"。
+_DEPS_MODULES = frozenset({"deps", "api.deps"})
 
 
 def _api_files() -> list[pathlib.Path]:
-    """`backend/api/` 下**所有** `*.py`，递归，含各层 `__init__.py`。"""
+    """`backend/api/` 下**所有** `*.py`，递归，含各层 `__init__.py`。
+
+    收口到整个 `api/` 而不是只扫 `routes/`：只扫 `routes/` 的失败模式是**静默的**
+    —— 新模块一旦落在 `routes/` 之外，守卫全绿而实际什么都没扫到。
+    `__init__.py` **不跳过**：里面完全可以写 `from ... import load_dataset`
+    再 `__all__` 转出，按名跳过就漏了这条路。
+    """
     return sorted(p for p in API.rglob("*.py"))
 
 
@@ -59,29 +80,56 @@ def _rel(f: pathlib.Path) -> str:
 
 
 def _offences_in(tree: ast.AST) -> list[str]:
-    """返回这个模块里所有对禁用名的取用（行号 + 形态）。"""
+    """返回这个模块里所有违规取用（行号 + 形态）。"""
     out: list[str] = []
+    #: 绑定到 `api.deps` **模块对象**的本地名（`from .. import deps` / `import api.deps`）。
+    deps_aliases: set[str] = set()
+
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            # from tfield.data.loader import load_dataset
-            # from api.deps import DatasetCache
+            if node.module in _DEPS_MODULES:
+                # 从 api.deps 取名字：只许 get_dataset 这一个。
+                for alias in node.names:
+                    if alias.name not in ALLOWED_FROM_DEPS:
+                        out.append(
+                            f"{node.lineno}: 从 api.deps 取了 {alias.name}"
+                            "（只许 get_dataset）"
+                        )
+            else:
+                # `from .. import deps` / `from api import deps` —— 模块导入，合法。
+                # 记下别名，供下面「deps.<attr>」的属性取用检查。
+                for alias in node.names:
+                    if alias.name == "deps":
+                        deps_aliases.add(alias.asname or "deps")
             for alias in node.names:
-                if alias.name in FORBIDDEN:
+                if alias.name in FORBIDDEN_ANYWHERE:
                     out.append(f"{node.lineno}: from … import {alias.name}")
         elif isinstance(node, ast.Import):
-            # import tfield.data.loader.load_dataset（模块名末段命中）
             for alias in node.names:
-                if alias.name.rsplit(".", 1)[-1] in FORBIDDEN:
+                last = alias.name.rsplit(".", 1)[-1]
+                if alias.name in _DEPS_MODULES or last == "deps":
+                    deps_aliases.add(alias.asname or last)
+                if last in FORBIDDEN_ANYWHERE:
                     out.append(f"{node.lineno}: import {alias.name}")
         elif isinstance(node, (ast.Name, ast.Attribute)):
-            # 任何对 load_dataset / DatasetCache 的引用（含 deps.DatasetCache）
+            # 任何对 load_dataset / DatasetCache 的引用（含 lz.load_dataset）
             name = node.id if isinstance(node, ast.Name) else node.attr
-            if name in FORBIDDEN:
+            if name in FORBIDDEN_ANYWHERE:
                 out.append(f"{node.lineno}: 引用 {name}")
+
+    # 属性取用：deps.<attr> 里，attr 也只许 get_dataset。
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in deps_aliases
+            and node.attr not in ALLOWED_FROM_DEPS
+        ):
+            out.append(f"{node.lineno}: deps.{node.attr}（只许 deps.get_dataset）")
     return out
 
 
-def test_api_层不许绕过_deps_直接取用_load_dataset_或_DatasetCache():
+def test_api_层从_deps_只许取_get_dataset():
     files = _api_files()
 
     # 非空断言：目录改名/搬走后这条守卫不许变成空过。
@@ -111,5 +159,5 @@ def test_api_层不许绕过_deps_直接取用_load_dataset_或_DatasetCache():
     assert not offenders, (
         "API 层绕过了 api.deps.get_dataset()，直接取用了数据集加载设施：\n  "
         + "\n  ".join(offenders)
-        + "\n请改成 `deps.get_dataset()` —— 否则缓存计数守卫会因为顶层绑定拷死而静默放行。"
+        + "\n请改成 `deps.get_dataset()` —— 否则缓存计数守卫会因为绑定拷死而静默放行。"
     )
