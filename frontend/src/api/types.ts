@@ -207,3 +207,95 @@ export interface CalibrationPayload {
   ab_note: string
   note: string
 }
+
+/** 页③ 用到的三个载荷。字段名与后端 `api/routes/field.py` 逐字对应。 */
+
+export interface SensorPoint {
+  id: string
+  x: number
+  z: number
+  layer: string
+}
+
+/** 一个断面的场。`values` 是行主序：`values[iz][ix]`，与 `z` / `x` 同序。 */
+export interface SectionShed {
+  shed: string
+  y: number
+  /** 拱外是 `null`（后端送不了 NaN —— `allow_nan=False` 会变成 500）。 */
+  values: (number | null)[][]
+  /** 无测量带的格子下标 `[ix, iz]`。带里**有**外推值，但界面上不报数。 */
+  stripes: [number, number][]
+}
+
+export interface SectionsPayload {
+  t_index: number
+  time: string
+  n_times: number
+  preset: string
+  monotonic: boolean
+  /** 配置来自标定包（true）还是 `FALLBACK_*` 兜底（false）。两者不可直接比大小。 */
+  calibrated: boolean
+  /** 三格**共享**的色标范围。前端不许各算各的。 */
+  vmin: number
+  vmax: number
+  max_measured_z: number
+  x_min: number
+  x_max: number
+  z_max: number
+  x: number[]
+  z: number[]
+  arch: [number, number][]
+  sensors: SensorPoint[]
+  sheds: SectionShed[]
+  note: string
+}
+
+export interface CurvePayload {
+  shed: string
+  x: number
+  y: number
+  z: number
+  label: string
+  n_times: number
+  time: string[]
+  /** 拱外或落在无测量带里时，整条都是 `null`（`defined` 为 false）。 */
+  values: (number | null)[]
+  defined: boolean
+  /** 包含「没有施加竖直软单调投影」这句口径 —— 界面上要显示的就是它。 */
+  note: string
+}
+
+export interface ComparePayload {
+  shed: string
+  y: number
+  t_index: number
+  time: string
+  n_times: number
+  preset: string
+  x: number[]
+  z: number[]
+  arch: [number, number][]
+  sensors: SensorPoint[]
+  max_measured_z: number
+  before: (number | null)[][]
+  after: (number | null)[][]
+  /** `约束前 − 约束后`。正值 = 这一格被约束压低了。 */
+  delta: (number | null)[][]
+  /**
+   * 无测量带的格子下标 `[ix, iz]`，与 `SectionsPayload` 的同一份事实。
+   * **前端不许自己从 `x` / `z` / `max_measured_z` 推** —— 那是把后端的一条规则
+   * 实现了第二遍（硬约束 1），两条路径漂了不报错。
+   */
+  stripes: [number, number][]
+  /** `before` / `after` 共用。 */
+  vmin: number
+  vmax: number
+  /** `delta` 的**对称**范围半径：色标是 `[-delta_vmax, +delta_vmax]`。 */
+  delta_vmax: number
+  light: number
+  gate_open: boolean
+  gate_label: string
+  /** 门禁关闭（夜里无光照）时两张图**逐位相同**。 */
+  identical: boolean
+  note: string
+}
