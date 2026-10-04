@@ -82,6 +82,18 @@ PipelineKey = tuple[str, str, str]
 NO_BUNDLE = ""
 
 
+def _mark_calibrated(pipe: FieldPipeline, bundle) -> FieldPipeline:
+    """把「配置从哪来」写进管线**自己**身上。
+
+    路由层据此照实标注（spec §七 V3：兜底参数「不是最优，只是不在坏角上」，
+    与标定后的数**同折族、不同参数，不可直接比大小**）。写成管线的属性而不是
+    一个查询函数，是为了让 `_build_pipeline` 的每条返回路径**不可能忘记**设它 ——
+    忘记的后果是界面把兜底的数标成「已标定」，而这正是最不能错的一处标注。
+    """
+    pipe.calibrated = bundle is not None        # type: ignore[attr-defined]
+    return pipe
+
+
 def _build_pipeline(ds: Dataset, groups: tuple[str, ...], bundle) -> FieldPipeline:
     """未标定走 `PipelineConfig.fallback()`（**不是最优，只是不在坏角上**）。
 
@@ -89,7 +101,8 @@ def _build_pipeline(ds: Dataset, groups: tuple[str, ...], bundle) -> FieldPipeli
     大小不可直接比。
     """
     cfg = bundle.config() if bundle is not None else PipelineConfig.fallback()
-    return FieldPipeline(cfg, ds).fit(build_features(ds, groups), ds)
+    pipe = FieldPipeline(cfg, ds).fit(build_features(ds, groups), ds)
+    return _mark_calibrated(pipe, bundle)       # ← 唯一的返回路径
 
 
 class PipelineCache:

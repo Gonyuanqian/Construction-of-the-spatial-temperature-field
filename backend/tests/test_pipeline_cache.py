@@ -130,3 +130,31 @@ def test_并发下同一个键只构建一次():
         t.join()
     assert len(built) == 1
     assert out[0] is out[1]
+
+
+def test_管线自己带着_是否标定的_事实():
+    """路由不该回头去读缓存的键 —— 让管线自己带这个事实。
+
+    直接调 `_mark_calibrated`，绕开 `fit()`：要验证的是**赋值这一步**，
+    与「训得多准」无关。
+    """
+    from api.deps import _mark_calibrated
+    from tfield.pipeline import FieldPipeline
+
+    class FakeBundle:
+        created_at = "2026-10-03T13:22:00+00:00"
+
+    pipe = FieldPipeline.__new__(FieldPipeline)      # 不 __init__、不 fit
+    _mark_calibrated(pipe, FakeBundle())
+    assert pipe.calibrated is True
+    _mark_calibrated(pipe, None)
+    assert pipe.calibrated is False
+
+
+def test_没有标注的管线读出来是假而不是抛错():
+    """`getattr(..., False)` 的兜底方向必须是「未标定」。
+
+    兜底成 True 会让界面把没标定的数说成标定过的 —— 这句谎话没人看得出来。
+    """
+    from tfield.pipeline import FieldPipeline
+    assert getattr(FieldPipeline.__new__(FieldPipeline), "calibrated", False) is False
