@@ -193,8 +193,20 @@ def get_sections(
     """V5 切面场：三个断面的网格 + 无测量带下标 + 拱线 + 共享色标范围。"""
     grid = _check_preset(preset)
     pipe = deps.get_pipeline()
-    n_times = int(pipe.ds.wide.shape[0])
-    t_index = _check_t_index(t_index, n_times)
+    t_index = _check_t_index(t_index, pipe.n_times)
+    return sections_payload(pipe, t_index=t_index, preset=preset,
+                            monotonic=monotonic, grid=grid)
+
+
+def sections_payload(pipe, *, t_index: int, preset: str, monotonic: bool,
+                     grid: GridSpec | None = None) -> dict[str, Any]:
+    """页③ 断面那一屏的载荷。**实时模式的 `frame/{n}` 用的就是这个函数。**
+
+    没有校验、没有取管线 —— 那两件事留在路由里（`test_拒绝路径不碰管线`
+    钉着「参数坏就不该等一次 fit」这条顺序）。
+    """
+    grid = grid or _check_preset(preset)
+    n_times = pipe.n_times
     cfg = MonotonicConfig(enabled=True) if monotonic else None
 
     fields = [section_field(pipe, s, t_index, grid, monotonic=cfg) for s in C.SHED_ORDER]
@@ -212,10 +224,9 @@ def get_sections(
             "stripes": [[int(a), int(b)] for a, b in zip(ix, iz)],
         })
 
-    time = pipe.ds.wide[C.COL_TIMESTAMP].iloc[t_index]
     return {
         "t_index": t_index,
-        "time": str(time),
+        "time": str(pipe.time_at(t_index)),
         "n_times": n_times,
         "preset": preset,
         "monotonic": bool(monotonic),
@@ -262,7 +273,7 @@ def get_curve(
         raise HTTPException(400, f"认不出的 shed：{shed!r}（可选：{allowed}）")
 
     pipe = deps.get_pipeline()
-    n_times = int(pipe.ds.wide.shape[0])
+    n_times = pipe.n_times
     y = float(C.SHED_Y[shed])
 
     # 拱内判定用库自己的 arch_mask（1×1 网格）—— 界面上不重算几何，
@@ -284,7 +295,7 @@ def get_curve(
         "z": float(z),
         "label": f"{shed}  x {x:.2f}  z {z:.2f}",
         "n_times": n_times,
-        "time": [str(v) for v in pipe.ds.wide[C.COL_TIMESTAMP]],
+        "time": [str(v) for v in pipe.timestamps()],
         "values": _finite_or_none(values),
         "defined": bool(defined),
         "note": CURVE_NOTE,
@@ -310,7 +321,7 @@ def get_compare(
 
     grid = _check_preset(preset)
     pipe = deps.get_pipeline()
-    n_times = int(pipe.ds.wide.shape[0])
+    n_times = pipe.n_times
     t_index = _check_t_index(t_index, n_times)
     y = float(C.SHED_Y[shed])
 
@@ -334,7 +345,7 @@ def get_compare(
         "shed": shed,
         "y": y,
         "t_index": t_index,
-        "time": str(pipe.ds.wide[C.COL_TIMESTAMP].iloc[t_index]),
+        "time": str(pipe.time_at(t_index)),
         "n_times": n_times,
         "preset": preset,
         "x": [float(v) for v in before.x],
@@ -403,11 +414,23 @@ def get_volume(
     grid = _check_preset(preset)
     _check_y_range(y_min, y_max, y_step)
     _check_volume_size(grid.nx, grid.nz, _y_plane_count(y_min, y_max, y_step))
-    ys = _y_planes(y_min, y_max, y_step)
 
     pipe = deps.get_pipeline()
-    n_times = int(pipe.ds.wide.shape[0])
-    t_index = _check_t_index(t_index, n_times)
+    t_index = _check_t_index(t_index, pipe.n_times)
+    return volume_payload(pipe, t_index=t_index, preset=preset, monotonic=monotonic,
+                          y_step=y_step, y_min=y_min, y_max=y_max, grid=grid)
+
+
+def volume_payload(pipe, *, t_index: int, preset: str, monotonic: bool,
+                   y_step: float, y_min: float, y_max: float,
+                   grid: GridSpec | None = None) -> dict[str, Any]:
+    """页③ 三维那一屏的载荷。**实时模式的 `volume/{n}` 用的就是这个函数。**
+
+    与 `sections_payload` 同一条分工：校验与取管线留在路由里，这里只装箱。
+    """
+    grid = grid or _check_preset(preset)
+    ys = _y_planes(y_min, y_max, y_step)
+    n_times = pipe.n_times
     cfg = MonotonicConfig(enabled=True) if monotonic else None
 
     t0 = perf_counter()
@@ -436,7 +459,7 @@ def get_volume(
 
     return {
         "t_index": t_index,
-        "time": str(pipe.ds.wide[C.COL_TIMESTAMP].iloc[t_index]),
+        "time": str(pipe.time_at(t_index)),
         "n_times": n_times,
         "preset": preset,
         "monotonic": bool(monotonic),
