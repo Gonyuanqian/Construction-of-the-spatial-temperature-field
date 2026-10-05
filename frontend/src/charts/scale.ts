@@ -39,3 +39,56 @@ export function deltaStops(): string[] {
     '#FDDBC7', '#F4A582', '#D6604D', '#B2182B', '#67001F',
   ]
 }
+
+/**
+ * 十六进制 → `[r, g, b]`（0 至 255）。`#RGB` 与 `#RRGGBB` 都认。
+ *
+ * 这个函数住在这里，是因为**全前端只有 `scale.ts` 与 `tokens.css` 允许出现
+ * 十六进制字面量**（`design/guards.test.ts` 扫全仓盯着）。摆在别处，
+ * 那条守卫就得开第二个口子。
+ */
+export function hexToRgb(hex: string): [number, number, number] {
+  const h = hex.trim().replace(/^#/, '')
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
+  const n = Number.parseInt(full, 16)
+  return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff]
+}
+
+/**
+ * 值 → 颜色。**「场 → 纹理」这条路上唯一的插值处。**
+ *
+ * 规则与 ECharts 的 continuous `visualMap` 同一条：采样点之间**在 RGB 空间线性**。
+ * 二维那边的插值碰不到（见 `tempStops` 的说明），所以这里不是「同一个函数」，
+ * 是**同一组 stops 加同一条插值规则** —— 靠 `scale.test.ts` 里在七个采样点上
+ * 逐点对拍来守。
+ *
+ * 三处退化都写死了，因为它们的后果都是**静默的**：
+ *  · 值域塌成零宽（`vmin === vmax`）→ 取最低端，不是 `(v - vmin) / 0` 的 NaN；
+ *  · `v` 是 NaN → 取最低端；
+ *  · 一个 NaN 通道会被 `Uint8ClampedArray` 悄悄写成 0（黑），而黑在这条色标上
+ *    是「最冷」—— 于是一片算错的场看起来像一片很冷的场。
+ *
+ * 范围外的值**夹到两端**，与 ECharts `inRange` 的行为一致（`outOfRange` 那套
+ * 压暗是二维色标条的事，三维不用）。
+ */
+export function valueToColor(
+  v: number, vmin: number, vmax: number, stops: string[],
+): [number, number, number] {
+  const lo = hexToRgb(stops[0])
+  if (stops.length < 2) return lo
+  const span = vmax - vmin
+  const t = span > 0 ? Math.min(1, Math.max(0, (v - vmin) / span)) : 0
+  if (!Number.isFinite(t)) return lo
+  // 分段插值：先定位到哪两个采样点之间，再在这一段里取局部位置。
+  // 写成 `(n - 1) · t` 直接当全局位置会在段边界上差一个采样点。
+  const pos = t * (stops.length - 1)
+  const seg = Math.min(stops.length - 2, Math.floor(pos))
+  const local = pos - seg
+  const a = hexToRgb(stops[seg])
+  const b = hexToRgb(stops[seg + 1])
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * local),
+    Math.round(a[1] + (b[1] - a[1]) * local),
+    Math.round(a[2] + (b[2] - a[2]) * local),
+  ]
+}
