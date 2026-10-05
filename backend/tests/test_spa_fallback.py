@@ -46,7 +46,19 @@ def client() -> TestClient:
 
 
 def _index_text() -> str:
-    return INDEX.read_text(encoding="utf-8")
+    """构建产物的正文，**按它自己的行尾**读出来。
+
+    不能用 `Path.read_text()`：它默认走通用换行，把 CRLF 折成 LF。而 Vite 在
+    Windows 上生成的 `dist/index.html` 行尾是 **Windows 的 CRLF 掺着少数 LF**
+    （HTML 变换自己吐的行是 LF）—— 响应把磁盘字节原样送出，于是拿折过的文本去比
+    `r.text`，永远差一个 `\\r`，5 条参数化用例全红，而错的是**读法**不是实现。
+
+    这里要的是「磁盘上的字节解码成 str」，不是「按文本行读」——`newline=""` 关掉
+    换行翻译。用它还有个好处：将来在哪台机器上构建，产物是 LF 还是 CRLF，这条
+    断言都成立（两边都不翻译，就永远同形）。
+    """
+    with INDEX.open("r", encoding="utf-8", newline="") as f:
+        return f.read()
 
 
 @pytest.mark.parametrize(
