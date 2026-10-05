@@ -1,7 +1,7 @@
 """空间场的几何与取值。
 
 页③（V5 切面场）的三个接口住在这里：`/field/sections`、`/field/curve`、
-`/field/compare`。`/field/volume`（V7 棚体三维场）属于下一份计划。
+`/field/compare`；页③ 的三维视图（V7 棚体）走 `/field/volume`。
 
 **这一层只做两件事**：把 `tfield` 算出的场翻成 JSON（拱外 NaN → null），
 以及算共享色标范围这一个**派生的表现量**。任何真正的计算都在 `tfield` 里 ——
@@ -16,11 +16,13 @@ from fastapi import APIRouter, HTTPException, Query
 
 from tfield import config as C
 from tfield.field.arch import arch_height, arch_mask
-from tfield.field.build import field_at, section_field
+from tfield.field.build import available_sheds, field_at, section_field
 from tfield.field.constraints import MonotonicConfig, light_at
 from tfield.field.grid import GRID_PRESETS, GridSpec
 
 from .. import deps
+
+from time import perf_counter
 
 router = APIRouter(tags=["field"])
 
@@ -29,6 +31,64 @@ router = APIRouter(tags=["field"])
 ARCH_SAMPLES = 121
 
 DEFAULT_PRESET = "standard"
+
+#: 整卷的格子数上限。**挡住的是 `preset=export`**：dx=0.02 把格子数放大 25 倍
+#: （106 × 66 = 6996 一片），默认 37 片就是 258852 个格子、十几 MB 载荷 ——
+#: 而这条路上既没有大小上限也没有 gzip（规格书 §三、§九）。
+#: 正常用法留足余量：standard 下 y_step=0.125（145 片）是 168345，仍在限内。
+VOLUME_MAX_CELLS = 200_000
+
+#: 片间隔上限 / m。比 6 m 还疏的话整卷只有三四片，「体」就不成立了。
+_Y_STEP_MAX = 6.0
+
+#: 浮点容差。`y_min + k · y_step` 与 `C.SHED_Y[s]` 的比较用它 ——
+#: y_step = 0.1 时 30 × 0.1 = 3.0000000000000004，不认容差就漏掉一片实测断面。
+_Y_EPS = 1e-9
+
+
+def _y_planes(y_min: float, y_max: float, y_step: float) -> np.ndarray:
+    """`y_min + k · y_step`，取到**不超过** `y_max` 的最后一个。至少一片。
+
+    用 `floor(span / y_step + eps)` 而不是 `np.arange(y_min, y_max, y_step)`：
+    arange 的端点判据是浮点的，「正好整除」的那些情形（0 到 18、步长 0.5）
+    会随二进制表示时多时少一片 —— 而片数是**载荷大小与上限判定**的一部分，
+    不能靠运气。规格书 §三 那几个数（19 / 37 / 73 片）就是这条的参照。
+    """
+    span = float(y_max) - float(y_min)
+    n = int(np.floor(span / float(y_step) + _Y_EPS)) + 1
+    return float(y_min) + np.arange(n) * float(y_step)
+
+
+def _check_y_range(y_min: float, y_max: float, y_step: float) -> None:
+    if not (y_step > 0):                     # 顺手挡下 NaN
+        raise HTTPException(400, f"y_step 必须大于 0：{y_step}")
+    if y_step > _Y_STEP_MAX:
+        raise HTTPException(400, f"y_step 太大：{y_step}（上限 {_Y_STEP_MAX} m）")
+    if not (y_min < y_max):
+        raise HTTPException(400, f"y_min 必须小于 y_max：{y_min} / {y_max}")
+
+
+def _check_volume_size(nx: int, nz: int, n_planes: int) -> None:
+    total = int(nx) * int(nz) * int(n_planes)
+    if total > VOLUME_MAX_CELLS:
+        raise HTTPException(400, (
+            f"这一卷有 {total} 个格子，超过上限 {VOLUME_MAX_CELLS}"
+            f"（{nx} × {nz} × {n_planes}）。把 y_step 调大，或换更粗的 preset。"
+        ))
+
+
+def _measured_at(y: float, avail: tuple[str, ...]) -> tuple[bool, str | None]:
+    """这一片是不是**实测断面**。判据是 `available_sheds`，**不是** `C.SHED_Y` 这个常数。
+
+    留一断面时被留出的棚不在可用集里，`field_at(y = 9)` 会去混合 p1 与 p3 ——
+    那时 y = 9 是算出来的。按「y ∈ {3, 9, 15}」标成实测就是说反了（规格书 §四.3）。
+    主折（留一测点）下三座棚都在，行为与原来完全一样；换折时它才显出不样来 ——
+    而那正是它该显出来的时候。
+    """
+    for s in avail:
+        if abs(float(y) - float(C.SHED_Y[s])) < _Y_EPS:
+            return True, s
+    return False, None
 
 
 def _check_preset(preset: str) -> GridSpec:
@@ -282,4 +342,98 @@ def get_compare(
             "正值 = 这一格被约束压低了，负值 = 被抬高了。"
             "左中两格共用同一个色标范围，右格用对称的发散色标（中点必须落在 0）。"
         ),
+    }
+
+
+VOLUME_NOTE = (
+    "整卷按 y 切成一片片，每片都是一次独立的场重建。实测断面画成实心，"
+    "混合出来的逐层变透。"
+    f"z 高于 {C.MAX_MEASURED_Z:.2f} m 是无测量带，带内有外推值，"
+    "三维里不填色、也不报数。"
+)
+
+
+@router.get("/field/volume")
+def get_volume(
+    t_index: int = Query(0, description="时刻下标"),
+    preset: str = Query(DEFAULT_PRESET, description="网格档位"),
+    monotonic: bool = Query(True, description="是否施加竖直软单调投影"),
+    y_step: float = Query(0.5, description="沿棚长 y 的切片间隔 / m"),
+    y_min: float = Query(0.0, description="y 的起点 / m"),
+    y_max: float = Query(18.0, description="y 的终点 / m"),
+) -> dict[str, Any]:
+    """V7 棚体三维温度场：一整卷按 y 切开的二维场。
+
+    **逐片调用 `field_at`，一行 R2 的逻辑都不重写**（硬约束 1）。夹住 y 的是哪两个
+    断面、怎么按 1/dy 加权、单调投影为什么在混合**之后**施加 —— 全部留在
+    `tfield.field.build` 里。这里只做循环与装箱。
+
+    不做那个「缓存三个断面、逐片自己混合」的优化（实测能把 1.22 s 压到约 0.06 s）：
+    它要复现 `field_at` 的整套调度（可用断面的取用、两端的退化、`Y[lo] == y` 的短路、
+    投影施加在混合之后），那是把 R2 实现第二遍 —— 两条路径漂了不报错，
+    正是硬约束 1 要防的事。1.22 s 已经够用（规格书 §4.1）。
+
+    **参数的合法性全在 `deps.get_pipeline()` 之前判完**：敲错一个参数不该等一次
+    fit 才听到「参数不对」，而 fit 要几十秒。`test_拒绝路径不碰管线` 钉着这条。
+    """
+    grid = _check_preset(preset)
+    _check_y_range(y_min, y_max, y_step)
+    ys = _y_planes(y_min, y_max, y_step)
+    _check_volume_size(grid.nx, grid.nz, len(ys))
+
+    pipe = deps.get_pipeline()
+    n_times = int(pipe.ds.wide.shape[0])
+    t_index = _check_t_index(t_index, n_times)
+    cfg = MonotonicConfig(enabled=True) if monotonic else None
+
+    t0 = perf_counter()
+    fields = [field_at(pipe, float(y), t_index, grid, monotonic=cfg) for y in ys]
+    elapsed_ms = int(round((perf_counter() - t0) * 1000))
+
+    avail = available_sheds(pipe)
+    vmin, vmax = temp_range(*[f.values for f in fields])
+
+    # 无测量带**只发一份**（规格书 §四.4）。它由 `outside_measured` 决定，而那一份
+    # 是 `outside_measured_mask(X, Z) & mask` —— 只看网格，与 y 和棚号都无关；
+    # `blend_fields` 又是取两个断面的**与**。实测 37 片完全一致，测试里钉着这条。
+    # np.nonzero 返回 (行, 列) = (z, x)；契约要的是 [ix, iz]，所以接的时候倒过来。
+    iz_s, ix_s = np.nonzero(fields[0].outside_measured)
+    stripes = [[int(a), int(b)] for a, b in zip(ix_s, iz_s)]
+
+    planes: list[dict[str, Any]] = []
+    for y, f in zip(ys, fields):
+        measured, shed = _measured_at(float(y), avail)
+        planes.append({
+            "y": float(y),
+            "measured": measured,
+            "shed": shed,
+            "values": _grid_or_none(f.values),
+        })
+
+    return {
+        "t_index": t_index,
+        "time": str(pipe.ds.wide[C.COL_TIMESTAMP].iloc[t_index]),
+        "n_times": n_times,
+        "preset": preset,
+        "monotonic": bool(monotonic),
+        "calibrated": bool(getattr(pipe, "calibrated", False)),
+        "y_step": float(y_step),
+        "y_min": float(y_min),
+        "y_max": float(y_max),
+        "x_min": float(C.SHED_X_MIN),
+        "x_max": float(C.SHED_X_MAX),
+        "z_max": float(C.SHED_Z_MAX),
+        "max_measured_z": float(C.MAX_MEASURED_Z),
+        "vmin": vmin,
+        "vmax": vmax,
+        "x": [float(v) for v in fields[0].x],
+        "z": [float(v) for v in fields[0].z],
+        "arch": _arch_polyline(),
+        "sheds": [{"id": s, "y": float(C.SHED_Y[s])} for s in C.SHED_ORDER],
+        "sensors": _sensors(),
+        "available_sheds": list(avail),
+        "stripes": stripes,
+        "planes": planes,
+        "elapsed_ms": elapsed_ms,
+        "note": VOLUME_NOTE,
     }
