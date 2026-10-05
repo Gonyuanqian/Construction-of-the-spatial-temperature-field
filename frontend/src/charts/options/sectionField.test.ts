@@ -209,7 +209,7 @@ describe('点选的三种回答在图上都到得了', () => {
         const r = interpretPick(payload, shed.shed, ix, iz)
         seen.add(r.kind)
         expect(cellTooltip(payload, shed.shed, ix, iz), `(${ix},${iz})`)
-          .toBe(pickText(r, payload))
+          .toBe(pickText(r, payload.max_measured_z))
       }
     }
     // 顺带把「这一轮真的问过三种回答」也钉住 —— 否则夹具退化成只剩一种 kind 时，

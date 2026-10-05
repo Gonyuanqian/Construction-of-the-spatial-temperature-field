@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import type { SectionsPayload, SectionShed } from '../api/types'
-import { formatTemp, interpretPick, pickText } from './pick'
+import type { SectionsPayload, SectionShed, VolumePayload } from '../api/types'
+import { formatTemp, interpretPick, interpretVolumePick, pickText } from './pick'
 
 /**
  * 一个 4×4 的小场，四种格子各占一角，好让每一种回答都能被指到。
@@ -21,18 +21,19 @@ import { formatTemp, interpretPick, pickText } from './pick'
  * 把 `values[iz][ix]` 写成 `values[ix][iz]` 照样会全绿 —— 而图会整个转置。
  * 别为了「整齐」把它改成对称的。
  */
+function makeValues(): (number | null)[][] {
+  return [
+    [1, 2, 3, 4],          // iz = 0
+    [1, 2, 3, 4],          // iz = 1
+    [null, 2, 3, 4],       // iz = 2
+    [null, null, 3, 4],    // iz = 3
+  ]
+}
+
+const STRIPES: [number, number][] = [[2, 0], [2, 1], [2, 2], [2, 3], [3, 2], [3, 3]]
+
 function makeShed(): SectionShed {
-  return {
-    shed: 'p1',
-    y: 3,
-    values: [
-      [1, 2, 3, 4],          // iz = 0
-      [1, 2, 3, 4],          // iz = 1
-      [null, 2, 3, 4],       // iz = 2
-      [null, null, 3, 4],    // iz = 3
-    ],
-    stripes: [[2, 0], [2, 1], [2, 2], [2, 3], [3, 2], [3, 3]],
-  }
+  return { shed: 'p1', y: 3, values: makeValues(), stripes: STRIPES }
 }
 
 function makePayload(): SectionsPayload {
@@ -45,6 +46,28 @@ function makePayload(): SectionsPayload {
     arch: [[0, 0], [2.1, 0]], sensors: [],
     sheds: [makeShed()],
     note: '',
+  }
+}
+
+/** 两片的一小卷：第 0 片是实测断面，第 1 片是混合出来的。 */
+function makeVolume(): VolumePayload {
+  return {
+    t_index: 12, time: '2026-07-23T12:00:00', n_times: 1308,
+    preset: 'standard', monotonic: true, calibrated: true,
+    y_step: 0.5, y_min: 0, y_max: 18,
+    x_min: 0, x_max: 2.1, z_max: 1.3017, max_measured_z: 2,
+    vmin: 0, vmax: 5,
+    x: [0, 0.7, 1.4, 2.1], z: [0, 0.7, 1.4, 2.1],
+    arch: [[0, 0], [2.1, 0]],
+    sheds: [{ id: 'p1', y: 3 }, { id: 'p2', y: 9 }, { id: 'p3', y: 15 }],
+    sensors: [],
+    available_sheds: ['p1', 'p2', 'p3'],
+    stripes: STRIPES,
+    planes: [
+      { y: 3, measured: true, shed: 'p1', values: makeValues() },
+      { y: 3.5, measured: false, shed: null, values: makeValues() },
+    ],
+    elapsed_ms: 1250, note: '',
   }
 }
 
@@ -84,7 +107,7 @@ describe('点选只有三种回答', () => {
     const r = interpretPick(payload, 'p1', 2, 0)
     expect(payload.sheds[0].values[0][2]).toBe(3)   // 值确实在
     expect(r.kind).toBe('unmeasured')
-    expect(pickText(r, payload)).toContain('不报数')
+    expect(pickText(r, payload.max_measured_z)).toContain('不报数')
   })
 
   it('拱外压过斜纹（两种标记撞上时拱外优先）', () => {
@@ -104,25 +127,56 @@ describe('点选只有三种回答', () => {
   })
 })
 
+describe('三维那一侧走的是同一套判定', () => {
+  it('三种回答一个不少，且各自落在同一批格子上', () => {
+    const p = makeVolume()
+    expect(interpretVolumePick(p, 0, 1, 1)).toEqual({ kind: 'value', value: 2 })
+    // 拱外那一格是 (0, 2)：`values[2] = [null, 2, 3, 4]`，只有第 0 列是 null。
+    expect(interpretVolumePick(p, 0, 0, 2).kind).toBe('outside')
+    expect(interpretVolumePick(p, 0, 2, 0)).toEqual({ kind: 'unmeasured', z: 0 })
+  })
+
+  it('**拱外与无测量带不合并**：拱顶下那层答「无测量带」，不是「拱外」', () => {
+    // 规格书 §四.4 的警告。三维里这两样**都不填色**，所以最容易被顺手合成一支 ——
+    // 而它们的回答不是同一句话：拱外是「场在那里没有定义」，
+    // 无测量带是「值在那儿，但没有实测支撑」。合成之后，悬停到拱顶下那一层
+    // 会答「拱外，无定义」，把「不敢说」说成了「不存在」。
+    const p = makeVolume()
+    // (2, 0) 是斜纹格，值确实是 3，但不在拱外。
+    expect(p.planes[0].values[0][2]).toBe(3)
+    expect(interpretVolumePick(p, 0, 2, 0)).toEqual({ kind: 'unmeasured', z: 0 })
+    expect(interpretVolumePick(p, 0, 0, 3).kind).toBe('outside')
+  })
+
+  it('片号越界是编程错误，抛错而不是给出第四种回答', () => {
+    expect(() => interpretVolumePick(makeVolume(), 9, 0, 0)).toThrow()
+    expect(() => interpretVolumePick(makeVolume(), -1, 0, 0)).toThrow()
+  })
+
+  it('两片给的答案按各自的值走（不是都读了第一片）', () => {
+    const p = makeVolume()
+    p.planes[1].values[1][1] = 43.216137
+    expect(interpretVolumePick(p, 1, 1, 1)).toEqual({ kind: 'value', value: 43.216137 })
+    expect(interpretVolumePick(p, 0, 1, 1)).toEqual({ kind: 'value', value: 2 })
+  })
+})
+
 describe('三种回答的文案', () => {
-  it('无测量带那句写明了阈值，且阈值来自载荷', () => {
-    const payload = makePayload()
-    payload.max_measured_z = 0.83
-    const text = pickText({ kind: 'unmeasured', z: 1.4 }, payload)
+  it('无测量带那句写明了阈值，且阈值来自参数', () => {
+    const text = pickText({ kind: 'unmeasured', z: 1.4 }, 0.83)
     expect(text).toContain('0.83')
     expect(text).toContain('不报数')
     // 上面两条挡不住「把阈值写死进文案」—— 写死一个数，它照样能对上。
-    // 换一个载荷再问一次：真正从载荷读的文案会跟着变，写死的不会。
-    payload.max_measured_z = 1.1
-    expect(pickText({ kind: 'unmeasured', z: 1.4 }, payload)).not.toBe(text)
+    // 换一个阈值再问一次：真正从参数读的文案会跟着变，写死的不会。
+    expect(pickText({ kind: 'unmeasured', z: 1.4 }, 1.1)).not.toBe(text)
   })
 
   it('拱外那句说清是「无定义」而不是某个数', () => {
-    expect(pickText({ kind: 'outside' }, makePayload())).toContain('无定义')
+    expect(pickText({ kind: 'outside' }, 2)).toContain('无定义')
   })
 
   it('数值那句带上数值本身与出处', () => {
-    const t = pickText({ kind: 'value', value: 43.216137 }, makePayload())
+    const t = pickText({ kind: 'value', value: 43.216137 }, 2)
     expect(t).toContain('43.22')
     expect(t).toContain('现场重算')     // 与 Provenance 的说法一致
   })

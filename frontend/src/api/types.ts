@@ -299,3 +299,62 @@ export interface ComparePayload {
   identical: boolean
   note: string
 }
+
+/* ------------------------------------------------------------------ *
+ * 页③ 三维视图（V7 棚体）：`GET /api/field/volume`
+ * ------------------------------------------------------------------ */
+
+/** 一整卷里的一片。`values` 同样是行主序 `values[iz][ix]`。 */
+export interface VolumePlane {
+  y: number
+  /**
+   * 这一片是不是**实测断面**。**由后端判定，不由前端猜。**
+   * 判据是 `available_sheds`，不是 `y ∈ {3, 9, 15}` —— 留一断面时
+   * `field_at(y = 9)` 会去混合 p1 与 p3，那时 y = 9 是算出来的。
+   */
+  measured: boolean
+  /** `measured` 为 true 时是被测的那座棚，否则是 null。 */
+  shed: string | null
+  /** 拱外是 `null`（后端送不了 NaN —— `allow_nan=False` 会变成 500）。 */
+  values: (number | null)[][]
+}
+
+export interface VolumePayload {
+  t_index: number
+  /** 时刻字符串，**后端给**，前端不自己算。每一条读数都要带上它。 */
+  time: string
+  n_times: number
+  preset: string
+  monotonic: boolean
+  calibrated: boolean
+  y_step: number
+  y_min: number
+  y_max: number
+  x_min: number
+  x_max: number
+  z_max: number
+  max_measured_z: number
+  /** 整卷**共用**的色标范围，与页③ 的切面图同一个口径。前端不许各算各的。 */
+  vmin: number
+  vmax: number
+  x: number[]
+  z: number[]
+  arch: [number, number][]
+  /** 与 `/field/arch` 同形（`ShedInfo`）。 */
+  sheds: ShedInfo[]
+  sensors: SensorPoint[]
+  /**
+   * 本帧**真正有训练样本**的断面。`measured` 按它算，
+   * 代码不许假设它总是三座棚 —— 留一折时它就只有两座。
+   */
+  available_sheds: string[]
+  /**
+   * 无测量带的格子下标 `[ix, iz]`，**全片共用一份**（规格书 §四.4）。
+   * 与 `SectionsPayload` 的同一份事实、同一个名字：前端不许自己从
+   * `x` / `z` / `max_measured_z` 推 —— 那是把后端的一条规则实现了第二遍。
+   */
+  stripes: [number, number][]
+  planes: VolumePlane[]
+  elapsed_ms: number
+  note: string
+}

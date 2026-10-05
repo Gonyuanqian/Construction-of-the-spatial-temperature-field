@@ -31,7 +31,7 @@ export function shedOfSeries(payload: SectionsPayload, seriesIndex: number): str
 export function cellTooltip(
   payload: SectionsPayload, shed: string, ix: number, iz: number,
 ): string {
-  return pickText(interpretPick(payload, shed, ix, iz), payload)
+  return pickText(interpretPick(payload, shed, ix, iz), payload.max_measured_z)
 }
 
 const GRID_W = 0.27

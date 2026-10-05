@@ -97,7 +97,7 @@ const readout = computed(() => {
   if (!s || !p) return null
   return {
     where: `${p.shed}　x ${s.x[p.ix].toFixed(2)} m　z ${s.z[p.iz].toFixed(2)} m`,
-    text: pickText(interpretPick(s, p.shed, p.ix, p.iz), s),
+    text: pickText(interpretPick(s, p.shed, p.ix, p.iz), s.max_measured_z),
   }
 })
 
