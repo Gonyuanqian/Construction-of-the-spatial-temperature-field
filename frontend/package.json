@@ -11,11 +11,13 @@
   },
   "dependencies": {
     "echarts": "^5.6.0",
+    "three": "^0.186.1",
     "vue": "^3.5.42",
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
+    "@types/three": "^0.186.0",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/test-utils": "^2.5.1",
     "@vue/tsconfig": "^0.9.1",
