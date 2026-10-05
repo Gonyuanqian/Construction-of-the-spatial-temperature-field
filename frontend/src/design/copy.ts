@@ -9,17 +9,15 @@
 export const SYSTEM_TITLE = '棚式空间温度场重建系统'
 
 /**
- * 顶部模式开关的两项。实时模式本轮只是把**位置**定下来：
- * 它要扩后端库并重跑标定（spec 2026-10-04 §三.1），排在训练模式之后。
+ * 顶部模式开关的两项。实时模式现在**开着了**：后端扩库与重标定都做完了，
+ * 它自己那一屏在 `/live`（路由懒加载，见 `router/index.ts`）。
  */
 export const MODES = [
   { key: 'train', label: '训练模式', enabled: true, why: '' },
-  {
-    key: 'live',
-    label: '实时模式',
-    enabled: false,
-    why: '排在后面：它要先扩后端库、并把留出的那一段重新标定一次，训练模式这几页一行都不需要。',
-  },
+  // `why` 留着空串而不是删掉字段：类型上它必填，而 `guards.test.ts` 那条
+  // 「未开放项必带理由」的循环按 `enabled` 跳过这一项 —— 删字段是改类型，
+  // 换不来什么。
+  { key: 'live', label: '实时模式', enabled: true, why: '' },
 ] as const
 
 /**

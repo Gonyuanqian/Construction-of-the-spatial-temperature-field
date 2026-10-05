@@ -8,21 +8,49 @@
  *
  * P1 那版 App.vue 里显示数据集摘要的代码**搬去了页①**（Task 8），
  * 这里不再留一行：外壳不显示任何数据。
+ *
+ * **模式开关现在与路由是同一件事的两种看法。** 之前 `mode` 是一个本地
+ * `ref('train')`，而**没有任何人消费它** —— 切到「实时模式」什么都不发生。
+ * 现在它从 `route.path` 推出来，写进去就是一次 `router.push`：于是
+ * 「开关显示哪个模式」与「现在在哪一页」不可能对不上。
+ *
+ * 导航按 `route.meta.rail` 收起。实时模式那一屏把导航收起来，因为它
+ * 是全程唯一「不提数据」的一列 —— 演示时它只是噪声，而且「实时源的状态」
+ * 才是这一屏要说的事。
  */
-import { ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 import ModeSwitch from './components/ModeSwitch.vue'
 import NavRail from './components/NavRail.vue'
 import TitleBar from './components/TitleBar.vue'
 
-const mode = ref('train')
+const route = useRoute()
+const router = useRouter()
+
+/** 训练模式最后停留的那一页。切回来还回这里 —— 演示时不用重新点一遍。 */
+const lastTrainPath = ref('/data')
+
+const isLive = computed(() => route.path.startsWith('/live'))
+
+/** 写进去就是一次跳转；`ModeSwitch` 是 `v-model`，所以走 setter。 */
+const mode = computed({
+  get: () => (isLive.value ? 'live' : 'train'),
+  set: (m: string) => { void router.push(m === 'live' ? '/live' : lastTrainPath.value) },
+})
+
+watch(() => route.path, (p) => {
+  if (!p.startsWith('/live')) lastTrainPath.value = p
+}, { immediate: true })
+
+const showRail = computed(() => route.meta.rail !== false)
 </script>
 
 <template>
   <TitleBar />
   <ModeSwitch v-model="mode" />
   <div class="body">
-    <NavRail />
+    <NavRail v-if="showRail" />
     <main class="page">
       <RouterView />
     </main>

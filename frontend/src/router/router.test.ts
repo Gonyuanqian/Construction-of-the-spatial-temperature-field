@@ -28,4 +28,18 @@ describe('路由', () => {
     await router.isReady()
     expect(router.currentRoute.value.path).toBe('/data')
   })
+
+  it('实时模式的路由在，但不进左侧导航', () => {
+    const r = createAppRouter(createMemoryHistory())
+    const live = r.resolve('/live')
+    expect(live.matched.length).toBeGreaterThan(0)
+    expect(live.name).toBe('live')
+    expect(live.meta.rail).toBe(false)
+    // 导航里没有它 —— 有的话切过去会「导航说自己在一个不在导航里的页」。
+    // 先摊平成 `readonly string[]`：`NAV_ITEMS` 是 `as const`，`i.to` 是字面量联合类型，
+    // 直接 `i.to === '/live'` 会被 `vue-tsc` 判成「恒假的无意比较」而**构建不过**
+    // （TS2367）—— 类型本来就写着没有，可这恰恰是这条用例要去断的东西。
+    const navPaths: readonly string[] = NAV_ITEMS.map((i) => i.to)
+    expect(navPaths.includes('/live')).toBe(false)
+  })
 })

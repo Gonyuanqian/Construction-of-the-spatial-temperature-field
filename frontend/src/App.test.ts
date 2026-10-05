@@ -4,7 +4,7 @@ import { createMemoryHistory } from 'vue-router'
 
 import App from './App.vue'
 import { createAppRouter } from './router'
-import { MODES, NAV_ITEMS, SYSTEM_TITLE } from './design/copy'
+import { NAV_ITEMS, SYSTEM_TITLE } from './design/copy'
 
 /**
  * 这一组测的是外壳，但它经 RouterView 把页①（DataView）也挂了起来，
@@ -82,15 +82,27 @@ describe('应用外壳', () => {
     expect(w.text()).toContain('0.1.0')
   })
 
-  it('实时模式开关在，但点不动，并说明为什么', async () => {
+  it('实时模式开关点得动，切过去到 /live，导航收起', async () => {
     stubFetch()
     const w = await mountApp()
     const modes = w.get('nav[aria-label="模式"]')
     const live = modes.findAll('button').find((b) => b.text().includes('实时模式'))
     expect(live).toBeTruthy()
-    expect(live!.attributes('disabled')).toBeDefined()
-    // 断言对齐 copy.ts 里实时模式那条 why 的真实用词（「重新标定」）。
-    const why = MODES.filter((m) => !m.enabled).map((m) => m.why).join('')
-    expect(modes.text()).toContain(why)
+    expect(live!.attributes('disabled')).toBeUndefined()
+
+    await live!.trigger('click')
+    // **不能用 `flushPromises()` 等这一跳**：`/live` 是懒加载的（`router/index.ts`），
+    // 那一块 chunk 在**宏任务**边界才解析完 —— 实测点完两次 `flushPromises()` 之后
+    // `currentRoute` 还是 `/data`，`setTimeout(20)` 之后才是 `/live`。
+    // 轮询等待，断言的东西没变：点完就切过去了。超时上限是 `vi.waitFor` 的默认 1s。
+    await vi.waitFor(() => {
+      expect((w.vm as unknown as { $route: { path: string } }).$route.path).toBe('/live')
+    })
+
+    // 导航收起了 —— 导航是这一屏唯一「不提数据」的控件，留着它就是噪声。
+    // `mountApp()` 把 router 包在 `global.plugins` 里、**没有把它交出来**
+    // （同文件好几条用例都用着这个 helper，不动它的签名），所以上面那句从组件
+    // 实例上读它挂着的那个 `$route`。
+    expect(w.find('nav[aria-label="页面"]').exists()).toBe(false)
   })
 })

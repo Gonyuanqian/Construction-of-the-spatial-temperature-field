@@ -38,6 +38,17 @@ export function createAppRouter(history?: RouterHistory): Router {
     history: history ?? createWebHistory(),
     routes: [
       ...routes,
+      // 实时模式**不进 `NAV_ITEMS`**：进了就会出现在左导航里，而这一屏要收起导航。
+      // 它也不像上面那几页那样从 `NAV_ITEMS` 生成 —— 所以必须显式写一条，
+      // 否则会被下面的兜底 `/:rest(.*)*` 吃掉，`/live` 直接落回页①。
+      {
+        path: '/live',
+        name: 'live',
+        // 懒加载：实时模式那一屏（含三维）不该进首屏。
+        component: () => import('../views/LiveView.vue'),
+        // 收起左侧导航（`App.vue` 按这个 meta 决定）。
+        meta: { rail: false },
+      },
       // `/` 与认不出的路径都落回页①：演示时最怕的是白屏，
       // 一个回到起点的跳转至少还看得见东西。
       { path: '/', redirect: '/data' },
