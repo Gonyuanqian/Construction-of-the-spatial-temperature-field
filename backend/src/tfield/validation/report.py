@@ -67,7 +67,11 @@ def evaluate(make_pipe: Callable[[], FieldPipeline], ds: Dataset,
         )
 
     fs = build_features(ds, groups)
-    ti = np.arange(C.EXPECTED_ROWS)
+    # ⚠️ 长度取**这一份数据集**的，不取 `C.EXPECTED_ROWS`。
+    # 全量数据集上两者相同（1308），但留出之后在**训练段**上评估时
+    # 训练段只有 1164 行 —— 写死就会让预测要走的那 1308 个时刻
+    # 落到只有 1164 个元素的气象列上：不是崩溃，是一条形状错位的静默错误。
+    ti = np.arange(len(ds.wide))
     rows: list[dict] = []
     per_point: list[dict] = []
 

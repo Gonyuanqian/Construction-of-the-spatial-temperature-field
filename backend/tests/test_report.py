@@ -89,3 +89,26 @@ def test_留一断面折的中间棚误差等于规格书的数(ds):
 def test_指标表带tag(ds):
     res = evaluate(_factory(ds), ds, position_folds(ds), tag="unit-test")
     assert set(res.metrics["tag"]) == {"unit-test"}
+
+
+def test_在训练段上评估不会形状对不上():
+    """`ti` 写死 `C.EXPECTED_ROWS`（1308）时，训练段只有 1164 行。
+
+    这不是崩溃 —— 是一条形状错位的静默错误，而它只会发生在「留出之后」这条路上。
+    （实测的失败形态是 `IndexError`：`_design_matrix` 读 `self._bg_temp[t_index]`，
+    而那一列只有 1164 个；无论它以哪一种方式红，红的地方都是这条写死的长度。）
+
+    这个模块整体带 `pytest.mark.slow`（见文件头的 `pytestmark`），不必再逐条标。
+    """
+    from tfield import config as C
+    from tfield.data.loader import HOLDOUT_CUTOFF, split_holdout
+
+    ds = load_dataset(test_data_path())
+    train = split_holdout(ds, HOLDOUT_CUTOFF).train
+    folds = [f for f in position_folds(train) if f.group == "A"][:1]
+    assert folds, "A 组一折都没有，这个测试什么也没验到"
+
+    res = evaluate(_factory(train), train, folds,
+                   groups=C.DEFAULT_FEATURE_GROUPS, tag="holdout")
+    assert int(res.metrics["n"].iloc[0]) == len(train.wide) * len(folds[0].test_sensors)
+    assert res.metrics["mae"].iloc[0] == res.metrics["mae"].iloc[0]  # 不是 NaN

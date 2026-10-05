@@ -16,13 +16,15 @@ import argparse
 import sys
 from pathlib import Path
 
+import pandas as pd
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from tfield import config as C                                      # noqa: E402
 from tfield.calibration import (bundle_path, cache_folds,           # noqa: E402
                                 calibrate_or_load, groups_signature,
                                 plateau_of, sweep_idw)
-from tfield.data.loader import load_dataset                         # noqa: E402
+from tfield.data.loader import load_dataset, split_holdout          # noqa: E402
 from tfield.features import build_features                          # noqa: E402
 from tfield.pipeline import PipelineConfig                          # noqa: E402
 from tfield.validation.folds import position_folds                  # noqa: E402
@@ -38,9 +40,16 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="忽略已有标定包，重跑一遍")
     ap.add_argument("--stage1-only", action="store_true",
                     help="只扫 IDW 并写出参数曲面，不写标定包")
+    ap.add_argument("--holdout", default=None,
+                    help="留出切点（如 2026-07-27 12:00:00）。给了它就在**训练段**上标定，"
+                         "晚于等于这一点的行留给实时模式；不给则用全量，行为与以前逐位相同")
     args = ap.parse_args()
 
     ds = load_dataset(args.data)
+    if args.holdout is not None:
+        ds = split_holdout(ds, pd.Timestamp(args.holdout)).train
+        print(f"留出切点 {args.holdout}；标定只用训练段 {len(ds.wide)} 行"
+              f"（派生签名 {ds.signature}）；留出段留给实时模式。")
     groups = tuple(g.strip() for g in args.groups.split(",") if g.strip())
 
     if args.stage1_only:
