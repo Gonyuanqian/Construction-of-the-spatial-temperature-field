@@ -11,6 +11,7 @@ from __future__ import annotations
 import pathlib
 import sys
 
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
@@ -99,7 +100,9 @@ def test_两条不加特征的说明在(client):
 def test_标定包在_且报得出参数与指标(client):
     b = client.get("/api/calibration").json()
     assert b["present"] is True, "本项目 configs/ 下应当有迁移过来的标定包"
-    assert b["created_at"] == "2026-10-03T13:22:00+00:00"
+    # 与旧包（2026-10-03 那一份）的数不可直接比大小：同折族、不同参数。
+    # 换口径重标过（留出段 2026-07-27 12:00 起 144 帧只在训练段上标定）。
+    assert b["created_at"] == "2026-10-05T13:52:09+00:00"
     assert b["tool_version"] == "0.1.0"
     assert b["groups_sig"] == "d6294c09"
     assert b["feature_groups"] == list(C.DEFAULT_FEATURE_GROUPS)
@@ -142,10 +145,14 @@ def test_逐折与逐点是标定包里的原数_不是现算的(client):
     import json
 
     from tfield.calibration import load_for
-    from tfield.data.loader import load_dataset, test_data_path
+    from tfield.data.loader import HOLDOUT_CUTOFF, load_dataset, split_holdout, test_data_path
 
     b = client.get("/api/calibration").json()
-    ds = load_dataset(test_data_path())
+    # ⚠️ **必须切训练段**：路由报的是按训练段标出来的那个包。拿整份文件去
+    # `load_for` 会命中**另一个**包（2026-10-03 那一份全量标定），于是这条守卫
+    # 变成「拿 A 包的数比 B 包的数」—— 它想守的「页面上的就是盘上那一份」
+    # 一个字都没验到，却仍然是绿的。**这就是它上一轮红的原因。**
+    ds = split_holdout(load_dataset(test_data_path()), HOLDOUT_CUTOFF).train
     bundle = load_for(ds, C.DEFAULT_FEATURE_GROUPS, root=BACKEND / "configs")
     assert bundle is not None
 
@@ -234,8 +241,10 @@ def test_全折_mae_都是_NaN_时_worst_fold_为_None(monkeypatch):
 def test_ab_两组都报_且_gap_是负的这件事写在说明里(client):
     b = client.get("/api/calibration").json()
     ab = b["ab"]
-    assert ab["mae_a"] == pytest.approx(0.115698, abs=1e-6)
-    assert ab["mae_b"] == pytest.approx(0.162401, abs=1e-6)
+    # 与旧包（2026-10-03 那一份）的数不可直接比大小：同折族、不同参数。
+    # 换口径重标过（留出段 2026-07-27 12:00 起 144 帧只在训练段上标定）。
+    assert ab["mae_a"] == pytest.approx(0.119411, abs=1e-6)
+    assert ab["mae_b"] == pytest.approx(0.168553, abs=1e-6)
     assert ab["gap"] == pytest.approx(ab["mae_a"] - ab["mae_b"], abs=1e-9)
     assert ab["gap"] < 0
 
@@ -248,11 +257,35 @@ def test_口径说明必须随包一起来(client):
         assert frag in note, f"口径说明里少了「{frag}」—— 那几个字是这个数唯一的前提"
 
 
+def _lz_space(b: dict) -> list[float]:
+    """从**响应本身**读 lz 的搜索空间（`tuned_keys` 里 `metric.lz` 那一行的 space）。
+
+    不另去盘上加载标定包：这一条要验的是「响应里的值与响应里的空间对得上」，
+    空间也必须从响应里来 —— 换成从包里读，测的就不是这一页了。
+    """
+    row = next(t for t in b["tuned_keys"] if t["key"] == "metric.lz")
+    assert row["space"] != "—", "lz 报了值却没报搜索空间，_lz_space 无从取起"
+    return [float(v) for v in row["space"].split("、")]
+
+
 def test_lz_落在搜索下界时要自己说出来(client):
-    """本项目的包 lz = 0.005 = 搜索下界。那不是已收敛，是「还没扫够」。"""
+    """**规则**：lz 踩在搜索下界 ⟺ `lz_note` 有话说。两头都要成立。
+
+    不钉「本项目正好踩在下界」—— 那是**某一份标定包**的性质，换一次标定就没了
+    （换成训练段重标之后 lz 从 0.005 挪到 0.03，旧写法当场失效）。
+    钉规则是因为两个方向都是错：踩在下界不吭声，是把「没扫够」说成「已收敛」；
+    没踩下界却发警告，是狼来了，警告多了就没人看了。
+    """
     b = client.get("/api/calibration").json()
-    assert b["params"] and b["lz_note"], "lz 贴着下界时必须有提示，不许静默"
-    assert "搜索下界" in b["lz_note"]
+    lo = min(_lz_space(b))
+    params = {p["param"]: p["value"] for p in b["params"]}
+    at_bound = float(params["metric.lz"]) == lo
+    if at_bound:
+        assert b["lz_note"] is not None, "lz 贴着搜索下界时必须有提示，不许静默"
+        assert "搜索下界" in b["lz_note"]
+    else:
+        assert b["lz_note"] is None, (
+            f"lz = {params['metric.lz']} 不在下界 {lo:g} 上，不该发「还没扫够」的警告")
 
 
 def test_没有标定包时也要答得出来(monkeypatch, tmp_path):
@@ -291,3 +324,50 @@ def test_上屏文案干净_没有被禁的连接符与_markdown_标记(client):
     for s in rendered:
         for bad in ("——", "**", "`", " · ", "→", "↳"):
             assert bad not in s, f"上屏文案里出现了被禁的 {bad!r}：{s!r}"
+
+
+# ── 两个出口：页① 认文件，模型认训练段 ──
+
+
+def test_页1_仍然报整份文件(client):
+    """`/api/dataset` 认的是**用户交进来的那个文件**。
+
+    绝不能改成训练段：那样它会报「宽表 1164 × 52」却带着
+    `fix.n_rows == 1308`、`fixed_indices` 五个序号 —— 一份自相矛盾的凭证，
+    而这一页的全部职责就是出一份自洽的凭证。
+    """
+    b = client.get("/api/dataset").json()
+    assert b["n_times"] == 1308
+    assert b["fix"]["n_rows"] == 1308
+    assert b["time_end"] == "2026-07-27T23:55:00"
+
+
+def test_模型认的是训练段():
+    from api import deps
+    from tfield.data.loader import HOLDOUT_CUTOFF, derived_signature
+    full = deps.get_dataset()
+    train = deps.get_train_dataset()
+    assert len(train.wide) == 1164
+    assert train.signature == derived_signature(full.signature, HOLDOUT_CUTOFF)
+    assert train.fix == full.fix
+    live = deps.get_live_frames()
+    assert len(live) == 144
+    ts = pd.to_datetime(live[C.COL_TIMESTAMP])
+    assert bool(ts.is_monotonic_increasing)
+
+
+def test_管线用的是训练段(monkeypatch):
+    """管的线是**训练段** fit 出来的 —— 与页① 报的那份文件不是同一个世界。"""
+    from api import deps
+    seen = {}
+    real = deps._build_pipeline
+
+    def spy(ds, groups, bundle):
+        seen["n"] = len(ds.wide)
+        seen["sig"] = ds.signature
+        return real(ds, groups, bundle)
+
+    monkeypatch.setattr(deps, "_PIPELINES", deps.PipelineCache(builder=spy))
+    deps.get_pipeline()
+    assert seen["n"] == 1164
+    assert "-h20260727T1200" in seen["sig"]

@@ -70,7 +70,13 @@ WHITELIST = frozenset({"deps.py"})
 #: `get_pipeline` 是第二个，理由同形：`get_pipeline()` 内部先调 `get_dataset()`，
 #: 它**不绕过**数据集缓存，而是把「管线只构建一次」这条性质收到一个可计数的
 #: 落点上（`PipelineCache.n_builds`）。路由不许自己 new FieldPipeline。
-ALLOWED_FROM_DEPS = frozenset({"get_dataset", "get_pipeline"})
+#:
+#: `get_train_dataset` 是第三个，理由仍是同形：它内部先调 `get_dataset()`，
+#: 不绕过缓存，只是把「留出切分」收到一个可计数的落点上（`deps._HOLDOUTS`）。
+#: 页② 必须问它 —— 标定包是按**训练段**标出来的，拿整份文件去 `load_for`
+#: 会命中另一个包，于是报出来的数是**另一份标定**的数，而页面上没有任何
+#: 一个字会提示这件事。
+ALLOWED_FROM_DEPS = frozenset({"get_dataset", "get_pipeline", "get_train_dataset"})
 
 #: 与 `api.deps` 无关的、任何位置都不许直接取用的通用黑名单（直取后端库/缓存类）。
 FORBIDDEN_ANYWHERE = frozenset({"load_dataset", "DatasetCache"})
@@ -183,6 +189,12 @@ def test_api_层从_deps_只许取_get_dataset():
     )
 
 
-def test_白名单只有两个出口():
-    """白名单是一份**写死的声明**。它悄悄变长，是这道守卫失效的第一种方式。"""
-    assert ALLOWED_FROM_DEPS == frozenset({"get_dataset", "get_pipeline"})
+def test_白名单只有那三个出口():
+    """白名单是一份**写死的声明**。它悄悄变长，是这道守卫失效的第一种方式。
+
+    第三个（`get_train_dataset`）是**有意加的**：页② 必须与标定包问同一份数据集，
+    而包是按训练段标的。加它要改这一行 —— 这正是这条测试存在的意义：
+    让白名单的每一次生长都落在 diff 里，而不是悄悄发生。
+    """
+    assert ALLOWED_FROM_DEPS == frozenset(
+        {"get_dataset", "get_pipeline", "get_train_dataset"})

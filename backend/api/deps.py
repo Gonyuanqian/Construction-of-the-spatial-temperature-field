@@ -25,8 +25,10 @@ import pathlib
 import threading
 from typing import Callable
 
+import pandas as pd
+
 from tfield.calibration import groups_signature, load_for
-from tfield.data.loader import load_dataset
+from tfield.data.loader import HOLDOUT_CUTOFF, Holdout, load_dataset, split_holdout
 from tfield.data.types import Dataset
 from tfield.features import build_features
 from tfield.pipeline import FieldPipeline, PipelineConfig
@@ -152,14 +154,18 @@ def get_pipeline(groups: tuple[str, ...] | None = None) -> FieldPipeline:
     """本项目管线的唯一入口。**路由层不许自己 new FieldPipeline、也不许自己 fit。**
 
     为什么它能与 `get_dataset` 并列成为 `api.deps` 的第二个出口：
-    它**内部先调 `get_dataset()`**，是数据集缓存的消费者而不是绕过者；
+    它**内部先调 `get_train_dataset()`**（而那个又调 `get_dataset()`），
+    是数据集缓存的消费者而不是绕过者；
     让它当出口，是为了让「管线只构建一次」这条性质有一个**可计数**的落点
     （`PipelineCache.n_builds`），否则每个路由各 fit 一次，谁也数不出来。
+
+    ⚠️ **它 fit 的是训练段，不是用户交进来的那份文件**（见 `get_train_dataset`）。
+    页① 报的那份凭证与这里的世界**故意**不是同一个：模型不许看过留出段。
     """
     from . import paths
     from tfield import config as C
     groups = tuple(C.DEFAULT_FEATURE_GROUPS if groups is None else groups)
-    ds = get_dataset()
+    ds = get_train_dataset()          # ← 模型认训练段，页① 认文件
     # 每次请求读一次标定包（794 KB 的 JSON，约 10 ms 量级）——
     # 它的 `created_at` 是键的一部分，不读就不知道键。相对 fit 的几十秒可以忽略。
     bundle = load_for(ds, groups, paths.CONFIGS)
@@ -177,8 +183,48 @@ def get_dataset(path: pathlib.Path | str | None = None) -> Dataset:
     return _CACHE.get(path)
 
 
+#: 留出切分的缓存。键 = (数据集签名, 切点)。
+#:
+#: 切一次就是两次 iloc，不贵；记住它是为了让 `get_train_dataset()` 每次返回
+#: **同一个** Dataset 对象 —— `PipelineCache` 的键虽然只看签名，
+#: 但「同一次会话里训练段是同一份」这件事本身值得成立。
+_HOLDOUTS: dict[tuple[str, str], Holdout] = {}
+
+
+def _holdout(path: pathlib.Path | str | None = None,
+             cutoff: pd.Timestamp = HOLDOUT_CUTOFF) -> Holdout:
+    ds = get_dataset(path)
+    key = (ds.signature, str(pd.Timestamp(cutoff)))
+    hit = _HOLDOUTS.get(key)
+    if hit is None:
+        hit = split_holdout(ds, pd.Timestamp(cutoff))
+        _HOLDOUTS[key] = hit
+    return hit
+
+
+def get_train_dataset(path: pathlib.Path | str | None = None,
+                      cutoff: pd.Timestamp = HOLDOUT_CUTOFF) -> Dataset:
+    """**模型与构场看得到的世界**：时间轴到 2026-07-27 11:55 为止的 1164 行。
+
+    与 `get_dataset()` **分成两个出口**是这张规格书里唯一一处设计性的决定：
+
+    - `get_dataset()` = 用户交进来的那份文件（页① 认证它）；
+    - `get_train_dataset()` = 留出之后剩下的训练段（模型与场只用它）。
+
+    合成一个出口的话，页① 会报「宽表 1164 × 52」却带着 `n_rows = 1308`
+    的修复报告 —— 一份自相矛盾的凭证，而页① 的全部职责就是出自洽的凭证。
+    """
+    return _holdout(path, cutoff).train
+
+
+def get_live_frames(path: pathlib.Path | str | None = None,
+                    cutoff: pd.Timestamp = HOLDOUT_CUTOFF) -> pd.DataFrame:
+    """**留出段**：实时模式一帧一帧接进时间轴的那 144 行（时间升序）。"""
+    return _holdout(path, cutoff).live
+
+
 def reset_cache() -> None:
-    """换数据集之后（上传、重新导出）显式清一次。**两个缓存一起清。**
+    """换数据集之后（上传、重新导出）显式清一次。**三个缓存一起清。**
 
     只清数据集不清管线是最坏的组合：数据集重读了，管线还是按旧数据 fit 出来的，
     于是「数据被替换就重标」整条防线失效，而 `n_loads` 会显示「确实重读了」——
@@ -187,3 +233,4 @@ def reset_cache() -> None:
     global _CACHE, _PIPELINES
     _CACHE = DatasetCache()
     _PIPELINES = PipelineCache()
+    _HOLDOUTS.clear()      # 切分结果挂着旧的 Dataset 对象，留着就是「换了数据集还用旧训练段」

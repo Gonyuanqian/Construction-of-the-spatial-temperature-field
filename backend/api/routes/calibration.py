@@ -47,7 +47,7 @@ _AB_NOTE = ("gap = A 组 MAE − B 组 MAE。负数是好消息：A 组是挑参
 
 @router.get("/calibration")
 def get_calibration() -> dict[str, Any]:
-    ds = deps.get_dataset()
+    ds = deps.get_train_dataset()     # 包是按训练段标的，这里必须问同一份
     bundle = load_for(ds, C.DEFAULT_FEATURE_GROUPS, root=CONFIGS_ROOT)
 
     if bundle is None:
@@ -260,8 +260,11 @@ def _fallback_params(cfg) -> list[dict[str, str]]:
 def _lz_note(bundle) -> str | None:
     """lz 落在搜索下界 = 还没扫够，不能当已收敛。含义是「IDW 主要吃同层邻居」。
 
-    与 `app/app.py:653` 的 `lz_boundary_note` 同源。本项目的包正好踩在这上面
-    （lz = 0.005 = 下界），所以这一条在界面上会真的出现，不是理论上的分支。
+    与 `app/app.py:653` 的 `lz_boundary_note` 同源。**本项目当前的包踩不到**：换成
+    训练段重标之后 lz = 0.03，而下界是 0.005，所以这一条在界面上是 None。
+    留着它是因为「踩在下界」是个会随标定回来的真实分支（换一折族、换一组特征组
+    就可能踩上），而不是因为它现在会发生 —— 一个自称「本项目正好踩在上面」的
+    注释，比没有注释更坏：它会让人以为界面上的警告是真看到了，而其实是没看到。
     """
     lo = min(bundle.search.space["idw.lz"])
     if abs(bundle.metric.lz - lo) < 1e-12:
