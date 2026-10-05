@@ -22,7 +22,7 @@
  */
 import { computed, defineAsyncComponent, h, onMounted, onUnmounted, ref } from 'vue'
 
-import type { LiveFramePayload, LiveStatus } from '../api/types'
+import type { LiveFramePayload, LiveStatus, PrepareResult } from '../api/types'
 import { getJson, postJson } from '../api/client'
 import EChart from '../charts/EChart.vue'
 import { buildSectionFieldOption, shedOfSeries } from '../charts/options/sectionField'
@@ -62,8 +62,14 @@ async function refreshStatus() {
 async function act(name: 'prepare' | 'start' | 'pause' | 'next') {
   busy.value = true
   try {
-    status.value = await postJson<LiveStatus>(`/api/live/${name}`)
+    // ⚠️ 回执**不拿来当状态用**。`prepare` 回的是 `{state, seconds}`（规格书 §五），
+    // 不是一份 `LiveStatus` —— 把回执赋给 `status` 会让状态条渲染出空的帧号，
+    // 还会让下面 `frame` 拼出 `/frame/undefined`（真后端 422），而这是实时模式
+    // 唯一的入口动作。所以四个动作一律**问完再重新问一次状态**：
+    // 多一次纯读的 GET（`status` 永不失败、永不建管线），换四条路只有一种收尾。
+    await postJson<LiveStatus | PrepareResult>(`/api/live/${name}`)
     error.value = ''
+    await refreshStatus()
     void frame.run()
   } catch (e) {
     error.value = (e as Error).message
@@ -95,6 +101,10 @@ onMounted(async () => {
   await refreshStatus()
   if (ready.value) void frame.run()
   timer = setInterval(async () => {
+    // 暂停时不轮询（规格书 §6.3，也是 §8.2 验收清单里的一条）：暂停时服务端
+    // 什么都不动，这一问必然什么都没变。控件点完是 `act()` 去问状态，
+    // 不走这里 —— 于是「下一帧」在暂停下照样立刻更新。
+    if (!status.value?.running) return
     const before = status.value?.cursor
     await refreshStatus()
     if (ready.value && status.value?.cursor !== before) void frame.run()

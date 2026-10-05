@@ -324,8 +324,13 @@ export interface VolumePlane {
  * ------------------------------------------------------------------ */
 
 /**
- * `GET /api/live/status` 与三个动作接口（`prepare` / `start` / `pause` / `next`）
- * 共用的那个形状。**动作接口回的就是这份状态**，所以控件点完不用再补一次查询。
+ * `GET /api/live/status` 与 `start` / `pause` / `next` 三条动作接口共用的形状。
+ *
+ * ⚠️ **`prepare` 不在其中** —— 它回的是 `PrepareResult`，不是这份状态。
+ * 这条注释原来写的是「动作接口回的就是这份状态，点完不用再补一次查询」，
+ * 于是 `LiveView` 把四个动作的回执一律当状态用；`prepare` 那一支因此悄悄坏掉
+ * （状态条上空的帧号、`frame/undefined` 422），而替身恰好也回错了形状，
+ * 一路绿到终审。
  */
 export interface LiveStatus {
   state: 'idle' | 'ready'
@@ -336,6 +341,19 @@ export interface LiveStatus {
   total: number
   /** 多久一帧。**由后端给**：时钟在服务端，前端不自己定这个数。 */
   interval_s: number
+}
+
+/**
+ * `POST /api/live/prepare` 的回执。规格书 §五 只给 `{state, seconds}` ——
+ * 建管线要几十秒，把这个耗时报出来是它唯一的额外内容。
+ *
+ * 把它当 `LiveStatus` 用会安静地坏：状态条渲染成「第  帧，共  帧」，
+ * `frame/{cursor}` 拼出 `/frame/undefined`（真后端 422）。所以四个动作的
+ * 回执一律**不直接当状态用**，见 `LiveView.act`。
+ */
+export interface PrepareResult {
+  state: 'ready'
+  seconds: number
 }
 
 /** 这一帧的如实记录：棚顶气象 + 24 路实测读数。 */

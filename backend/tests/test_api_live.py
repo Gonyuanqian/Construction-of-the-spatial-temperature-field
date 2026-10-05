@@ -356,3 +356,41 @@ def test_pause_是幂等的(client):
     client.post("/api/live/start")
     assert client.post("/api/live/pause").json()["running"] is False
     assert client.post("/api/live/pause").json()["running"] is False
+
+
+@pytest.fixture
+def raw_client():
+    """**不把服务端异常抛给调用方**的客户端。
+
+    默认的 `TestClient` 是 `raise_server_exceptions=True`：未翻译的异常会从
+    `client.get(...)` 那一行**直接抛出来**，于是「用户实际收到什么」根本看不见 ——
+    用户收到的是 500。要断言 400 / 500 这种状态码，必须关掉它。
+    """
+    from fastapi.testclient import TestClient
+    from api.main import create_app
+    return TestClient(create_app(), raise_server_exceptions=False)
+
+
+def test_读数坏时是显式报错不是_500(raw_client, monkeypatch):
+    """规格书 §七 最后两行：实时段读数坏（缺列 / 非数）**照 `check_sensor_columns`
+    的规矩显式报错**。
+
+    `append_live_frame` 对非有限读数、乱序 / 重复时间戳、路数不对一律抛
+    `ValueError`（那是库的规矩，对）。但它在路由层没有被翻译过，于是冒到 FastAPI
+    就是 **500** —— 界面上是一句「服务器内部错误」，而不是
+    「第 3 帧的时间戳比时间轴尾巴早」。数据集实测零缺失，所以这是纯守卫路径；
+    守卫路径的报错方式也只有在这里才钉得住（把 `advance_to` 换成会抛的替身，
+    真数据到不了的那条分支才走得进来）。
+    """
+    raw_client.post("/api/live/prepare")
+    raw_client.post("/api/live/start")
+
+    def boom(n: int) -> int:
+        raise ValueError("第 3 帧的时间戳比时间轴尾巴早")
+
+    monkeypatch.setattr(live.get_live_source(), "advance_to", boom)
+
+    for path in ("/api/live/frame/0", "/api/live/volume/0"):
+        r = raw_client.get(path)
+        assert r.status_code == 400, path
+        assert "时间戳" in r.json()["detail"], path

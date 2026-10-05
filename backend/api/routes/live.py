@@ -39,6 +39,22 @@ def _f(v: Any) -> float | None:
     return f if math.isfinite(f) else None
 
 
+def _advance(src: live.LiveSource, n: int) -> int:
+    """走帧，并把库里抛出来的 `ValueError` 翻成 **400**。
+
+    ⚠️ **规格书 §七 最后两行**：「实时段读数坏（缺列 / 非数）」照
+    `check_sensor_columns` 的规矩**显式报错**。`append_live_frame` 对非有限读数、
+    乱序 / 重复的时间戳、路数不对一律抛 `ValueError`（库的规矩，对）——
+    但它在路由层不翻译的话，冒到 FastAPI 就是 **500**：用户收到的是一句
+    「服务器内部错误」，而不是「第 3 帧的时间戳比时间轴尾巴早」。
+    数据集实测零缺失，所以这是纯守卫路径 —— 守卫路径的报错方式也只有这里钉得住。
+    """
+    try:
+        return src.advance_to(n)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 def _require_ready(src: live.LiveSource) -> None:
     if src.pipeline is None:
         raise HTTPException(400, "实时源还没准备好，先 POST /api/live/prepare")
@@ -122,7 +138,7 @@ def get_frame(
     # ⚠️ `t_index` **不是 n** —— 实时帧接在训练段尾部（第 0 帧是 1164）。
     # 拿 n 当 t_index 不报错，只是取到训练段那一帧的场，而 `frame.time`
     # 写的是留出段的时间。`t_index_of` 那儿的注释把代价写全了。
-    t_index = src.advance_to(n)
+    t_index = _advance(src, n)
     payload = sections_payload(src.pipeline, t_index=t_index, preset=preset,
                                monotonic=monotonic)
     row = src.frame(n)
@@ -132,6 +148,11 @@ def get_frame(
         "bg_temp": _f(row[C.BG_TEMP]),
         "bg_rh": _f(row[C.BG_RH]),
         "bg_light": _f(row[C.BG_LIGHT]),
+        # ⚠️ 24 路**是**这里唯一不过 `_f` 的一处，这是有意的：`append_live_frame`
+        # 在入口上就拒了非有限读数（「IDW 的 predict 是稠密的 w @ resid，一路坏值
+        # 会让整帧变成 NaN」），所以能读回来的这一帧，24 路一定全是有限数 ——
+        # 加 `_f` 只是给一条走不到的路配上守卫，而它守的那个状态没有测试够得着。
+        # 棚顶那三个不同：它们**不**在 append 的校验里，所以照旧过 `_f`。
         "sensor_temps": src.sensor_temps(n),
     }
     payload["live"] = {
@@ -161,7 +182,7 @@ def get_volume(
     grid = _check_preset(preset)
     _check_y_range(y_min, y_max, y_step)
     _check_volume_size(grid.nx, grid.nz, _y_plane_count(y_min, y_max, y_step))
-    t_index = src.advance_to(n)               # 同上：**不是 n**
+    t_index = _advance(src, n)                # 同上：**不是 n**
     payload = volume_payload(src.pipeline, t_index=t_index, preset=preset, monotonic=monotonic,
                              y_step=y_step, y_min=y_min, y_max=y_max, grid=grid)
     payload["frame"] = {"n": int(n), "time": str(pd.Timestamp(src.frame(n)[C.COL_TIMESTAMP]))}

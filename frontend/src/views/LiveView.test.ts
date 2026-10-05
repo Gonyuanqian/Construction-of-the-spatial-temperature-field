@@ -55,17 +55,35 @@ function installEnvironment(): void {
  * 回错形状会让它静默画不出东西。
  */
 function stubFetch(frame = makeLiveFramePayload()) {
+  // **替身必须与真后端同形，否则它守不住任何东西。** 两处照真契约来：
+  //
+  // ① `prepare` 的回执**只有** `{state, seconds}`（规格书 §五）—— 回一份完整的
+  //    `LiveStatus` 会让「前端把回执当状态用」这个 bug 在这组测试里凭空消失。
+  //    这条替身原来就是这么写的，于是那个 bug 一路绿着走到了终审。
+  // ② `status` 得**有状态**：prepare 之前 idle、之后 ready，start / pause 改 running。
+  //    回一个写死的状态，页面永远走不到第二条分支，控件那一组也白测。
+  let prepared = false
+  let running = false
+  let cursor = 0
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     calls.push(`${init?.method ?? 'GET'} ${url}`)
     let body: unknown
-    if (url.endsWith('/live/prepare')) body = makeLiveStatus({ state: 'ready' })
-    else if (url.endsWith('/live/start')) body = makeLiveStatus({ state: 'ready', running: true })
-    else if (url.endsWith('/live/pause')) body = makeLiveStatus({ state: 'ready', running: false })
-    else if (url.endsWith('/live/next')) body = makeLiveStatus({ state: 'ready', running: false, cursor: 8 })
-    else if (url.includes('/live/volume')) body = makeVolumePayload()
+    if (url.endsWith('/live/prepare')) {
+      prepared = true
+      body = { state: 'ready', seconds: 2.3 }      // 真形状：不是 LiveStatus
+    } else if (url.endsWith('/live/start')) {
+      running = true
+      body = makeLiveStatus({ state: 'ready', running: true })
+    } else if (url.endsWith('/live/pause')) {
+      running = false
+      body = makeLiveStatus({ state: 'ready', running: false })
+    } else if (url.endsWith('/live/next')) {
+      cursor = 8
+      body = makeLiveStatus({ state: 'ready', running, cursor })
+    } else if (url.includes('/live/volume')) body = makeVolumePayload()
     else if (url.includes('/live/frame')) body = frame
-    else body = makeLiveStatus()          // 初始 status：还没准备
+    else body = makeLiveStatus({ state: prepared ? 'ready' : 'idle', running, cursor })
     return new Response(JSON.stringify(body), {
       status: 200, headers: { 'content-type': 'application/json' },
     })
@@ -116,6 +134,24 @@ describe('LiveView', () => {
     expect(w.text()).toContain('几十秒')
   })
 
+  it('`prepare` 的回执不是状态 —— 点完它状态条要有数', async () => {
+    // 规格书 §五：`POST /api/live/prepare` 回的是 `{state, seconds}`，**不是** LiveStatus。
+    // 把回执当状态用，状态条会渲染成「第  帧，共  帧，0 秒一帧」，
+    // 而 `frame.run()` 会拼出 `/api/live/frame/undefined`（真后端 422，
+    // 前端再把它显示成 `[object Object]`）—— 这是实时模式**唯一**的入口动作，
+    // 点下去看到的是一屏错误。
+    stubFetch()
+    const w = mount(LiveView)
+    await flushPromises()
+    await w.get('button[data-act="prepare"]').trigger('click')
+    await flushPromises()
+
+    expect(w.text()).toContain('共 144 帧')
+    expect(w.text()).not.toContain('undefined')
+    expect(calls.some((c) => c.includes('/live/frame/undefined'))).toBe(false)
+    expect(w.find('[role="alert"]').exists()).toBe(false)
+  })
+
   it('**分级在屏上**：三种回答里有「不报数」这一档', async () => {
     stubFetch()
     const w = mount(LiveView)
@@ -124,6 +160,38 @@ describe('LiveView', () => {
     await w.get('button[data-act="prepare"]').trigger('click')
     await flushPromises()
     expect(w.get('[data-grading]').text()).toMatch(/实测|非实测|不报数/)
+  })
+
+  it('暂停时不轮询，走起来才轮询（规格书 §6.3 与 §8.2 的验收项）', async () => {
+    // ⚠️ **两半都要断。** 只断「暂停时没多问一次」的话，把定时器整个删掉也照样
+    // 绿 —— 那是一条靠「什么都没发生」通过的测试。所以第二半把「走起来必须问」
+    // 也钉上，两半合起来才等于「轮询开关跟着 running 走」。
+    //
+    // `toFake` 只给定时器：`flushPromises()` 自己也走 `setTimeout(…, 0)`，
+    // 把它一起伪掉的话每个 `await flushPromises()` 都会挂死。
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      stubFetch()
+      const w = mount(LiveView)
+      await flushPromises()
+      await w.get('button[data-act="prepare"]').trigger('click')
+      await flushPromises()
+
+      const statusCalls = () => calls.filter((c) => c === 'GET /api/live/status').length
+
+      const paused = statusCalls()
+      await vi.advanceTimersByTimeAsync(15000)     // 三个轮询周期
+      expect(statusCalls()).toBe(paused)           // 暂停：一次都不许多问
+
+      await w.get('button[data-act="start"]').trigger('click')
+      await flushPromises()
+
+      const running = statusCalls()
+      await vi.advanceTimersByTimeAsync(5000)      // 一个轮询周期
+      expect(statusCalls()).toBeGreaterThan(running)   // 走起来：必须问
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('三维那一块走实时那条取数口，不打页③ 的接口', async () => {
