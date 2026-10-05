@@ -19,6 +19,35 @@ import sys
 SKIP_DIR_NAMES = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
 SKIP_SUFFIXES = {".pyc", ".pyo"}
 
+#: **已知有意差异**：相对路径 → 一句为什么。
+#:
+#: B 方案（只改 Vue 副本）的代价必须认：两份 `tfield` 从此有意不同，而
+#: 这个工具因此从报警器变成一把上膛的枪 —— `--push` 会静默覆盖掉实时构场能力。
+#: 这份清单是那个代价的安全阀：已知的差异明写出来，**其余任何差异照旧报警**。
+#:
+#: ⚠️ 只列**文件**，不列行。行级白名单会让「清单内文件的新漂移」也悄悄通过 ——
+#: 那时清单就不是安全阀，而是一张免死金牌。
+#:
+#: 三条一次写全：这份计划从头到尾只会动这三个库文件
+#: （`api/` 是新项目自己的邻居包，不在 `sync_backend.py` 的比较范围里）。
+KNOWN_DIVERGENCES: dict[str, str] = {
+    "data/loader.py":
+        "副本多了留出切分 split_holdout / derived_signature（实时模式用）",
+    "pipeline.py":
+        "副本多了 append_live_frame 与时间轴访问器 n_times / timestamps / time_at",
+    "validation/report.py":
+        "副本的 ti 用 len(ds.wide) 而不是写死的 C.EXPECTED_ROWS（训练段只有 1164 行）",
+}
+
+
+def changed_keys(a: dict[str, str], b: dict[str, str]) -> list[str]:
+    """有差异（只在一边或内容不同）的相对路径。"""
+    out: list[str] = []
+    for key in sorted(set(a) | set(b)):
+        if key not in a or key not in b or a[key] != b[key]:
+            out.append(key)
+    return out
+
 
 def tree_hashes(root: pathlib.Path | str) -> dict[str, str]:
     """相对路径 → 文件内容的 sha256。跳过缓存目录与字节码。
@@ -76,6 +105,10 @@ def main(argv: list[str] | None = None) -> int:
 
     hashes_a, hashes_b = tree_hashes(a_dir), tree_hashes(b_dir)
     lines = diff(hashes_a, hashes_b)
+    keys = changed_keys(hashes_a, hashes_b)
+    known = [k for k in keys if k in KNOWN_DIVERGENCES]
+    other = [k for k in keys if k not in KNOWN_DIVERGENCES]
+
     if not lines:
         print(f"无差异：{a_dir} 与 {b_dir}")
         return 0
@@ -83,7 +116,18 @@ def main(argv: list[str] | None = None) -> int:
     print(f"两份 tfield 有 {len(lines)} 处差异：")
     print("\n".join(lines))
 
+    if known:
+        print(f"\n其中 {len(known)} 处是**已知有意差异**（清单在 scripts/sync_backend.py）：")
+        for k in known:
+            print(f"  {k} —— {KNOWN_DIVERGENCES[k]}")
+    if other:
+        print(f"\n另有 {len(other)} 处**意外差异**（清单之外，这才是要看的）：")
+        print("\n".join(f"  {k}" for k in other))
+
     if not (args.push or args.pull):
+        if not other:
+            print("\n清单之外的差异一处都没有。")
+            return 0
         print("\n加 --push（A → B）或 --pull（B → A）可以同步；不带 --apply 只打印。")
         return 1
 
