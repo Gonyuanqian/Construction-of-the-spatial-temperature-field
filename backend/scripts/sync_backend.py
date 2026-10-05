@@ -28,15 +28,20 @@ SKIP_SUFFIXES = {".pyc", ".pyo"}
 #: ⚠️ 只列**文件**，不列行。行级白名单会让「清单内文件的新漂移」也悄悄通过 ——
 #: 那时清单就不是安全阀，而是一张免死金牌。
 #:
-#: 三条一次写全：这份计划从头到尾只会动这三个库文件
-#: （`api/` 是新项目自己的邻居包，不在 `sync_backend.py` 的比较范围里）。
+#: 计划原本算的是三条。Task 9 追加了第四条 `field/constraints.py`（见下）——
+#: 它不在计划枚举的范围里，是**接完实时帧再算场**时才暴露的：`light_at` 直接读
+#: `ds.wide[C.BG_LIGHT].iloc[t_index]`，而实时帧不在宽表里。
+#: （`api/` 是新项目自己的邻居包，不在 `sync_backend.py` 的比较范围里。）
 KNOWN_DIVERGENCES: dict[str, str] = {
     "data/loader.py":
         "副本多了留出切分 split_holdout / derived_signature（实时模式用）",
     "pipeline.py":
-        "副本多了 append_live_frame 与时间轴访问器 n_times / timestamps / time_at",
+        "副本多了 append_live_frame、时间轴访问器 n_times / timestamps / time_at"
+        "与 bg_light_at",
     "validation/report.py":
         "副本的 ti 用 len(ds.wide) 而不是写死的 C.EXPECTED_ROWS（训练段只有 1164 行）",
+    "field/constraints.py":
+        "副本的 light_at 走 pipe.bg_light_at 而不是 ds.wide.iloc（实时帧不在宽表里）",
 }
 
 

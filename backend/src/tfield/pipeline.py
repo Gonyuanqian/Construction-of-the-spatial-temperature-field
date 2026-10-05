@@ -129,6 +129,16 @@ class FieldPipeline:
             return pd.Timestamp(self.ds.wide[C.COL_TIMESTAMP].iloc[t_index])
         return self._live_ts[t_index - n_ds]
 
+    def bg_light_at(self, t_index: int) -> float:
+        """第 t_index 帧的背景光照（单调投影的门禁量）。
+
+        **走访问器，别读 `ds.wide`。** 实时帧不在宽表里 —— `field/constraints.py`
+        原来就是直接读 `ds.wide[C.BG_LIGHT].iloc[t_index]` 的，接进第一帧实时数据
+        之后它当场 `IndexError`（越界读的是**宽表**，而时间轴已经长出去了）。
+        `_bg_light` 才是时间轴的真身，`append_live_frame` 每帧都在给它追加。
+        """
+        return float(self._bg_light[int(t_index)])
+
     @property
     def coords(self) -> np.ndarray:
         assert self._fs is not None

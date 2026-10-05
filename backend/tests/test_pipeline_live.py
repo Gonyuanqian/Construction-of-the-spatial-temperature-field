@@ -15,6 +15,7 @@ from tfield import config as C
 from tfield.data.loader import required_sensor_columns
 from tfield.data.types import Dataset, FixReport, SensorPos
 from tfield.features import build_features
+from tfield.field.constraints import light_at
 from tfield.pipeline import FieldPipeline, PipelineConfig
 
 
@@ -150,6 +151,25 @@ def test_接进来的那一路读数真的进了场(fitted):
 
     got = fitted.predict_points(np.array([[x, y, z]]), np.array([t_new]))[0, 0]
     assert abs(float(got) - 31.5) < 1e-6
+
+
+def test_光照门禁在实时帧上也答得出来(fitted):
+    """`light_at` 走**管线的访问器**，不读宽表。
+
+    它原来读的是 `pipe.ds.wide[C.BG_LIGHT].iloc[t_index]` —— 宽表只有训练段那些行，
+    而实时帧接在**时间轴**尾部。于是接完一帧再算场（`apply_monotonic` 要这个门禁量）
+    就在那一行 `IndexError`：越界读的是宽表，不是时间轴。
+
+    ⚠️ **越界断言不是装饰**：下标必须真的越出宽表，这条用例才钉到了东西 ——
+    它越不出宽表就说明实时帧没接在尾部，那这条测试守的是别的事。
+    """
+    # 先钉住「训练段那一头仍然逐位同值」：访问器换掉了读法，读数不能跟着变。
+    assert light_at(fitted, 0) == fitted.ds.wide[C.BG_LIGHT].iloc[0]
+
+    t = _append(fitted)                       # `_append` 的 bg_light 是 850.0
+    assert t >= len(fitted.ds.wide), "这个下标没越出宽表，用例钉不到东西"
+    assert fitted.bg_light_at(t) == 850.0
+    assert light_at(fitted, t) == 850.0
 
 
 def test_同一时间戳接两次直接抛(fitted):

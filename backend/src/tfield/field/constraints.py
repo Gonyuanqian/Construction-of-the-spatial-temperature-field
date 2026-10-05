@@ -13,7 +13,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .. import config as C
 from .types import Field
 
 
@@ -55,8 +54,14 @@ def pava_nondecreasing(v: np.ndarray, w: np.ndarray | None = None) -> np.ndarray
 
 
 def light_at(pipe, t_index: int) -> float:
-    """取该时刻的背景光照（门禁量）。"""
-    return float(pipe.ds.wide[C.BG_LIGHT].iloc[int(t_index)])
+    """取该时刻的背景光照（门禁量）。
+
+    ⚠️ **走管线的访问器，不读 `ds.wide`。** 这里原来是
+    `pipe.ds.wide[C.BG_LIGHT].iloc[t_index]` —— 实时帧接进来之后时间轴比宽表长，
+    于是接完实时帧再算场，就在这一行 `IndexError`。越界读的是**宽表**，
+    不是时间轴：`_bg_light` 才是时间轴的真身（`append_live_frame` 每帧追加）。
+    """
+    return pipe.bg_light_at(t_index)
 
 
 def apply_monotonic(f: Field, light: float,
