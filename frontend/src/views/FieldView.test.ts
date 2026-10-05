@@ -102,6 +102,19 @@ function mountView() {
 
 const charts = (w: ReturnType<typeof mountView>) => w.findAllComponents({ name: 'EChart' })
 
+/**
+ * 等一个条件成立。
+ *
+ * 懒加载那一块要**真去解析一个模块**：`import()` 在 vitest 里走的是 vite-node
+ * 的转换请求，不是一个微任务能等到的，`flushPromises()` 等不来。有上限，
+ * 不是死等 —— 真的没上来就返回 false，让断言红在那里。
+ */
+async function until(ok: () => boolean, ms = 3000): Promise<boolean> {
+  const end = Date.now() + ms
+  while (!ok() && Date.now() < end) await new Promise((r) => setTimeout(r, 10))
+  return ok()
+}
+
 describe('页③ 空间温度场的构建', () => {
   beforeEach(() => {
     installEnvironment()
@@ -293,14 +306,47 @@ describe('页③ 空间温度场的构建', () => {
     ).toBe(true)
   })
 
-  it('三维是禁用的，并且写清了为什么', async () => {
+  it('三维可用了，而且不再挂那句未开放的理由', async () => {
+    // 已开放 / 未开放这两态各有一条测试钉着（`guards.test.ts` 管「未开放的必须
+    // 带理由」，这条管「开放了就别再挂理由」）。少了这一条，删掉 `why` 却忘了
+    // 改 `enabled` 的话，界面上会同时出现一个能点的按钮和一句「排在下一份计划」。
     stub(OK)
     const w = mountView()
     await flushPromises()
     const btn = w.findAll('button').find((b) => b.text().includes('三维'))
     expect(btn).toBeTruthy()
-    expect(btn!.attributes('disabled')).toBeDefined()
-    expect(w.text()).toContain('V7')
+    expect(btn!.attributes('disabled')).toBeUndefined()
+    expect(w.text()).not.toContain('V7')
+    expect(w.text()).not.toContain('排在下一份计划')
+  })
+
+  it('默然还是断面那一套：三维面板不对着没切过去的人加载', async () => {
+    // 三维是懒加载的一块。这条钉的是**它不在一开始就加载** ——
+    // 也就是「断面的首屏不付 Three 那个钱」。
+    //
+    // 后半段（切过去才出现）是这条的**判据**，不是添头：只有前半句的话，
+    // 它在「三维压根没接」的那一版上同样是绿的 —— 一条在功能还不存在时
+    // 照样成立的断言，钉不住任何东西。
+    //
+    // 这里**不 mock** 那一块：一渲染它就会把真的 `VolumeView` 拉起来
+    // （连带 Three）。正是要这样 —— 「没切过去就不加载」这句话的证据，
+    // 只能是「切过去之后它真的出来了」。
+    stub(OK)
+    const w = mountView()
+    await flushPromises()
+    expect(charts(w).length).toBe(2)                  // 断面那一套：切面场 + ΔT
+    expect(w.text()).not.toContain('棚体三维温度场')
+
+    const btn = w.findAll('button').find((b) => b.text().includes('三维'))
+    await btn!.trigger('click')
+    // 第一帧是**占位**（「正在加载三维模块…」，`delay: 0`）——这就是懒加载的样子。
+    await flushPromises()
+    expect(w.text()).toContain('正在加载三维模块')
+    // 再等那一块真的上来。
+    expect(await until(() => w.text().includes('棚体三维温度场')),
+      '三维那一块一直停在占位上').toBe(true)
+    expect(charts(w).length).toBe(0)                  // 四块二维面板让位
+    expect(w.text()).not.toContain('三个断面的温度场')
   })
 
   it('ΔT 面板报出门禁口径', async () => {

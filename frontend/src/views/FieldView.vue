@@ -9,7 +9,7 @@
  * 载荷里读的 —— 点选是拾取，不是重跑（spec §七 V5）。所以点一下是秒回的，
  * 而且屏幕上显示的数和图上那个格子必然相等。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, h, onMounted, ref, watch } from 'vue'
 
 import type { ComparePayload, CurvePayload, SectionsPayload } from '../api/types'
 import { getJson } from '../api/client'
@@ -22,6 +22,26 @@ import Provenance from '../components/Provenance.vue'
 import { useAsync } from '../composables/useAsync'
 import { FIELD_VIEWS } from '../design/copy'
 import { readPalette } from '../design/palette'
+
+// 三维那一块**整块懒加载**：`import()` 的路径是**字面量**，打包器静态可分析，
+// Vite 会自己切出一个 chunk，不需要 `rollupOptions.manualChunks`。
+// 这不违反 `router/index.ts` 那条「静态 import、不用动态 import()」的规矩 ——
+// 那条规矩说的是 `views/` 的**视图表**，理由是「模板字符串路径打包器分析不了」。
+// 这里没有模板字符串，`VolumeView` 也不是一个视图，它是页③ 里的一块。
+//
+// 占位那块用 `h()` 写，不用 `template:` 字符串：打包出来的 `vue` 解析到的是
+// `vue.runtime.esm-bundler.js`（**没有运行时编译器**，`vite.config.ts` 里也没
+// 有把它 alias 到带编译器的那份）。字符串模板只有测试环境能编译 —— vitest 走
+// `node` 条件、解析到带编译器的 `index.mjs`，所以在测试里是绿的，真跑起来只会
+// 抛一句「runtime compilation is not supported」，占位就没了。
+const VolumeView = defineAsyncComponent({
+  loader: () => import('../scene/VolumeView.vue'),
+  loadingComponent: {
+    name: 'VolumeLoading',
+    render: () => h('p', { class: 'note' }, '正在加载三维模块…'),
+  },
+  delay: 0,
+})
 
 const palette = readPalette()
 
@@ -55,7 +75,7 @@ onMounted(reload)
 watch(tIndex, reload)
 watch(activeShed, () => void compare.run())
 
-/** 视图切换。本计划只有「断面」是开放的；「三维」禁用并带着理由。 */
+/** 视图切换。两项都开着：「断面」是入口，「三维」懒加载（见上面的 defineAsyncComponent）。 */
 const view = ref('section')
 
 function step(d: number) {
@@ -158,62 +178,67 @@ const failure = computed(() =>
 
     <p v-if="failure" role="alert" class="alert">{{ failure }}</p>
 
-    <!-- 1. 切面场 -->
-    <div class="block">
-      <div class="row head">
-        <h3>三个断面的温度场</h3>
-        <span v-if="sections.data.value" class="tag">
-          {{ sections.data.value.calibrated ? '已标定' : '未标定（兜底参数）' }}
-          <Provenance kind="live" />
-        </span>
+    <template v-if="view === 'section'">
+      <!-- 1. 切面场 -->
+      <div class="block">
+        <div class="row head">
+          <h3>三个断面的温度场</h3>
+          <span v-if="sections.data.value" class="tag">
+            {{ sections.data.value.calibrated ? '已标定' : '未标定（兜底参数）' }}
+            <Provenance kind="live" />
+          </span>
+        </div>
+        <p v-if="sections.data.value" class="note">
+          {{ sections.data.value.note }}
+          三个断面<strong>共用同一个色标范围</strong>（{{ sections.data.value.vmin.toFixed(1) }} 至
+          {{ sections.data.value.vmax.toFixed(1) }} °C），并排看才成立。
+        </p>
+        <p class="note">
+          点一个格子看它的读数与 5 天曲线。一共只有三种回答：拱外无定义 /
+          无测量带不报数 / 一个带出处的数。
+        </p>
+        <EChart v-if="v5" :option="v5" height="420px" @pick="onPick" />
+        <p v-else-if="sections.error.value" class="note">场没取到，见上方提示。</p>
+        <p v-else class="note">正在取场…（第一次要训练模型，可能要等一会儿）</p>
       </div>
-      <p v-if="sections.data.value" class="note">
-        {{ sections.data.value.note }}
-        三个断面<strong>共用同一个色标范围</strong>（{{ sections.data.value.vmin.toFixed(1) }} 至
-        {{ sections.data.value.vmax.toFixed(1) }} °C），并排看才成立。
-      </p>
-      <p class="note">
-        点一个格子看它的读数与 5 天曲线。一共只有三种回答：拱外无定义 /
-        无测量带不报数 / 一个带出处的数。
-      </p>
-      <EChart v-if="v5" :option="v5" height="420px" @pick="onPick" />
-      <p v-else-if="sections.error.value" class="note">场没取到，见上方提示。</p>
-      <p v-else class="note">正在取场…（第一次要训练模型，可能要等一会儿）</p>
-    </div>
 
-    <!-- 2. 点选读数 -->
-    <div class="block">
-      <h3>这一格是什么</h3>
-      <p v-if="!readout" class="note">还没点任何格子。上图里点一下。</p>
-      <table v-else>
-        <tbody>
-          <tr><th>位置</th><td class="num">{{ readout.where }}</td></tr>
-          <tr><th>回答</th><td>{{ readout.text }}</td></tr>
-        </tbody>
-      </table>
-    </div>
+      <!-- 2. 点选读数 -->
+      <div class="block">
+        <h3>这一格是什么</h3>
+        <p v-if="!readout" class="note">还没点任何格子。上图里点一下。</p>
+        <table v-else>
+          <tbody>
+            <tr><th>位置</th><td class="num">{{ readout.where }}</td></tr>
+            <tr><th>回答</th><td>{{ readout.text }}</td></tr>
+          </tbody>
+        </table>
+      </div>
 
-    <!-- 3. 单点 5 天曲线 -->
-    <div class="block">
-      <h3>这一点的 5 天</h3>
-      <EChart v-if="vCurve" :option="vCurve" height="300px" />
-      <p v-else-if="curve.loading.value" class="note">正在取曲线…</p>
-      <p v-else-if="curve.data.value && !curve.data.value.defined" class="note">
-        该点无定义（拱外或在无测量带里），不画曲线。
-      </p>
-      <p v-else class="note">点一个格子看它在整个时间轴上怎么变。</p>
-      <p v-if="curveNote" class="note">{{ curveNote }}</p>
-    </div>
+      <!-- 3. 单点 5 天曲线 -->
+      <div class="block">
+        <h3>这一点的 5 天</h3>
+        <EChart v-if="vCurve" :option="vCurve" height="300px" />
+        <p v-else-if="curve.loading.value" class="note">正在取曲线…</p>
+        <p v-else-if="curve.data.value && !curve.data.value.defined" class="note">
+          该点无定义（拱外或在无测量带里），不画曲线。
+        </p>
+        <p v-else class="note">点一个格子看它在整个时间轴上怎么变。</p>
+        <p v-if="curveNote" class="note">{{ curveNote }}</p>
+      </div>
 
-    <!-- 4. ΔT 第四格 -->
-    <div class="block">
-      <h3>竖直软单调投影改了多少</h3>
-      <p v-if="dNote" class="note">{{ dNote }}</p>
-      <p v-if="compare.data.value" class="note">{{ compare.data.value.note }}</p>
-      <EChart v-if="vDelta" :option="vDelta" height="320px" />
-      <p v-else-if="compare.error.value" class="note">对比没取到，见上方提示。</p>
-      <p v-else class="note">正在取对比…</p>
-    </div>
+      <!-- 4. ΔT 第四格 -->
+      <div class="block">
+        <h3>竖直软单调投影改了多少</h3>
+        <p v-if="dNote" class="note">{{ dNote }}</p>
+        <p v-if="compare.data.value" class="note">{{ compare.data.value.note }}</p>
+        <EChart v-if="vDelta" :option="vDelta" height="320px" />
+        <p v-else-if="compare.error.value" class="note">对比没取到，见上方提示。</p>
+        <p v-else class="note">正在取对比…</p>
+      </div>
+    </template>
+
+    <!-- 5. 三维棚体（懒加载的一块）。时刻跟着上面那个钟走，三维不新增时间控件。 -->
+    <VolumeView v-else :t-index="tIndex" :clock-time="sections.data.value?.time ?? ''" />
   </section>
 </template>
 
