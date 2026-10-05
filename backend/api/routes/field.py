@@ -46,6 +46,20 @@ _Y_STEP_MAX = 6.0
 _Y_EPS = 1e-9
 
 
+def _y_plane_count(y_min: float, y_max: float, y_step: float) -> int:
+    """片数。**先算数、后分配** —— `_y_planes` 会按这个数建一个数组，
+    所以判上限必须排在它前面（见 `get_volume`）。"""
+    span = float(y_max) - float(y_min)
+    q = span / float(y_step)
+    # `span / y_step` 溢出 float（步长小到 5e-324 那种）时它给不出一个有限的片数。
+    # **不能让它落到 `int()` 上** —— 那是 OverflowError，也就是 500。无论它到底是
+    # 多少，片数乘以 nx·nz（至少 1）都必然超过格子上限，所以拿哨兵顶上：
+    # 调用方永远得到一个能被 `_check_volume_size` 挡下的整数。
+    if not np.isfinite(q):
+        return VOLUME_MAX_CELLS + 1
+    return int(np.floor(q + _Y_EPS)) + 1
+
+
 def _y_planes(y_min: float, y_max: float, y_step: float) -> np.ndarray:
     """`y_min + k · y_step`，取到**不超过** `y_max` 的最后一个。至少一片。
 
@@ -53,10 +67,11 @@ def _y_planes(y_min: float, y_max: float, y_step: float) -> np.ndarray:
     arange 的端点判据是浮点的，「正好整除」的那些情形（0 到 18、步长 0.5）
     会随二进制表示时多时少一片 —— 而片数是**载荷大小与上限判定**的一部分，
     不能靠运气。规格书 §三 那几个数（19 / 37 / 73 片）就是这条的参照。
+
+    片数一律由 `_y_plane_count` 给 —— 判上限用的和这里分配的必须是同一个数。
+    **调用方先按它判上限**（`_check_volume_size`），再进来分配。
     """
-    span = float(y_max) - float(y_min)
-    n = int(np.floor(span / float(y_step) + _Y_EPS)) + 1
-    return float(y_min) + np.arange(n) * float(y_step)
+    return float(y_min) + np.arange(_y_plane_count(y_min, y_max, y_step)) * float(y_step)
 
 
 def _check_y_range(y_min: float, y_max: float, y_step: float) -> None:
@@ -64,6 +79,11 @@ def _check_y_range(y_min: float, y_max: float, y_step: float) -> None:
         raise HTTPException(400, f"y_step 必须大于 0：{y_step}")
     if y_step > _Y_STEP_MAX:
         raise HTTPException(400, f"y_step 太大：{y_step}（上限 {_Y_STEP_MAX} m）")
+    # `-inf < 18` 是成立的，所以光比大小挡不住无限区间；而它的跨度是 inf，
+    # 后面的片数算式只会得到一个「反正超上限」的哨兵数 —— 那句提示对改参数的人
+    # 没有用（他会去调 y_step，而问题在 y_min）。这里先按原话挡下来。
+    if not (np.isfinite(y_min) and np.isfinite(y_max)):
+        raise HTTPException(400, f"y_min / y_max 必须是有限数：{y_min} / {y_max}")
     if not (y_min < y_max):
         raise HTTPException(400, f"y_min 必须小于 y_max：{y_min} / {y_max}")
 
@@ -375,11 +395,15 @@ def get_volume(
 
     **参数的合法性全在 `deps.get_pipeline()` 之前判完**：敲错一个参数不该等一次
     fit 才听到「参数不对」，而 fit 要几十秒。`test_拒绝路径不碰管线` 钉着这条。
+
+    片数**先算、后判、最后才分配**：`_y_planes` 会按片数建一个数组，
+    而 `y_step = 1e-9` 那一步要 144 GB。先分配再判上限的话，参数坏掉时
+    用户拿到的不是 400 而是 OOM。`test_片数超限时不去分配那个数组` 钉着这条。
     """
     grid = _check_preset(preset)
     _check_y_range(y_min, y_max, y_step)
+    _check_volume_size(grid.nx, grid.nz, _y_plane_count(y_min, y_max, y_step))
     ys = _y_planes(y_min, y_max, y_step)
-    _check_volume_size(grid.nx, grid.nz, len(ys))
 
     pipe = deps.get_pipeline()
     n_times = int(pipe.ds.wide.shape[0])

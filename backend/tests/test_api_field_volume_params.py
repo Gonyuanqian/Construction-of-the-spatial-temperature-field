@@ -21,7 +21,8 @@ sys.path.insert(0, str(BACKEND))
 
 from api.main import create_app                                       # noqa: E402
 from api.routes.field import (                                        # noqa: E402
-    VOLUME_MAX_CELLS, _check_volume_size, _check_y_range, _measured_at, _y_planes,
+    VOLUME_MAX_CELLS, _check_volume_size, _check_y_range, _measured_at,
+    _y_plane_count, _y_planes,
 )
 
 
@@ -47,6 +48,9 @@ def client() -> TestClient:
 def test_片数是_y_min_加_k_乘_y_step_且末片不超过_y_max(y_min, y_max, y_step, n, last):
     ys = _y_planes(y_min, y_max, y_step)
     assert len(ys) == n, f"{y_min} 至 {y_max}，步长 {y_step}：期望 {n} 片，得到 {len(ys)}"
+    # 判上限用的是**算出来的**那个数，而不是 `len()` —— 两者必须永远相等，
+    # 否则「先算后判」挡下的就不是即将分配的那个量。
+    assert _y_plane_count(y_min, y_max, y_step) == len(ys)
     assert ys[0] == pytest.approx(y_min)
     assert ys[-1] == pytest.approx(last)
     assert ys[-1] <= y_max + 1e-9
@@ -120,7 +124,11 @@ def test_实测判据吃的是可用断面不是常数():
         {"y_step": "0"},                           # 零步长
         {"y_step": "-1"},                          # 负步长
         {"y_step": "9"},                           # 太大
+        # 步长小到 `span / y_step` 溢出 float（18 / 5e-324 = inf）。
+        # 这种数算不出有限的片数，但它**必须**是 400 —— 不是 OverflowError、不是 500。
+        {"y_step": "5e-324"},
         {"y_min": "5", "y_max": "1"},              # 倒过来
+        {"y_min": "-inf"},                         # 无限大的区间
         {"preset": "export"},                      # 格子数超上限
         {"preset": "export", "y_step": "0.125"},   # 超得更狠
     ],
@@ -129,6 +137,37 @@ def test_坏参数是_400_不是_500(client, params):
     r = client.get("/api/field/volume", params=params)
     assert r.status_code == 400, f"{params} 返回 {r.status_code}：{r.text}"
     assert r.json()["detail"]
+
+
+def test_片数超限时不去分配那个数组(client, monkeypatch):
+    """**上限判在分配之前。**
+
+    `_y_planes` 会按算出来的片数**建一个数组**。先建后判的话，`y_step = 1e-9`
+    这一步要 `np.arange(18_000_000_001)` —— 144 GB float64，还没走到上限判定
+    就先 OOM（审阅的人在真机上撞到过），用户拿到的是 500 或整台机器卡死。
+    这与本端点自己立的原则直接冲突：参数坏 → 400，**且拒绝路径不做重活**。
+
+    所以这里不去真踩那个雷：把 `_y_planes` 换成一个**记账、并返回一个长度巨大的
+    替身**的东西，然后断言它**一次都没被调用**。替身的长度就是那条算式该给出的
+    数，于是「先算后判」和「先分配后判」在这一条上分得开。
+    """
+    import api.routes.field as field
+
+    calls: list[tuple] = []
+
+    class _Huge:
+        def __len__(self) -> int:              # 0 至 18 m、步长 1e-9 的片数
+            return 18_000_000_001
+
+    def spy(*a, **k):
+        calls.append(a)
+        return _Huge()
+
+    monkeypatch.setattr(field, "_y_planes", spy)
+    r = client.get("/api/field/volume", params={"y_step": "1e-9"})
+    assert r.status_code == 400, r.text
+    assert "200000" in r.json()["detail"]
+    assert calls == [], "上限判在分配之后：这个步长会先把 144 GB 的数组要下去"
 
 
 def test_拒绝路径不碰管线(client, monkeypatch):
