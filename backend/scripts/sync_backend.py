@@ -37,7 +37,7 @@ KNOWN_DIVERGENCES: dict[str, str] = {
         "副本多了留出切分 split_holdout / derived_signature（实时模式用）",
     "pipeline.py":
         "副本多了 append_live_frame、时间轴访问器 n_times / timestamps / time_at"
-        "与 bg_light_at",
+        " 与 bg_light_at",
     "validation/report.py":
         "副本的 ti 用 len(ds.wide) 而不是写死的 C.EXPECTED_ROWS（训练段只有 1164 行）",
     "field/constraints.py":
@@ -100,6 +100,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--push", action="store_true", help="A → B")
     ap.add_argument("--pull", action="store_true", help="B → A")
     ap.add_argument("--apply", action="store_true", help="真的写盘；不带则只打印")
+    ap.add_argument("--overwrite-known", action="store_true",
+                    help="--push 时连**已知有意差异**的文件一起覆盖（默认拒绝）")
+    ap.add_argument("--include-known", action="store_true",
+                    help="--pull 时连**已知有意差异**的文件一起搬（默认排除）")
     args = ap.parse_args(argv)
 
     a_dir, b_dir = pathlib.Path(args.a), pathlib.Path(args.b)
@@ -138,15 +142,45 @@ def main(argv: list[str] | None = None) -> int:
 
     src, dst, hashes = (a_dir, b_dir, hashes_a) if args.push else (b_dir, a_dir, hashes_b)
     verb = "A → B" if args.push else "B → A"
+
+    # 清单是安全阀，不是免死金牌：它放行「两份不同」，但**不许**顺手变成
+    # 「谁都能拿 A 盖掉 B」—— 那正是它要防的事。B 侧那几处差异就是实时构场能力
+    # 本身（留出切分、append_live_frame、光照门禁的访问器），拿 A 盖掉就是把它删了，
+    # 而且删得没有任何报错。
+    if args.push and not args.overwrite_known:
+        hit = [k for k in keys if k in KNOWN_DIVERGENCES]
+        if hit:
+            print("\n拒绝 --push：下面这些文件是**已知有意差异**，覆盖它们会抹掉"
+                  "实时构场能力：")
+            for k in hit:
+                print(f"  {k} —— {KNOWN_DIVERGENCES[k]}")
+            print("\n确实要覆盖请显式加 --overwrite-known。")
+            return 1
+
+    # 反方向同理：`--pull` 是拿 B 盖 A，而清单内的差异**只该留在 B**。
+    # 默认排除，要搬得自己说。
+    if args.pull and not args.include_known:
+        excluded = [k for k in keys if k in KNOWN_DIVERGENCES]
+        keys = [k for k in keys if k not in KNOWN_DIVERGENCES]
+        if excluded:
+            print(f"\n--pull 默认排除 {len(excluded)} 个清单内的文件"
+                  f"（要一起搬请加 --include-known）：{excluded}")
+
     if not args.apply:
         print(f"\n上面这些就是 {verb} 会做的改动。加 --apply 才真的写。")
         return 1
 
-    for key in hashes:
+    # **只搬 `keys` 里的，且源里也得有**（上面可能已经把清单内的滤掉了）：
+    # - 原来是遍历 `hashes` 的全集，那等于把清单内的文件也一起搬走，
+    #   `--pull` 的排除就成了摆设；
+    # - 但也不能只按 `keys` 走：`keys` 里有**只在对面**的文件（单向同步不做删除），
+    #   `copy2(A / "只在B" )` 是 FileNotFoundError —— 那是把「不删除」写成了崩溃。
+    moved = [k for k in keys if k in hashes]
+    for key in moved:
         d = dst / key
         d.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src / key, d)
-    print(f"\n已按 {verb} 覆盖 {len(hashes)} 个文件（只搬运，不删除）。")
+    print(f"\n已按 {verb} 覆盖 {len(moved)} 个文件（只搬运，不删除）。")
     return 0
 
 

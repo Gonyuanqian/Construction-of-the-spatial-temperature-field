@@ -95,3 +95,71 @@ def test_push_不会删掉只在_B_的文件(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     assert (b / "config.py").read_text(encoding="utf-8") == "X = 1\n"  # 真的搬了
     assert (b / "extra.py").exists()                                  # 没被删
+
+
+# ── 已知有意差异清单：挡住误覆盖 ──
+
+
+def test_清单内的差异算已知_退出码为零(tmp_path):
+    """`data/loader.py` 在清单里（实时模式的留出切分）。它俩不同**不该**报警。"""
+    a = _tree(tmp_path / "a", BASE)
+    b = _tree(tmp_path / "b", {**BASE, "data/loader.py": "def f():\n    return 2\n"})
+    r = _run("--a", str(a), "--b", str(b), "--check")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "已知" in r.stdout
+    assert "data/loader.py" in r.stdout
+
+
+def test_清单外的差异照旧非零(tmp_path):
+    a = _tree(tmp_path / "a", BASE)
+    b = _tree(tmp_path / "b", {**BASE, "other.py": "pass\n"})
+    r = _run("--a", str(a), "--b", str(b), "--check")
+    assert r.returncode == 1
+    assert "other.py" in r.stdout
+
+
+def test_两种差异混在一起时_仍然非零(tmp_path):
+    """**这条最要紧**：意外漂移不许躲在已知差异后面。"""
+    a = _tree(tmp_path / "a", BASE)
+    b = _tree(tmp_path / "b", {**BASE,
+                               "data/loader.py": "def f():\n    return 2\n",
+                               "other.py": "pass\n"})
+    r = _run("--a", str(a), "--b", str(b), "--check")
+    assert r.returncode == 1
+    assert "loader.py" in r.stdout and "other.py" in r.stdout
+
+
+def test_push_拒绝覆盖清单内的文件(tmp_path):
+    """清单存在的全部意义：`--push` 不许静默抹掉实时构场能力。"""
+    a = _tree(tmp_path / "a", BASE)
+    b = _tree(tmp_path / "b", {**BASE, "data/loader.py": "def f():\n    return 2\n"})
+    r = _run("--a", str(a), "--b", str(b), "--push", "--apply")
+    assert r.returncode == 1
+    assert "拒绝" in r.stdout
+    assert (b / "data/loader.py").read_text(encoding="utf-8") == "def f():\n    return 2\n"
+
+
+def test_pull_默认排除清单内的文件(tmp_path):
+    a = _tree(tmp_path / "a", BASE)
+    b = _tree(tmp_path / "b", {**BASE, "data/loader.py": "def f():\n    return 2\n"})
+    r = _run("--a", str(a), "--b", str(b), "--pull", "--apply")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (a / "data/loader.py").read_text(encoding="utf-8") == "def f():\n    return 1\n"
+
+
+def test_push_显式带上_overwrite_known_才真的覆盖(tmp_path):
+    """逃生口本身也要钉住：守卫写歪了（比如判到别的属性上），
+    想正经重同步的人会**永远搬不动**清单内的文件，而且看不出为什么。"""
+    a = _tree(tmp_path / "a", BASE)
+    b = _tree(tmp_path / "b", {**BASE, "data/loader.py": "def f():\n    return 2\n"})
+    r = _run("--a", str(a), "--b", str(b), "--push", "--apply", "--overwrite-known")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (b / "data/loader.py").read_text(encoding="utf-8") == "def f():\n    return 1\n"
+
+
+def test_pull_显式带上_include_known_才真的搬(tmp_path):
+    a = _tree(tmp_path / "a", BASE)
+    b = _tree(tmp_path / "b", {**BASE, "data/loader.py": "def f():\n    return 2\n"})
+    r = _run("--a", str(a), "--b", str(b), "--pull", "--apply", "--include-known")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (a / "data/loader.py").read_text(encoding="utf-8") == "def f():\n    return 2\n"
