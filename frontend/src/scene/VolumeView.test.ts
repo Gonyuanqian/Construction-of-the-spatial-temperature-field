@@ -100,6 +100,10 @@ describe('页③ 三维面板', () => {
     const w = mount(VolumeView, { props: { tIndex: 12, clockTime: VOLUME.time } })
     await Promise.resolve()
     expect(w.text()).toContain('正在构体')
+    // 只说「正在构体」不够 —— 这一条要的是「说清自己构的是**哪一刻**」，
+    // 而那半句由 `正在构体…（{{ clockTime }}）` 提供。把它删掉，光断言
+    // 「正在构体」照样绿：名字承诺的失败模式就抓不到了。
+    expect(w.text()).toContain(VOLUME.time)
     release()
     await flushPromises()
     expect(w.text()).not.toContain('正在构体')

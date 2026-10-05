@@ -63,7 +63,10 @@ describe('没有 WebGL 的机器（Review Focus 4）', () => {
     expect((await mountScene()).find('input[type="range"]').exists()).toBe(false)
   })
 
-  it('挂载不抛错', () => {
-    expect(() => mountScene()).not.toThrow()
+  it('挂载不抛错', async () => {
+    // `mountScene` 是 async 的，于是「`expect(() => mountScene()).not.toThrow()`」
+    // 是**永真**的：异步函数抛出去的东西变成一个 rejected promise，
+    // `toThrow` 那一层看不见 —— 里面同步炸掉也照样绿。等它落地才算数。
+    await expect(mountScene()).resolves.toBeTruthy()
   })
 })
