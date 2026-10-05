@@ -76,7 +76,22 @@ WHITELIST = frozenset({"deps.py"})
 #: 页② 必须问它 —— 标定包是按**训练段**标出来的，拿整份文件去 `load_for`
 #: 会命中另一个包，于是报出来的数是**另一份标定**的数，而页面上没有任何
 #: 一个字会提示这件事。
-ALLOWED_FROM_DEPS = frozenset({"get_dataset", "get_pipeline", "get_train_dataset"})
+#:
+#: `get_live_frames` 是第四个，理由同形（内部先调 `get_dataset()`，读的是同一个
+#: 切分缓存 `deps._HOLDOUTS` 的另一半）。
+#:
+#: `_build_pipeline` 是第五个，**理由与前四个不同形** —— 前四个都不绕过缓存，
+#: 这一个**故意**绕过 `PipelineCache`，所以这里必须把话说明白。
+#: `api/live.py` 的实时源要持有**自己那份**管线实例：`PipelineCache.key_of` 是
+#: `(ds.signature, groups_signature(groups), bundle.created_at)`，**里面没有帧数**。
+#: 往缓存里那个共享实例上 append 一帧，键一个字节都不变，训练模式的路由会照样
+#: 命中这个被改过的对象，而且不报任何错 —— 这正是这条守卫本来要拦的第一类错
+#: （共享实例被就地改）。放行的是**同一个 builder 函数**，不是「随便建」：
+#: 建出来的实例由 `api/live.py` 的模块级单例独自持有，不进任何路由的取用路径。
+ALLOWED_FROM_DEPS = frozenset({
+    "get_dataset", "get_pipeline", "get_train_dataset", "get_live_frames",
+    "_build_pipeline",
+})
 
 #: 与 `api.deps` 无关的、任何位置都不许直接取用的通用黑名单（直取后端库/缓存类）。
 FORBIDDEN_ANYWHERE = frozenset({"load_dataset", "DatasetCache"})
@@ -189,12 +204,16 @@ def test_api_层从_deps_只许取_get_dataset():
     )
 
 
-def test_白名单只有那三个出口():
+def test_白名单只有那五个出口():
     """白名单是一份**写死的声明**。它悄悄变长，是这道守卫失效的第一种方式。
 
-    第三个（`get_train_dataset`）是**有意加的**：页② 必须与标定包问同一份数据集，
-    而包是按训练段标的。加它要改这一行 —— 这正是这条测试存在的意义：
-    让白名单的每一次生长都落在 diff 里，而不是悄悄发生。
+    第三、第四、第五个（`get_train_dataset` / `get_live_frames` / `_build_pipeline`）
+    都是**有意加的**：页② 必须与标定包问同一份数据集（包是按训练段标的），
+    实时源必须拿得到留出段与一份**自己独有**的管线。加它们要改这一行 ——
+    这正是这条测试存在的意义：让白名单的每一次生长都落在 diff 里，
+    而不是悄悄发生。
     """
-    assert ALLOWED_FROM_DEPS == frozenset(
-        {"get_dataset", "get_pipeline", "get_train_dataset"})
+    assert ALLOWED_FROM_DEPS == frozenset({
+        "get_dataset", "get_pipeline", "get_train_dataset", "get_live_frames",
+        "_build_pipeline",
+    })
