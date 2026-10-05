@@ -56,6 +56,9 @@ class FieldPipeline:
         ts = pd.to_datetime(w[C.COL_TIMESTAMP])
         self._hour = ts.dt.hour.to_numpy(int)
         self._frac_day = (ts.dt.hour + ts.dt.minute / 60.0).to_numpy(float)
+        # 实时帧：接在时间轴尾部的那一段。空的时候下面每条路径都与旧实现逐位相同。
+        self._live_ts: list[pd.Timestamp] = []
+        self._live_resid: np.ndarray | None = None      # (24, n_live)
 
     @classmethod
     def from_bundle(cls, bundle, ds: Dataset) -> "FieldPipeline":
@@ -91,6 +94,40 @@ class FieldPipeline:
     @property
     def train_rows(self) -> int:
         return 0 if self._train_mask is None else int(self._train_mask.sum())
+
+    # ── 时间轴（含接进来的实时帧）──
+    @property
+    def n_live(self) -> int:
+        """已经接进来的实时帧数。"""
+        return 0 if self._live_resid is None else int(self._live_resid.shape[1])
+
+    @property
+    def n_times(self) -> int:
+        """时间轴长度。
+
+        **实时帧会使它大于 `len(self.ds.wide)`。** 所以凡是要问「这个时刻在不在
+        时间轴上」，都该走这里 —— 直接读 `ds.wide.shape[0]` 在实时帧接进来之后
+        就是个越界判定，而且它不会报错，只会拒掉合法的帧。
+        """
+        return int(len(self._bg_temp))
+
+    def timestamps(self) -> list[pd.Timestamp]:
+        """整条时间轴的时间戳（数据集的 + 已接进来的实时帧）。"""
+        out = list(pd.to_datetime(self.ds.wide[C.COL_TIMESTAMP]))
+        out.extend(self._live_ts)
+        return out
+
+    def time_at(self, t_index: int) -> pd.Timestamp:
+        """第 t_index 帧的时间戳。越界抛 `IndexError` —— **不返回 None**：
+        这一条是给「时间轴只追加、不插队」那个判定用的，静默的 None 会让它失效。
+        """
+        n = self.n_times
+        if not 0 <= t_index < n:
+            raise IndexError(f"t_index 越界：{t_index}（时间轴共 {n} 帧）")
+        n_ds = len(self.ds.wide)
+        if t_index < n_ds:
+            return pd.Timestamp(self.ds.wide[C.COL_TIMESTAMP].iloc[t_index])
+        return self._live_ts[t_index - n_ds]
 
     @property
     def coords(self) -> np.ndarray:
