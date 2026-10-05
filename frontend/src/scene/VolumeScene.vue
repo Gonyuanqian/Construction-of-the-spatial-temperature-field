@@ -71,6 +71,7 @@ let controls: OrbitControls | null = null
 let raycaster: THREE.Raycaster | null = null
 let clipPlane: THREE.Plane | null = null
 let planeGroup: THREE.Group | null = null
+let shellGroup: THREE.Group | null = null
 let marker: THREE.Mesh | null = null
 /** 挂载时装起来的收尾工作。`onBeforeUnmount` 只调它，不自己攒状态 —— 收尾的东西和建立的东西写在一起，才不会被漏掉。 */
 let teardown: (() => void) | null = null
@@ -94,35 +95,62 @@ function archShape(arch: [number, number][]): THREE.Shape {
   return s
 }
 
+/**
+ * 把上一批拱壳从场景里摘掉，连同几何与材质一起释放。
+ *
+ * **必须与 `buildShells` 成对**：壳是拖「棚体示意长度」滑块时要重画的，
+ * 而 `scene.add` 只加不删 —— 不摘的话拖一次就叠一层壳，
+ * 而且那批几何与材质谁也碰不到，永远漏在那里。
+ */
+function clearShells(): void {
+  const g = shellGroup
+  if (!g) return
+  shellGroup = null
+  scene?.remove(g)
+  // 三座棚共用同一份几何与材质，先去重再释放 —— 不是三份，别 dispose 三遍。
+  const seen = new Set<THREE.BufferGeometry | THREE.Material>()
+  g.traverse((o) => {
+    const m = o as THREE.Mesh
+    if (m.geometry) seen.add(m.geometry)
+    if (m.material) seen.add(m.material as THREE.Material)
+  })
+  for (const d of seen) d.dispose()
+}
+
 function buildShells(): void {
   const { arch, shellYs, shellLength } = props.spec
   if (!scene || arch.length < 2) return
+  clearShells()
+  const group = new THREE.Group()
+  shellGroup = group
+  scene.add(group)
+
   const shape = archShape(arch)
-  const geo = track(new THREE.ExtrudeGeometry(shape, { depth: shellLength, bevelEnabled: false }))
-  const mat = track(new THREE.MeshBasicMaterial({
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: shellLength, bevelEnabled: false })
+  const mat = new THREE.MeshBasicMaterial({
     color: new THREE.Color(palette.steel),
     transparent: true,
     opacity: 0.16,
     side: THREE.DoubleSide,
     depthWrite: false,
-  }))
+  })
   for (const y of shellYs) {
     const mesh = new THREE.Mesh(geo, mat)
     // 几何从本地 z=0 拉到 z=shellLength，而壳要**居中**在棚位上 ——
     // 数据集说的是「这棚在 y = 3」，不是「这棚从 1 米开始铺 4 米」。
     mesh.position.z = y - shellLength / 2
-    scene.add(mesh)
+    group.add(mesh)
   }
   // 棚肋：每个壳两端各一圈，让「长度」看得出来。
-  const edgeMat = track(new THREE.LineBasicMaterial({
+  const edgeMat = new THREE.LineBasicMaterial({
     color: new THREE.Color(palette.steel), transparent: true, opacity: 0.5,
-  }))
-  const edgeGeo = track(new THREE.EdgesGeometry(geo))
+  })
+  const edgeGeo = new THREE.EdgesGeometry(geo)
   for (const y of shellYs) {
     for (const z of [y - shellLength / 2, y + shellLength / 2]) {
       const line = new THREE.LineSegments(edgeGeo, edgeMat)
       line.position.z = z
-      scene.add(line)
+      group.add(line)
     }
   }
 }
@@ -334,6 +362,8 @@ onMounted(() => {
     // `owned` 里是这一块自己建的几何与材质。Three 不管垃圾回收，
     // 不 dispose 的话每次换时刻都会漏一批 GPU 缓冲 —— 拖几下就卡死。
     for (const d of owned) d.dispose()
+    // 拱壳不在 `owned` 里：它归 `shellGroup` 管，重建与卸载走同一条拆除路径。
+    clearShells()
     renderer?.dispose()
     renderer?.domElement.remove()
   }
@@ -343,10 +373,23 @@ onMounted(() => {
  * 载荷一换就重建那叠平面。**`cutY` 它不动** —— 剖切刀切到哪里是用户设的，
  * 与换了个时刻无关；而 `clipPlane` 是同一个对象，改 `constant` 就够。
  */
-watch(() => [props.spec, props.payload], () => {
+watch(() => props.payload, () => {
   if (!scene) return
   buildPlanes()
   syncMarker()
+})
+
+/**
+ * 拱壳跟着它自己的两个输入走：**壳长是滑块给的，拱形与棚位是载荷给的**。
+ *
+ * 与上面那支分开写，是因为下面这件真事：只拖壳长滑块时平面里**一个数都不用改**
+ * （`planes` 里没有 `shellLength`），两支合一的话，滑块每动一下都重画 37 张纹理 ——
+ * 而这是用户会一路拖过去的控件。反过来，只换时刻时壳长没变，但拱形与棚位
+ * 来自载荷，所以换了载荷照样重建（三座棚的几何很便宜，37 张纹理不便宜）。
+ */
+watch(() => [props.payload, props.spec.shellLength], () => {
+  if (!scene) return
+  buildShells()
 })
 
 watch(() => props.picked, syncMarker, { deep: true })
