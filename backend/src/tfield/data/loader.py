@@ -4,8 +4,10 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from .. import config as C
@@ -30,6 +32,63 @@ def dataset_signature(path: str | Path) -> str:
     st = p.stat()
     raw = f"{p}|{st.st_mtime_ns}|{st.st_size}".encode("utf-8")
     return hashlib.sha1(raw).hexdigest()[:16]
+
+
+#: 留出切点：晚于等于它的行被留出给实时模式。
+#:
+#: ⚠️ **naive 时间戳**。数据集的 `timestamp` 列实测是 `datetime64[us]`、
+#: `tzinfo=None`；带时区的切点会在下面那一步比较里直接抛，
+#: 而不是安静地切错 —— 但那也要写测试钉住，别指望它。
+HOLDOUT_CUTOFF: pd.Timestamp = pd.Timestamp("2026-07-27 12:00:00")
+
+
+@dataclass(frozen=True)
+class Holdout:
+    """一次留出切分的结果。"""
+
+    train: Dataset          # 训练段：带派生签名，模型与构场只看它
+    live: pd.DataFrame      # 留出段宽表（含 timestamp 列，索引已重置为 0..n-1）
+
+
+def derived_signature(sig: str, cutoff: pd.Timestamp) -> str:
+    """由文件签名派生出「训练段」的签名。
+
+    `Dataset.signature` 是**文件级**的（路径 | mtime | 大小），而训练段不是文件。
+    没有派生签名，训练段与全量就共用一个身份 —— 缓存键（`PipelineCache.key_of`）
+    与标定包文件名（`bundle_<sig>_<groups>.json`）会撞车，两个不同的数据集
+    用同一个名字。
+
+    ⚠️ 格式里**不许有冒号**：签名要进 Windows 文件名。
+    """
+    return f"{sig}-h{pd.Timestamp(cutoff):%Y%m%dT%H%M}"
+
+
+def split_holdout(ds: Dataset,
+                  cutoff: pd.Timestamp = HOLDOUT_CUTOFF) -> Holdout:
+    """按时间戳把数据集切成「训练段（< cutoff）」与「留出段（>= cutoff）」。
+
+    两条规矩：
+
+    1. **逐行掩码，不靠索引的 label 切片**。`wide` 的索引是 `repair_axis` 修过的
+       （实测 `monotonic_before=False`、5 行序号被修复）。修复之后它确实单调无重复，
+       但**不赌它** —— 一条掩码在任何时候都对。
+    2. **`wide` 与 `quality` 同步切**。质检列是逐行的，错位不会报错，
+       只会把 A 行的标记贴到 B 行上。
+
+    `fix` 字段原样带过去：它描述的是这份数据「从哪来」，摘要与切片都不改变它。
+    """
+    cut = pd.Timestamp(cutoff)
+    ts = pd.to_datetime(ds.wide[C.COL_TIMESTAMP])
+    keep = (ts < cut).to_numpy()
+    i_train = np.flatnonzero(keep)
+    i_live = np.flatnonzero(~keep)
+
+    train = replace(ds,
+                    wide=ds.wide.iloc[i_train],
+                    quality=ds.quality.iloc[i_train],
+                    signature=derived_signature(ds.signature, cut))
+    live = ds.wide.iloc[i_live].reset_index(drop=True)
+    return Holdout(train=train, live=live)
 
 
 def required_sensor_columns(layout=None, sheds=None) -> list[str]:
