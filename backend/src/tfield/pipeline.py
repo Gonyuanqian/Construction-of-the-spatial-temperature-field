@@ -153,13 +153,85 @@ class FieldPipeline:
         return np.unique(self.coords[self.source_sensor_ids(), 1])
 
     def _resid_matrix(self) -> np.ndarray:
-        """→ (24, n_t)，第 s 行 = 传感器 s 的 y − trend。无 fitted 前置条件。"""
+        """→ (24, n_t)，第 s 行 = 传感器 s 的 y − trend。无 fitted 前置条件。
+
+        实时帧接在尾部：`[:, :n_ds]` 来自数据集，`[:, n_ds:]` 来自实时帧。
+        **没有实时帧时逐位等价于旧实现**（`np.empty` 每一格都被写满）。
+        """
         assert self._fs is not None and self._trend_all is not None
-        out = np.empty((C.EXPECTED_N_SENSORS, len(self.ds.wide)))
+        n_ds = len(self.ds.wide)
+        n_live = self.n_live
+        out = np.empty((C.EXPECTED_N_SENSORS, n_ds + n_live))
         resid = self._fs.y - self._trend_all
         for s in range(C.EXPECTED_N_SENSORS):
-            out[s] = resid[self._fs.sensor_id == s]
+            out[s, :n_ds] = resid[self._fs.sensor_id == s]
+        if n_live:
+            assert self._live_resid is not None
+            out[:, n_ds:] = self._live_resid
         return out
+
+    # ── 实时帧 ──
+    def append_live_frame(self, *, bg_temp: float, bg_rh: float, bg_light: float,
+                          ts: pd.Timestamp,
+                          sensor_temps: Sequence[float]) -> int:
+        """把一帧实时数据接到时间轴尾部，返回它的 t_index。
+
+        **趋势冻结、只长残差。** 趋势模型是离线标定出来的，实时帧不改它 ——
+        否则每一帧都要重训一次趋势，那正是规格书点名否掉的假绕路
+        （「每帧拼增广数据集重新 fit」）。帧带来的新信息走**残差**那一路：
+        它的残差列并入 `_resid_matrix()`，IDW 重装配一次。
+
+        重装配很便宜：`IDWCorrector.fit` 只存数组、不算距离（距离在 `predict` 里算），
+        而权重只看坐标 —— 多一列而已。**这也意味着旧的 t_index 逐位不变**：
+        `w` 一个数都没变，每个输出元素仍是同样那 24 项点积。
+
+        三个前置条件，各自抛错而不是静默：
+
+        1. 帧数必须是 `C.EXPECTED_N_SENSORS`、且**全为有限数**。
+        2. 时间戳必须晚于当前时间轴末尾（时间轴只追加，不插队）。
+        3. 必须先 `fit`。
+        """
+        self._require_fitted()
+        temps = np.asarray(sensor_temps, dtype=float).ravel()
+        if temps.shape != (C.EXPECTED_N_SENSORS,):
+            raise ValueError(
+                f"一帧必须给 {C.EXPECTED_N_SENSORS} 路棚温，收到形状 {temps.shape}；"
+                "次序与 Dataset.sensor_ids() 一致（p1 的 8 个位置，然后 p2、p3）。")
+        if not bool(np.all(np.isfinite(temps))):
+            raise ValueError(
+                "实时帧的棚温里有非有限值（NaN/Inf）。IDW 的 predict 是稠密的 "
+                "w @ resid，一路坏值会让整帧变成 NaN，所以只能在入口上直接拒绝。")
+        when = pd.Timestamp(ts)
+        last = self.time_at(self.n_times - 1)
+        if when <= last:
+            raise ValueError(
+                f"实时帧的时间戳必须晚于时间轴末尾（{last}），收到 {when}。")
+
+        t_new = self.n_times
+        # 1) 逐时刻的气象与时间。**必须排在算残差之前** ——
+        #    _design_matrix 要读刚追加进去的 _bg_temp[t_new]。
+        self._bg_temp = np.append(self._bg_temp, float(bg_temp))
+        self._bg_rh = np.append(self._bg_rh, float(bg_rh))
+        self._bg_light = np.append(self._bg_light, float(bg_light))
+        self._hour = np.append(self._hour, when.hour)
+        self._frac_day = np.append(self._frac_day,
+                                  when.hour + when.minute / 60.0)
+        self._live_ts.append(when)
+
+        # 2) 残差 = 实测 − 趋势在这一帧 24 个测点处的预测
+        coords = np.asarray(self.coords, dtype=float)
+        trend_here = self.trend_at_coords(coords, np.array([t_new]))[:, 0]
+        col = (temps - trend_here).reshape(-1, 1)
+
+        # 3) 累积
+        self._live_resid = col if self._live_resid is None \
+            else np.hstack([self._live_resid, col])
+
+        # 4) 重装配 IDW —— 与 fit() 里那一行逐字同形
+        src = self.source_sensor_ids()
+        self._idw = IDWCorrector(self.cfg.metric, self.cfg.cross_shed).fit(
+            self.coords[src], self._resid_matrix()[src])
+        return t_new
 
     def residual_matrix(self) -> np.ndarray:
         """→ (24, n_t)，第 s 行 = 传感器 s 的 y − trend。
