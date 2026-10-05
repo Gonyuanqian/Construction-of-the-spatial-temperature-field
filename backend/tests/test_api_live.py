@@ -165,3 +165,194 @@ def test_prepare_之后管线是训练段那份(src):
     assert src.pipeline.n_times == 1164
     assert src.pipeline.n_live == 0
     assert "-h20260727T1200" in src.pipeline.ds.signature
+
+
+# ── 七条接口 ──
+
+
+@pytest.fixture(scope="module")
+def client():
+    from fastapi.testclient import TestClient
+    from api.main import create_app
+    return TestClient(create_app())
+
+
+@pytest.fixture(autouse=True)
+def _fresh_source():
+    """每条用例一个全新的实时源。**必须** —— 实时源是进程内单例，
+    上一条用例接进去的帧会留给下一条。"""
+    live.reset_live_source()
+    yield
+    live.reset_live_source()
+
+
+def test_没准备时_start_next_frame_都报_400_叫你先准备(client):
+    """要先准备的是 **start / next / frame** —— 规格书 §五 的失败表逐字列的是这三条。
+
+    ⚠️ **`pause` 不在其中**，这是有意的：它是个幂等的空操作（本来就没在走，
+    冻结的就是第 0 帧）。前端在 `idle` 下也渲染暂停按钮、也轮询 status，
+    让它报 400 只会逼前端多一层没有信息量的「现在能不能按」。
+    """
+    for path in ("/api/live/start", "/api/live/next"):
+        r = client.post(path)
+        assert r.status_code == 400, path
+        assert "prepare" in r.json()["detail"]
+    r = client.get("/api/live/frame/0")
+    assert r.status_code == 400
+    assert "prepare" in r.json()["detail"]
+
+    # 反例：没准备时 pause 是空操作，不是错误。
+    r = client.post("/api/live/pause")
+    assert r.status_code == 200
+    assert r.json()["state"] == "idle"
+    assert r.json()["running"] is False
+
+
+def test_status_始终答得出来(client):
+    b = client.get("/api/live/status").json()
+    assert b == {"state": "idle", "running": False, "cursor": 0,
+                 "total": 144, "interval_s": 300.0}
+
+
+def test_prepare_之后_status_变_ready(client):
+    r = client.post("/api/live/prepare")
+    assert r.status_code == 200
+    b = r.json()
+    assert b["state"] == "ready"
+    assert b["seconds"] >= 0.0
+    assert client.get("/api/live/status").json()["state"] == "ready"
+
+
+def test_frame_的载荷形状与页3_一样_外加两块(client):
+    client.post("/api/live/prepare")
+    client.post("/api/live/start")
+    b = client.get("/api/live/frame/0").json()
+    # 页③ 断面那一屏的字段一个不少
+    for key in ("t_index", "time", "n_times", "preset", "vmin", "vmax",
+                "x", "z", "arch", "sensors", "sheds", "note"):
+        assert key in b, key
+    # 帧号 n 与 t_index 是**两套坐标**：n 是留出段下标（0），t_index 是管线
+    # 时间轴下标（1164 = 训练段长度 + 0，规格书 §三）。这一条钉住转发，
+    # 也钉住「载荷里的场就是这一帧的场」——见下面的时间一致性。
+    assert b["t_index"] == 1164, "实时帧接在训练段尾部，第 0 帧的 t_index 是 1164"
+    assert b["n_times"] == 1165, "1164 训练段 + 1 接进来的（frame/0 已经走过一步）"
+    # 时间是**空格分隔**的那种：`sections_payload` 里就是 `str(pipe.time_at(...))`
+    # （`routes/dataset.py` 用 `.isoformat()` 给的是带 T 的，两处格式不同、各有各的
+    # 消费方）。这里跟断面载荷保持一致 —— 下面那条相等断言就靠它。
+    assert b["time"] == "2026-07-27 12:00:00"
+    # ⚠️ 这两半必须指同一帧：`time` 由 t_index 算、`frame.time` 由留出段那一行算。
+    # 转发错一格，这里就是「场画的是 A 帧、标题写的是 A ± 1 帧」。
+    assert b["time"] == b["frame"]["time"]
+    assert b["frame"]["n"] == 0
+    assert set(b["frame"]) == {"n", "time", "bg_temp", "bg_rh", "bg_light", "sensor_temps"}
+    assert len(b["frame"]["sensor_temps"]) == 24
+    assert set(b["live"]) == {"cursor", "running", "interval_s", "total"}
+    assert b["live"]["total"] == 144
+
+
+def test_没走到的帧报_400_而且不悄悄拿当前帧顶替(client):
+    client.post("/api/live/prepare")
+    client.post("/api/live/start")
+    client.get("/api/live/frame/0")          # 走到第 0 帧
+    r = client.get("/api/live/frame/5")
+    assert r.status_code == 400
+    assert "5" in r.json()["detail"]
+    assert client.get("/api/live/status").json()["cursor"] == 0, "被拒的请求把 cursor 推走了"
+
+
+def test_同一帧走两条路由不重复接帧(client):
+    """`frame/{n}` 与 `volume/{n}` 各自都会 `advance_to(n)` —— 幂等性破了
+    就是同一帧接两次，时间轴悄悄变长、帧号全体错位，而且都看起来正常。
+
+    ⚠️ **不比两边的数值**：断面给的是三个棚在 y = 3 / 9 / 15 的网格，
+    体网格给的是 y = 0 / 6 / 12 / 18 那些片（`y_step=6` 时不落在棚位上）。
+    两个数本来就不该相等 —— 拿它们相等当断言是错的。
+    """
+    client.post("/api/live/prepare")
+    # ⚠️ **不能只 start()**：cursor 是 floor((now − started_at) / 300)，而测试里
+    # 两个时刻是同一瞬间 —— start 之后 cursor 恒为 0，frame/2 会直接被顶回 400。
+    # 用 from_n 直接落到第 2 帧（规格书 §五：`from_n` 可选）。
+    client.post("/api/live/start", params={"from_n": 2})
+    f = client.get("/api/live/frame/2").json()
+    v = client.get("/api/live/volume/2?y_step=6.0").json()
+    assert f["t_index"] == v["t_index"] == 1166, "第 2 帧 → 时间轴上的 1164 + 2"
+    assert f["time"] == v["time"]
+    assert f["frame"]["time"] == v["frame"]["time"]
+    assert client.get("/api/live/status").json()["cursor"] == 2
+    assert live.get_live_source().pipeline.n_live == 3, "同一帧被接了不止一次"
+
+
+def test_验收折_接口的数与直接调库逐位相等(client):
+    """照上篇 §八 的口径：**后端库是唯一的 oracle**。
+
+    实时路由只是「校验 + 走帧 + 调 `sections_payload`」—— 它一个数都不许自己算。
+    """
+    from tfield import config as C
+    from tfield.calibration import load_for
+    from tfield.features import build_features
+    from tfield.pipeline import FieldPipeline
+    from api import deps, paths
+    from api.live import LiveSource
+    from api.routes.field import sections_payload
+
+    client.post("/api/live/prepare")
+    client.post("/api/live/start", params={"from_n": 3})   # 同上：真时钟推不动 cursor
+    body = client.get("/api/live/frame/3").json()
+
+    ds = deps.get_train_dataset()
+    train_n = len(ds.wide)                     # 训练段长度：实时帧接在它后面
+    cfg = load_for(ds, tuple(C.DEFAULT_FEATURE_GROUPS), paths.CONFIGS).config()
+    pipe = FieldPipeline(cfg, ds).fit(build_features(ds, C.DEFAULT_FEATURE_GROUPS), ds)
+    src = LiveSource()
+    for k in range(4):
+        pipe.append_live_frame(
+            bg_temp=float(src.frame(k)[C.BG_TEMP]), bg_rh=float(src.frame(k)[C.BG_RH]),
+            bg_light=float(src.frame(k)[C.BG_LIGHT]),
+            ts=pd.Timestamp(src.frame(k)[C.COL_TIMESTAMP]),
+            sensor_temps=src.sensor_temps(k))
+    # `calibrated` 是 **API 层**的注记（`deps._build_pipeline` 打的），不是库的性质 ——
+    # 这个 oracle 走的是库本身，得自己打上同一个记号，否则比的是注记不是数。
+    pipe.calibrated = True
+    mine = sections_payload(pipe, t_index=train_n + 3, preset="standard", monotonic=True)
+
+    # 接口在断面载荷之外**只**多这两块（规格书 §五）。先钉住「只多这两块」，
+    # 再用逐位相等钉住共有那部分 —— 直接 `mine == body` 会因为多出来的块而红，
+    # 那条断言的实际内容是「接口没多塞东西」，不是「数一样」。
+    assert set(body) - set(mine) == {"frame", "live"}
+    for k in ("frame", "live"):
+        body.pop(k)
+    assert mine == body
+
+
+def test_实时源不污染共享管线(client):
+    """共享管线（训练模式的路由用的那一份）一个字节都不许变。"""
+    deps.reset_cache()
+    before = deps.get_pipeline().n_live
+    client.post("/api/live/prepare")
+    client.post("/api/live/start", params={"from_n": 4})   # 同上：真时钟推不动 cursor
+    client.get("/api/live/frame/4")
+    assert deps.get_pipeline().n_live == before == 0
+    assert deps._PIPELINES.n_builds == 1, "实时源进了缓存"
+
+
+def test_next_在末帧报_400(client, monkeypatch):
+    client.post("/api/live/prepare")
+    src = live.get_live_source()
+    src.pause()
+    src._rebase(src.total - 1)
+    r = client.post("/api/live/next")
+    assert r.status_code == 400
+    assert "最末帧" in r.json()["detail"]
+
+
+def test_start_的_from_n_越界报_400(client):
+    client.post("/api/live/prepare")
+    assert client.post("/api/live/start", params={"from_n": 144}).status_code == 400
+    assert client.post("/api/live/start", params={"from_n": -1}).status_code == 400
+
+
+def test_pause_是幂等的(client):
+    client.post("/api/live/prepare")
+    client.post("/api/live/start")
+    assert client.post("/api/live/pause").json()["running"] is False
+    assert client.post("/api/live/pause").json()["running"] is False

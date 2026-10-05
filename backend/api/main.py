@@ -24,6 +24,7 @@ from .routes import calibration as calibration_routes
 from .routes import dataset as dataset_routes
 from .routes import features as features_routes
 from .routes import field as field_routes
+from .routes import live as live_routes
 
 VITE_DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
@@ -91,6 +92,7 @@ def create_app() -> FastAPI:
     app.include_router(field_routes.router, prefix="/api")
     app.include_router(features_routes.router, prefix="/api")
     app.include_router(calibration_routes.router, prefix="/api")
+    app.include_router(live_routes.router, prefix="/api")
 
     @app.get("/api/health")
     def health() -> dict[str, str]:

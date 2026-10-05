@@ -46,6 +46,9 @@ class LiveSource:
         self._clock = clock
         self._builder = builder or deps._build_pipeline
         self._frames: pd.DataFrame | None = None
+        #: 训练段长度。`prepare` 里量一次 —— 实时帧接在时间轴尾部，
+        #: 第 n 帧的 t_index 是 `_t0 + n`（见 `t_index_of`）。
+        self._t0: int | None = None
         self.pipeline = None
         self.started_at: float | None = None
         self.running = False
@@ -105,11 +108,28 @@ class LiveSource:
         groups = tuple(C.DEFAULT_FEATURE_GROUPS)
         bundle = load_for(ds, groups, paths.CONFIGS)
         self.pipeline = self._builder(ds, groups, bundle)
+        # 训练段长度：此刻还没有任何实时帧（`n_live == 0`），所以 `n_times` 就是它。
+        self._t0 = self.pipeline.n_times
         return max(0.0, self._clock() - t0)
 
-    def advance_to(self, n: int) -> None:
-        """把缺的帧按序补到第 n 帧。**单调、幂等**：往回退是空操作，
-        同一帧不会接两次。
+    def t_index_of(self, n: int) -> int:
+        """留出段第 n 帧在**管线时间轴**上的下标。
+
+        ⚠️ **不是 n。** 实时帧接在训练段**尾部**，所以第 0 帧是 1164
+        （规格书 §三：实时帧的 `t_index` 落在 1164..1307）。拿 n 直接当
+        `t_index` 不会报错 —— 时间轴长度对得上、载荷形状也对 —— 只是屏幕上的
+        场取到了**训练段的第 n 帧**，而 `frame.time` 写的是留出段那一帧的时间。
+        两半各自看着都对，合起来差着一段时间。
+        """
+        self._require_ready()
+        return int(self._t0) + int(n)
+
+    def advance_to(self, n: int) -> int:
+        """把缺的帧按序补到第 n 帧，**返回它在时间轴上的 `t_index`**。
+        单调、幂等：往回退是空操作，同一帧不会接两次。
+
+        返回 `t_index` 而不是 None：调用方要拿它去 `sections_payload`，
+        而这一步只有实时源自己知道（`t_index_of`）。
         """
         pipe = self._require_ready()
         if n >= self.total:
@@ -124,6 +144,7 @@ class LiveSource:
                 ts=pd.Timestamp(row[C.COL_TIMESTAMP]),
                 sensor_temps=self.sensor_temps(k),
             )
+        return self.t_index_of(n)
 
     def start(self, from_n: int | None = None) -> None:
         self._require_ready()
