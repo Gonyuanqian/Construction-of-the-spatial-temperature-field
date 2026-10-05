@@ -28,10 +28,23 @@ const props = defineProps<{
   tIndex: number
   /** 那个钟现在指着的时刻。**由二维那一侧给**，三维不自己算也不自己问。 */
   clockTime: string
+  /**
+   * 取数口。默认页③ 那条 `GET /api/field/volume?t_index=`；
+   * 实时模式那一屏传 `'live'`，走 `GET /api/live/volume/{n}`
+   * （规格书 §「前端形态」：三维**懒加载这一块**，实时屏不新写第二份）。
+   *
+   * ⚠️ 两条路的 `tIndex` **不是同一个东西**：页③ 那个是**管线时间轴**下标，
+   * 实时那个是留出段的**帧号 `n`**。这一块从不用它算时间 —— 时刻一律来自
+   * 载荷自带的 `time`（`clockTime` 也是外面传进来的），
+   * 它在这里只当「换个号就重取一次」的触发量。
+   */
+  source?: 'field' | 'live'
 }>()
 
-const volume = useAsync(
-  () => getJson<VolumePayload>(`/api/field/volume?t_index=${props.tIndex}`))
+const volume = useAsync(() => getJson<VolumePayload>(
+  props.source === 'live'
+    ? `/api/live/volume/${props.tIndex}`
+    : `/api/field/volume?t_index=${props.tIndex}`))
 
 /**
  * 拖时刻滑块要防抖：不防抖的话一次拖动就是十几个 1.2 s 的构体请求，

@@ -319,6 +319,49 @@ export interface VolumePlane {
   values: (number | null)[][]
 }
 
+/* ------------------------------------------------------------------ *
+ * 实时模式：`/api/live/*`（七条接口）
+ * ------------------------------------------------------------------ */
+
+/**
+ * `GET /api/live/status` 与三个动作接口（`prepare` / `start` / `pause` / `next`）
+ * 共用的那个形状。**动作接口回的就是这份状态**，所以控件点完不用再补一次查询。
+ */
+export interface LiveStatus {
+  state: 'idle' | 'ready'
+  running: boolean
+  /** 现在停在第几帧（留出段的下标，0..total-1）。 */
+  cursor: number
+  /** 留出段一共多少帧。 */
+  total: number
+  /** 多久一帧。**由后端给**：时钟在服务端，前端不自己定这个数。 */
+  interval_s: number
+}
+
+/** 这一帧的如实记录：棚顶气象 + 24 路实测读数。 */
+export interface LiveFrameBlock {
+  /** 留出段的帧号 `n`。**不是** `t_index`（那是管线时间轴上的下标）。 */
+  n: number
+  time: string
+  bg_temp: number | null
+  bg_rh: number | null
+  bg_light: number | null
+  /** 次序：p1 的 8 个位置，然后 p2、p3。 */
+  sensor_temps: (number | null)[]
+}
+
+/**
+ * 一帧的断面载荷。**与页③ 的 `SectionsPayload` 同源** ——
+ * 后端把装配抽成同一个函数（`routes/field.py::sections_payload`），
+ * 这边因此能复用同一套纯函数与同一个组件，不新写一份判定。
+ */
+export interface LiveFramePayload extends SectionsPayload {
+  frame: LiveFrameBlock
+  /** 这一段是 `LiveStatus` 去掉 `state`：状态由 `/api/live/status` 单独回答，
+   *  帧载荷不重复它。 */
+  live: Omit<LiveStatus, 'state'>
+}
+
 export interface VolumePayload {
   t_index: number
   /** 时刻字符串，**后端给**，前端不自己算。每一条读数都要带上它。 */

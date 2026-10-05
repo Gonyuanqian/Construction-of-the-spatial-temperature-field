@@ -32,3 +32,22 @@ export async function getJson<T>(path: string): Promise<T> {
   }
   return (await res.json()) as T
 }
+
+/** `getJson` 的写那一半。实时模式那三个动作接口是 `POST`，**没有请求体**。 */
+export async function postJson<T>(path: string): Promise<T> {
+  let res: Response
+  try {
+    res = await fetch(path, { method: 'POST' })
+  } catch {
+    throw new ApiError('连不上后端（8503）——确认 API 服务已经起来', 0)
+  }
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try {
+      const body = await res.json()
+      if (body?.detail) detail = String(body.detail)
+    } catch { /* 响应体不是 JSON，就用状态码 */ }
+    throw new ApiError(detail, res.status)
+  }
+  return (await res.json()) as T
+}

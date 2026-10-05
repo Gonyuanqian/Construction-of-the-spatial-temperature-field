@@ -7,7 +7,9 @@
  * 4×4 是方阵，若四行四列的数也对称，把 `values[iz][ix]` 写成 `values[ix][iz]`
  * 照样会全绿 —— 而图会整个转置。
  */
-import type { VolumePayload } from '../api/types'
+import type {
+  LiveFramePayload, LiveStatus, SectionShed, SectionsPayload, VolumePayload,
+} from '../api/types'
 
 export function makeValues(): (number | null)[][] {
   return [
@@ -40,6 +42,51 @@ export function makeVolumePayload(over: Partial<VolumePayload> = {}): VolumePayl
       { y: 3.5, measured: false, shed: null, values: makeValues() },
     ],
     elapsed_ms: 1250, note: '',
+    ...over,
+  }
+}
+
+/** **默认是「还没准备」** —— 替身不能一上来就是 ready，见 `LiveView.test.ts` 那段。 */
+export function makeLiveStatus(over: Partial<LiveStatus> = {}): LiveStatus {
+  return { state: 'idle', running: false, cursor: 0, total: 144, interval_s: 300, ...over }
+}
+
+/**
+ * 断面载荷的夹具。
+ *
+ * ⚠️ **仓里原本没有这个导出** —— 断面载荷的工厂是 `sectionField.test.ts` 与
+ * `pick.test.ts` 里**各自私有**的 `makePayload()`。这里往共享夹具里补一个，
+ * 而不是把那两个私有的搬出来（那会牵动两个既有测试文件）。
+ * 形状照 `api/types.ts` 的 `SectionsPayload` 与 `routes/field.py` 的实际键名
+ * （`shed` / `y` / `values` / `stripes`）。
+ */
+export function makeSectionsPayload(over: Partial<SectionsPayload> = {}): SectionsPayload {
+  const one = (shed: string, y: number): SectionShed =>
+    ({ shed, y, values: makeValues(), stripes: STRIPES })
+  return {
+    t_index: 0, time: '2026-07-27T12:00:00', n_times: 1164,
+    preset: 'standard', monotonic: true, calibrated: true,
+    vmin: 0, vmax: 5, max_measured_z: 2,
+    x_min: 0, x_max: 2.1, z_max: 1.3017,
+    x: [0, 0.7, 1.4, 2.1], z: [0, 0.7, 1.4, 2.1],
+    arch: [[0, 0], [2.1, 0]],
+    sensors: [{ id: 'x0.7_z0.7', x: 0.7, z: 0.7, layer: 'z0.7' }],
+    sheds: [one('p1', 3), one('p2', 9), one('p3', 15)],
+    note: '',
+    ...over,
+  }
+}
+
+export function makeLiveFramePayload(over: Partial<LiveFramePayload> = {}): LiveFramePayload {
+  const base = makeSectionsPayload()
+  return {
+    ...base,
+    frame: {
+      n: 0, time: '2026-07-27T12:00:00',
+      bg_temp: 28.4, bg_rh: 61.0, bg_light: 780.0,
+      sensor_temps: Array.from({ length: 24 }, () => 26.5),
+    },
+    live: { cursor: 0, running: true, interval_s: 300, total: 144 },
     ...over,
   }
 }

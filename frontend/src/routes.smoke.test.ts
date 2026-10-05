@@ -26,6 +26,7 @@ import { createMemoryHistory } from 'vue-router'
 import App from './App.vue'
 import { createAppRouter } from './router'
 import { NAV_ITEMS } from './design/copy'
+import { makeLiveFramePayload, makeLiveStatus } from './test/fixtures'
 
 /**
  * 挂到 `document.body` 上、每条用例后自动卸载。
@@ -105,6 +106,12 @@ const PAYLOADS: Record<string, unknown> = {
     metrics: [], per_point: [], ab: null, fold_kind: null, n_folds: 0,
     worst_fold: null, ab_note: '', note: '兜底参数不是最优',
   },
+  // 实时那一屏（`/live` 不进 NAV_ITEMS，所以上面那个逐页循环扫不到它，
+  // 由文件末尾那条用例单独挂）。**两条都给**：只给 status 的话，状态条一准备好
+  // 页面就去取帧、拿到 404，帧那一块（气象、24 路读数、分级那几句）根本渲染不出来
+  // —— 而这一组要扫的正是那几句文案。
+  '/api/live/status': makeLiveStatus({ state: 'ready', running: false, cursor: 3, total: 144 }),
+  '/api/live/frame/': makeLiveFramePayload(),
 }
 
 /** spec §8.5 禁的连接符与会漏成字面字符的 markdown 标记。 */
@@ -157,5 +164,27 @@ describe('路由冒烟', () => {
       await router.isReady()
       expect(router.currentRoute.value.path).toBe('/data')
     }
+  })
+
+  it('实时模式那一屏没有禁用字形', async () => {
+    // `/live` 不在 NAV_ITEMS 里（实时模式要收起导航），所以上面那个逐页循环扫不到它。
+    // 这条**一写出来就是绿的** —— 它钉的是已经写好的文案，不是新行为。
+    // 它的价值是回归覆盖：实时页那几十个字从此也过 `assertCleanText`，
+    // 以后谁往里加一个 `→` 就会被拦下。
+    //
+    // 但它够不着什么，说清楚：渲染用的是**替身载荷**，所以后端那几条接口
+    // （`/api/live/frame/{n}` 的 `note`、`/api/live/volume/{n}` 的 `note`）
+    // 的**真实**文案不经过这里 —— 与上面逐页循环同一个缺口。
+    const router = createAppRouter(createMemoryHistory())
+    await router.push('/live')
+    await router.isReady()
+    const w = mount(App, { attachTo: document.body, global: { plugins: [router] } })
+    installTokens()
+    await flushPromises()
+
+    expect(w.text()).toContain('实时模式')
+    // 帧那一块确实渲染出来了（不然这条扫的只是一句标题）。
+    expect(w.text()).toContain('棚顶气象')
+    assertCleanText(w.text(), '/live')
   })
 })

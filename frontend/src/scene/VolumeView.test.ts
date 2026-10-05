@@ -60,6 +60,20 @@ describe('页③ 三维面板', () => {
     expect(urls[0]).toContain('t_index=12')
   })
 
+  it('传 source="live" 时改打实时那条取数口，且不再带 t_index 查询串', async () => {
+    // 实时模式那一屏**复用这一块**（规格书 §「三维：懒加载 scene/VolumeView.vue」）：
+    // 判定、文案、吸附、坐标查询只有这一处，实时屏不新写第二份。
+    // 两条路的载荷形状本来就同源，差别只在**去哪儿取** ——
+    // 这条钉的就是那个差别，以及「实时那条不走查询串」。
+    const urls = stub()
+    const w = mount(VolumeView, {
+      props: { tIndex: 3, clockTime: VOLUME.time, source: 'live' },
+    })
+    await flushPromises()
+    expect(urls).toEqual(['/api/live/volume/3'])
+    expect(w.text()).toContain('棚体三维温度场')
+  })
+
   it('**拖时刻滑块只发一次请求**（防抖）', async () => {
     // 不防抖的话，一次拖动就是十几个 1.2 s 的构体请求，最后一个才用得上。
     vi.useFakeTimers()
