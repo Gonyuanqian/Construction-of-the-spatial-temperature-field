@@ -377,4 +377,39 @@ describe('页③ 空间温度场的构建', () => {
     await flushPromises()
     expect(w.text()).toContain('数据集不存在')
   })
+
+  it('一排四张指标卡，第四格在拒绝报数（spec §6.2 页③）', async () => {
+    stub(OK)
+    const w = mountView()
+    await flushPromises()
+    const cards = w.findAll('.stat')
+    expect(cards.map((c) => c.find('.label').text()))
+      .toEqual(['时刻', '色标', '标定', '无测量带'])
+    const band = cards[3]
+    expect(band.find('.value').text()).toContain('不报数')
+    // 第四格**没有**出处图章 —— 它不是从一个接口取来的数，是一句口径。
+    // 查 `exists()` 而不是 `text()`：没有图章时 `StatCard` 渲染的是 `.blank`
+    // 占位，`.prov` 根本不在 DOM 里，空包装上 `.text()` 会**抛**，不是回空串。
+    expect(band.find('.prov').exists(), '第四格不该挂出处图章').toBe(false)
+  })
+
+  it('指标卡不是表格，所以第一张表仍然是读数表（spec §十三.1）', async () => {
+    stub(OK)
+    const w = mountView()
+    await flushPromises()
+    charts(w)[0].vm.$emit('pick', { seriesIndex: 1, value: [1, 1] })
+    await flushPromises()
+    const t = w.find('table')
+    expect(t.text(), '第一张表不再是读数表').toContain('回答')
+    expect(t.text()).toContain('43.22')
+  })
+
+  it('散文折进唯一一处「口径与出处」', async () => {
+    stub(OK)
+    const w = mountView()
+    await flushPromises()
+    const why = w.findAll('details.why')
+    expect(why.length).toBe(1)
+    expect(why[0].text()).toContain('三种回答')
+  })
 })

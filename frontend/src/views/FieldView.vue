@@ -8,6 +8,10 @@
  * **这一页不做任何计算**（硬约束 1）。连"这一格是多少度"都是从**已经拿到的**
  * 载荷里读的 —— 点选是拾取，不是重跑（spec §七 V5）。所以点一下是秒回的，
  * 而且屏幕上显示的数和图上那个格子必然相等。
+ *
+ * 2026-10-06（spec §6.2 页③）：页顶加一排四张指标卡，四块面板各套一层 `Card`，
+ * 散文折进页尾「口径与出处」。第四格是全套界面长在这个题目上的证据：
+ * 通用的大数字栅格永远不会有一个格子在拒绝报数。
  */
 import { computed, defineAsyncComponent, h, onMounted, ref, watch } from 'vue'
 
@@ -18,9 +22,13 @@ import { buildConstraintDeltaOption, deltaNote } from '../charts/options/constra
 import { buildPointCurveOption, CURVE_NO_MONOTONIC_NOTE } from '../charts/options/pointCurve'
 import { buildSectionFieldOption, shedOfSeries } from '../charts/options/sectionField'
 import { interpretPick, pickText } from '../charts/pick'
+import Card from '../components/Card.vue'
 import Provenance from '../components/Provenance.vue'
+import StatCard from '../components/StatCard.vue'
+import StatRow from '../components/StatRow.vue'
 import { useAsync } from '../composables/useAsync'
 import { FIELD_VIEWS } from '../design/copy'
+import { fmt1, fmtRange } from '../design/format'
 import { readPalette } from '../design/palette'
 
 // 三维那一块**整块懒加载**：`import()` 的路径是**字面量**，打包器静态可分析，
@@ -178,9 +186,32 @@ const failure = computed(() =>
 
     <p v-if="failure" role="alert" class="alert">{{ failure }}</p>
 
+    <!-- 指标卡片一排（spec §6.2 页③）。第四格**故意不是数**：
+         通用的大数字栅格永远不会有一个格子在拒绝报数。 -->
+    <StatRow v-if="sections.data.value">
+      <StatCard
+        label="时刻" :value="sections.data.value.time" prov="live" compact
+      />
+      <StatCard
+        label="色标"
+        :value="fmtRange(sections.data.value.vmin, sections.data.value.vmax, '°C')"
+        prov="live" compact
+      />
+      <StatCard
+        label="标定"
+        :value="sections.data.value.calibrated ? '已标定（随包参数）' : '未标定（兜底参数）'"
+        prov="live" compact
+      />
+      <StatCard
+        label="无测量带"
+        :value="`z > ${fmt1(sections.data.value.max_measured_z)} m 不报数`"
+        compact muted
+      />
+    </StatRow>
+
     <template v-if="view === 'section'">
       <!-- 1. 切面场 -->
-      <div class="block">
+      <Card class="block">
         <div class="row head">
           <h3>三个断面的温度场</h3>
           <span v-if="sections.data.value" class="tag">
@@ -188,22 +219,13 @@ const failure = computed(() =>
             <Provenance kind="live" />
           </span>
         </div>
-        <p v-if="sections.data.value" class="note">
-          {{ sections.data.value.note }}
-          三个断面<strong>共用同一个色标范围</strong>（{{ sections.data.value.vmin.toFixed(1) }} 至
-          {{ sections.data.value.vmax.toFixed(1) }} °C），并排看才成立。
-        </p>
-        <p class="note">
-          点一个格子看它的读数与 5 天曲线。一共只有三种回答：拱外无定义 /
-          无测量带不报数 / 一个带出处的数。
-        </p>
         <EChart v-if="v5" :option="v5" height="420px" @pick="onPick" />
         <p v-else-if="sections.error.value" class="note">场没取到，见上方提示。</p>
         <p v-else class="note">正在取场…（第一次要训练模型，可能要等一会儿）</p>
-      </div>
+      </Card>
 
       <!-- 2. 点选读数 -->
-      <div class="block">
+      <Card class="block">
         <h3>这一格是什么</h3>
         <p v-if="!readout" class="note">还没点任何格子。上图里点一下。</p>
         <table v-else>
@@ -212,10 +234,10 @@ const failure = computed(() =>
             <tr><th>回答</th><td>{{ readout.text }}</td></tr>
           </tbody>
         </table>
-      </div>
+      </Card>
 
       <!-- 3. 单点 5 天曲线 -->
-      <div class="block">
+      <Card class="block">
         <h3>这一点的 5 天</h3>
         <EChart v-if="vCurve" :option="vCurve" height="300px" />
         <p v-else-if="curve.loading.value" class="note">正在取曲线…</p>
@@ -223,18 +245,33 @@ const failure = computed(() =>
           该点无定义（拱外或在无测量带里），不画曲线。
         </p>
         <p v-else class="note">点一个格子看它在整个时间轴上怎么变。</p>
-        <p v-if="curveNote" class="note">{{ curveNote }}</p>
-      </div>
+      </Card>
 
       <!-- 4. ΔT 第四格 -->
-      <div class="block">
+      <Card class="block">
         <h3>竖直软单调投影改了多少</h3>
-        <p v-if="dNote" class="note">{{ dNote }}</p>
-        <p v-if="compare.data.value" class="note">{{ compare.data.value.note }}</p>
         <EChart v-if="vDelta" :option="vDelta" height="320px" />
         <p v-else-if="compare.error.value" class="note">对比没取到，见上方提示。</p>
         <p v-else class="note">正在取对比…</p>
-      </div>
+      </Card>
+
+      <!-- 口径与出处：一页最多一处（spec §八）。收起来，但内容始终在 DOM 里。 -->
+      <details class="why">
+        <summary>口径与出处</summary>
+        <p v-if="sections.data.value" class="note">
+          {{ sections.data.value.note }}
+          三个断面<strong>共用同一个色标范围</strong>（{{
+            fmtRange(sections.data.value.vmin, sections.data.value.vmax, '°C')
+          }}），并排看才成立。
+        </p>
+        <p class="note">
+          点一个格子看它的读数与 5 天曲线。一共只有三种回答：拱外无定义 /
+          无测量带不报数 / 一个带出处的数。
+        </p>
+        <p v-if="curveNote" class="note">{{ curveNote }}</p>
+        <p v-if="dNote" class="note">{{ dNote }}</p>
+        <p v-if="compare.data.value" class="note">{{ compare.data.value.note }}</p>
+      </details>
     </template>
 
     <!-- 5. 三维棚体（懒加载的一块）。时刻跟着上面那个钟走，三维不新增时间控件。 -->
@@ -254,4 +291,7 @@ const failure = computed(() =>
 }
 .rail-box button { font: inherit; cursor: pointer; }
 .rail-box button.on { font-weight: var(--w-strong); }
+.why { margin-top: var(--gap-l); }
+.why summary { font-size: var(--size-label); color: var(--ink-muted); cursor: pointer; }
+.why > p { margin-top: var(--gap-s); }
 </style>
