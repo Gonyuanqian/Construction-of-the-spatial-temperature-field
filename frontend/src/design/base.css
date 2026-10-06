@@ -30,7 +30,20 @@ th { font-weight: var(--w-strong); white-space: nowrap; }
 /* 说明与出处：次要文字，不是注释 */
 .note { color: var(--ink-muted); font-size: var(--size-note); }
 
-button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+/* 按钮是控件，不是带下划线的字（spec 2026-10-06 §一 成因 1、§九）。
+   阴影专供卡片，按钮一律不吃 —— 否则「一档阴影」那条判据就破了。 */
+button {
+  font: inherit;
+  color: inherit;
+  background: var(--card);
+  border: 1px solid var(--steel);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--ink-muted); }
+button:disabled { color: var(--ink-muted); cursor: not-allowed; }
+button.on { background: var(--leaf); color: var(--paper); border-color: var(--leaf); }
 
 :focus-visible { outline: 2px solid var(--leaf); outline-offset: 2px; }
 

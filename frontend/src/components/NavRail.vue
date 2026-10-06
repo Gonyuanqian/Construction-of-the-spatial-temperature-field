@@ -1,27 +1,27 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
-
-import { getJson } from '../api/client'
-import { useAsync } from '../composables/useAsync'
-import { NAV_ITEMS } from '../design/copy'
-
 /**
- * 侧栏底部报出后端库版本。
+ * 左侧导航。
  *
- * 为什么这一行值得占地方：一台机器上同时可能跑着 Streamlit 版与 Vue 版
- * 两个后端，验收对盘时第一个要问的就是「你看的这个数是哪个后端给的」。
- * `/api/health` 的契约里带 version 就是为了回答它（spec 2026-10-03 §5.1）。
+ * 2026-10-06（spec §5.2）：后端版本那一行**搬去了标题条** —— `/live` 收起导航，
+ * 导航不在时那一行也跟着没了，而实时那一屏最需要确认「后端是哪一个」。
+ * 未开放项的理由不再堆在栏底：演示时没人会往栏底看，挪到紧贴那一项的地方。
+ *
+ * ⚠️ 形状不许动：仍是 `nav[aria-label="页面"]`，导航项仍是 `<a>`。
+ * `App.test.ts` 断言 `rail.findAll('a')` **精确等于**已开放项，且次序一致
+ * （spec §十三.2）——「把导航做成按钮」是这次唯一不能做的控件化改动。
+ * 未开放项的理由必须**仍在这个 nav 里**，`App.test.ts:74` 按 `rail.text()` 找它。
  */
-const health = useAsync(() => getJson<{ status: string; version: string }>('/api/health'))
-
-onMounted(() => void health.run())
+import { NAV_ITEMS } from '../design/copy'
 </script>
 
 <template>
   <nav class="rail" aria-label="页面">
     <template v-for="item in NAV_ITEMS" :key="item.key">
       <RouterLink v-if="item.enabled" class="item" :to="item.to">{{ item.label }}</RouterLink>
-      <span v-else class="item off" :title="item.why">{{ item.label }}</span>
+      <template v-else>
+        <span class="item off">{{ item.label }}</span>
+        <span class="why note">{{ item.why }}</span>
+      </template>
     </template>
 
     <!-- 页面自带的侧栏控件从这里投进来（页③ 的视图切换与时刻游标）。
@@ -30,23 +30,6 @@ onMounted(() => void health.run())
     <div id="rail-extra" class="rail-extra" />
 
     <hr class="rule" />
-
-    <!-- 未开放的两项把理由写在这里，而不是藏进 title：
-         演示时没人会去悬停一个灰掉的按钮。 -->
-    <ul class="whys">
-      <li v-for="item in NAV_ITEMS.filter((i) => !i.enabled)" :key="item.key + '-why'"
-          class="note">
-        <strong>{{ item.label }}</strong>：{{ item.why }}
-      </li>
-    </ul>
-
-    <p class="note backend">
-      <template v-if="health.error.value">后端：{{ health.error.value }}</template>
-      <template v-else-if="health.data.value">
-        后端：{{ health.data.value.status }}，库版本 <span class="num">{{ health.data.value.version }}</span>
-      </template>
-      <template v-else>后端：检查中</template>
-    </p>
   </nav>
 </template>
 
@@ -58,13 +41,28 @@ onMounted(() => void health.run())
   display: flex;
   flex-direction: column;
 }
-.item { display: block; padding: 3px 0; color: var(--ink); text-decoration: none; }
+.item {
+  display: block;
+  position: relative;
+  padding: 3px 0 3px 10px;
+  color: var(--ink);
+  text-decoration: none;
+}
 .item.router-link-active { color: var(--leaf); font-weight: var(--w-strong); }
+/* 选中态的竖标走 CSS，不加字符 —— 加了会被 `routes.smoke.test.ts` 的
+   渲染文本扫描看见，也会被读屏软件念出来（spec §十三.2）。 */
+.item.router-link-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 3px;
+  width: 2px;
+  background: var(--leaf);
+}
 .item.off { color: var(--ink-muted); cursor: not-allowed; }
-.rule { border: 0; border-top: var(--rule); width: 100%; margin: var(--gap-m) 0; }
-.whys { list-style: none; padding: 0; margin: 0; }
-.whys li { margin-bottom: var(--gap-s); }
-.backend { margin-top: auto; }
+.why { display: block; padding: 0 0 var(--gap-s) 10px; }
+.rule { border: 0; border-top: var(--rule); width: 100%; margin: var(--gap-m) 0 0; }
 .rail-extra:empty { display: none; }
 .rail-extra { margin-top: var(--gap-m); display: flex; flex-direction: column; gap: var(--gap-s); }
 </style>

@@ -162,6 +162,21 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
   })
 })
 
+describe('基线控件是控件，不是裸文本', () => {
+  it('button 有真实的边界、圆角与底色，且不吃阴影', () => {
+    // spec §一 成因 1：`button { background: none; border: 0 }` 让全站按钮
+    // 退化成带下划线的字。这是「读起来像文档」最直接的一条成因。
+    // 阴影不许上按钮 —— 阴影专供卡片（spec §九）。
+    const css = readFileSync(join(SRC, 'design', 'base.css'), 'utf8')
+    const rule = css.match(/(^|\n)button\s*\{[^}]*\}/)?.[0] ?? ''
+    expect(rule, 'base.css 里没有 button 规则').not.toBe('')
+    expect(rule).toContain('background: var(--card)')
+    expect(rule).toContain('border: 1px solid var(--steel)')
+    expect(rule).toContain('border-radius: var(--radius)')
+    expect(rule).not.toContain('box-shadow')
+  })
+})
+
 describe('文案只有一个来源', () => {
   it('系统标题在全仓只定义一次，且不在 .vue 里重复', () => {
     const files = [...VUE, ...TS, fwd(join(FRONTEND, 'index.html'))]
