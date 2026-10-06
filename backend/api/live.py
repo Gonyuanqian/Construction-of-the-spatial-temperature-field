@@ -190,3 +190,15 @@ def reset_live_source() -> None:
     """丢掉实时源（连同它那份管线）。测试与「换数据集」之后用它。"""
     global _SOURCE
     _SOURCE = None
+
+
+#: **把自己登记进「换数据集要作废的东西」那一栏**（规格书 §三.1 第 4 条）。
+#:
+#: 这一行放在模块末尾、模块级执行 —— 也就是说 `api.live` 一被 import 就生效，
+#: 不需要任何调用点记得来调它。`api/main.py` 已经 import 了 live 路由，那反过来
+#: import 本模块，启动路径上一定发生；测试里凡是直接 import `api.live` 的也一定发生。
+#:
+#: *为什么不写在 `deps` 里*：`live` 依赖 `deps`，反过来 import 成环。
+#: *为什么不让上传路由显式调两个函数*：那要求每个未来的调用点都记得调两次，
+#: 而那正是这个漏（`reset_live_source` 一直没有调用点）的成因。
+deps.on_dataset_change(reset_live_source)

@@ -104,9 +104,14 @@ WHITELIST = frozenset({"deps.py"})
 #: 所以理由要写足：它是「先清缓存、再改指针」这两步的**唯一**组合入口，
 #: 写反了不会有任何报错，只会留下一个「新指针配旧缓存」的瞬间 ——
 #: 而那正是导入成功后的第一个请求。合成一个具名出口，顺序就不可能写反。
+#: `on_dataset_change` 是第九个，理由**与 `install_dataset` 同族**：它是**登记口**，
+#: 不是读入口。它的消费者只有 `api/live.py`（在模块末尾登记自己）——
+#: 路由不许用它。在路由里登记一个「换数据集时顺便干点什么」的回调，
+#: 正是这条守卫要防的那类隐式耦合。
 ALLOWED_FROM_DEPS = frozenset({
     "get_dataset", "get_pipeline", "get_train_dataset", "get_live_frames",
     "_build_pipeline", "current_dataset_path", "probe_dataset", "install_dataset",
+    "on_dataset_change",
 })
 
 #: 与 `api.deps` 无关的、任何位置都不许直接取用的通用黑名单（直取后端库/缓存类）。
@@ -220,7 +225,7 @@ def test_api_层从_deps_只许取_get_dataset():
     )
 
 
-def test_白名单只有那八个出口():
+def test_白名单只有那九个出口():
     """白名单是一份**写死的声明**。它悄悄变长，是这道守卫失效的第一种方式。
 
     第三、第四、第五个（`get_train_dataset` / `get_live_frames` / `_build_pipeline`）
@@ -233,12 +238,15 @@ def test_白名单只有那八个出口():
     常量旁边。**它属于「纯读入口」那一族** —— 加读入口的门槛比加写入口低，
     因为读入口掩盖不了「两次读之间状态被改」那类错。
 
-    第七、第八个（`probe_dataset` / `install_dataset`，2026-10-06 数据导入
-    那批一起加）同样是有意加的，理由见常量旁边。⚠️ **`install_dataset` 是本
-    白名单里第一个写入口** —— 看到它在名单上就该多问一句：「为什么这条路由
-    能改当前数据集」。答案是：它是那次改动的**唯一**入口。
+    第七到第九个（`probe_dataset` / `install_dataset` / `on_dataset_change`，
+    2026-10-06 数据导入那批一起加）同样是有意加的，理由见常量旁边。
+    ⚠️ **后两个是写入口，不是读入口** —— 加它们的门槛比前六个高，因为放行一个
+    写入口能掩盖的错比读入口多。看到它们在名单上就该多问一句：「为什么这条
+    路由能改当前数据集 / 为什么要登记回调」。两个答案都是「那次改动只有这一个
+    入口」。
     """
     assert ALLOWED_FROM_DEPS == frozenset({
         "get_dataset", "get_pipeline", "get_train_dataset", "get_live_frames",
         "_build_pipeline", "current_dataset_path", "probe_dataset", "install_dataset",
+        "on_dataset_change",
     })
