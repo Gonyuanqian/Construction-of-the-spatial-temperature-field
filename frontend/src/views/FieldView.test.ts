@@ -164,8 +164,9 @@ describe('页③ 空间温度场的构建', () => {
     await flushPromises()
     charts(w)[0].vm.$emit('pick', { seriesIndex: 1, value: [1, 1] })
     await flushPromises()
-    // 落在读数表上：整页文本里的「现场重算」是 `<Provenance kind="live" />` 的
-    // 徽标文案（`Provenance.vue:15`），恒在 —— 查整页的话下面那条就是白送的。
+    // 落在读数表上：整页文本里那句「现场重算」是**图章的 title**，不进 `text()`；
+    // 而表里这个「现场重算」来自 `charts/pick.ts` 给实测格的分级文案，
+    // 与 `Provenance` 无关 —— 查整页只会白送。
     const t = w.find('table')
     expect(t.exists(), '点选之后读数表没出现').toBe(true)
     expect(t.text()).toContain('43.22')
@@ -188,10 +189,10 @@ describe('页③ 空间温度场的构建', () => {
     // 这一格**存着牌面值 3**（见夹具），但它在无测量带里 —— 一个字也不许报。
     // 写成 `not.toContain('现场重算：3.00')` 会随格式变化悄悄失效（改成「3.0」
     // 就恒真），所以直接查「现场重算」这四个字在不在。
-    // **必须在读数表上查，不能查整页**：页面上的 `<Provenance kind="live" />`
-    // 徽标文案就是「现场重算（这次请求现算出来的数）」（`Provenance.vue:15`），
-    // 而它挂在与 `sections.data.value` 同一个条件下 —— 能点中，就说明载荷到了，
-    // 也就说明这四个字恒在。查整页的话这一条**永远红**，与上面那两条"永远绿"同源。
+    // **必须在读数表上查，不能查整页**：页面标题那一行挂着
+    // `<Provenance kind="live" />`，只要载荷到了它就恒在 —— 查整页这条就永远红，
+    // 与上面那两条"永远绿"同源。而表里这四个字来自 `charts/pick.ts`：
+    // 不报数的那一格根本不产出它。
     expect(t.text()).not.toContain('现场重算')
   })
 

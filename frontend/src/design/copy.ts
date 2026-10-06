@@ -55,5 +55,30 @@ export const FIELD_VIEWS = [
   { key: 'volume', label: '三维', enabled: true, why: '' },
 ] as const
 
+/**
+ * 出处三态。**全站唯一一处**（spec 2026-10-06 §七）。
+ *
+ * `mark` 是屏上可见的一个字，`why` 是完整那一句 —— 它挂在图章的 `title` 上，
+ * 也印在每页「口径与出处」的折叠区里。两个都放这里，是因为图章与折叠区
+ * 必须说同一句话；分成两处写，迟早一处改了另一处没改。
+ *
+ * ⚠️ 屏上原先印的是整句（「随标定包（标定当时算好、写在包里的数）」）——
+ * 每个数字后面缀一句括注，通篇如此，于是整页读起来像注释密布的文档
+ * （spec §一 成因 6）。降噪不是删掉解释，是把它从正文挪到 `title` 上。
+ *
+ * ⚠️ 三态说的是**这个数在管线里从哪来**；温度场的分级
+ * （实测 / 重建 / 无定义，见 `charts/pick.ts`）说的是**这一格场有没有数**。
+ * 两个轴，不许合并、不许互相借字。
+ *
+ * ⚠️ `mark` 里不许出现被禁字形 —— `routes.smoke.test.ts` 扫得到渲染文本。
+ */
+export const PROV = {
+  pack: { mark: '包', why: '随标定包（标定当时算好、写在包里的数）' },
+  live: { mark: '算', why: '现场重算（这次请求现算出来的数）' },
+  test: { mark: '测', why: '只有验收测试守（界面上不校验，靠后端测试钉住的数）' },
+} as const
+
+export type ProvKind = keyof typeof PROV
+
 export type ModeItem = (typeof MODES)[number]
 export type NavItem = (typeof NAV_ITEMS)[number]

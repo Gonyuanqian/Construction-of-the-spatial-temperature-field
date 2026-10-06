@@ -183,11 +183,15 @@ describe('页① 数据导入与检查', () => {
     expect(w.text()).toContain('只画 p1 棚')
   })
 
-  it('数据集身份旁边带出处标记（随包 / 现场重算 / 只有验收测试守）', async () => {
+  it('数据集身份旁边带出处图章（整句在 title 上）', async () => {
     stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH,
            '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH })
     const w = mountView()
     await flushPromises()
-    expect(w.text()).toContain('现场重算')
+    // 屏上是一个字（spec 2026-10-06 §七 降噪），整句在 title 上没丢。
+    const stamp = w.find('.prov')
+    expect(stamp.exists(), '数据集身份旁边没有出处图章').toBe(true)
+    expect(stamp.text()).toBe('算')
+    expect(stamp.attributes('title')).toContain('现场重算')
   })
 })

@@ -149,11 +149,14 @@ describe('页② 模型训练', () => {
     expect(w.text()).toContain('metric.lx')
   })
 
-  it('随包数字与现场重算分得开（出处标记）', async () => {
+  it('随包数字与现场重算分得开（出处图章）', async () => {
     stub({ '/api/features': FEATURES, '/api/calibration': CAL })
     const w = mount(TrainView)
     await flushPromises()
-    expect(w.text()).toContain('随标定包')
+    const stamps = w.findAll('.prov')
+    expect(stamps.length, '这一页一个出处图章都没有').toBeGreaterThan(0)
+    expect(stamps.map((s) => s.text())).toContain('包')
+    expect(stamps[0].attributes('title')).toContain('随标定包')
   })
 
   it('页标题就是导航里那条的标签（房规：页标题 = 导航标签）', async () => {
