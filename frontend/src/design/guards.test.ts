@@ -64,6 +64,9 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
       '--font-cn', '--font-latin', '--font-num',
       '--w-body', '--w-strong', '--w-title',
       '--size-title', '--size-h', '--size-body', '--size-note',
+      // 卡片化重做新增（spec 2026-10-06 §四）
+      '--size-label', '--size-readout',
+      '--card', '--radius', '--shadow',
       '--lh-body', '--gap-s', '--gap-m', '--gap-l', '--gap-xl',
       '--rule', '--sidebar-w', '--temp-scale', '--err-scale',
     ]
@@ -135,6 +138,27 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
       }
     }
     expect(hits).toEqual([])
+  })
+
+  it('阴影只有一档，且必须写成 var(--shadow)', () => {
+    // spec §四 的三条判据之一：阴影只有一档。SaaS 套装的招牌正是
+    // 「用阴影的深浅伪造层级」—— 所以这里不是禁阴影，是禁**第二种**阴影。
+    // 与色值那条守卫同一个手法：钉在最便宜的地方（源码文本）。
+    const hits: string[] = []
+    for (const p of ALL_SRC.filter((x) => !x.endsWith('.test.ts'))) {
+      const text = readFileSync(p, 'utf8')
+      for (const m of text.matchAll(/box-shadow\s*:\s*([^;]+);/g)) {
+        // `?? ''`：`tsconfig` 开着 noUncheckedIndexedAccess 时 `m[1]` 是
+        // `string | undefined`。取不到捕获组时给空串 —— 空串不等于
+        // `var(--shadow)`，于是照样被报出来，不会静默放过。
+        const v = (m[1] ?? '').trim()
+        if (v !== 'var(--shadow)') {
+          hits.push(`${p.slice(SRC.length)}: box-shadow: ${v}`)
+        }
+      }
+    }
+    expect(hits, '阴影只有一档，且只能写成 var(--shadow)：\n' + hits.join('\n'))
+      .toEqual([])
   })
 })
 

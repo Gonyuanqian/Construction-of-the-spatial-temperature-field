@@ -20,19 +20,28 @@
   --w-body: 400;
   --w-strong: 600;
   --w-title: 700;
-  --size-title: 20px;
-  --size-h: 15px;
+  --size-title: 17px;
+  --size-h: 14px;
   --size-body: 13px;
   --size-note: 12px;
-  --lh-body: 1.65;
+  --size-label: 11px;      /* 标签与图章：卡片标签、出处标记、<summary> */
+  --size-readout: 30px;    /* 读数：一排卡片里唯一该大的字 */
+  --lh-body: 1.6;
 
-  /* 版式：不用卡片，分区靠留白与细线（spec §8.3） */
+  /* 版式：卡片化重做 —— 一档圆角、一档阴影（spec 2026-10-06 §四） */
   --gap-s: 8px;
   --gap-m: 16px;
   --gap-l: 28px;
   --gap-xl: 44px;
   --rule: 1px solid var(--steel);
   --sidebar-w: 176px;
+
+  /* 卡片：全站只有这一档圆角与这一档阴影。三条判据见 spec §四 ——
+     多一档阴影就是把层级伪装成深度，那正是 SaaS 套装的招牌。
+     阴影取暖调（取自 --ink 的色相），中性黑压在暖纸上会发脏。 */
+  --card: #FCFBF8;
+  --radius: 6px;
+  --shadow: 0 1px 2px rgba(33, 31, 28, 0.06);
 
   /* 温度与误差色标 —— 只活在图表里，界面一处都不用它的颜色（spec §8.1）。
      cividis 必须【正向】：反过来的话 52 °C 是深蓝、42 °C 是亮黄，读起来是拧的。 */
