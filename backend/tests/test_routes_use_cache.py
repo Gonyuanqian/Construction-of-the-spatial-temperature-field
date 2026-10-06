@@ -94,9 +94,19 @@ WHITELIST = frozenset({"deps.py"})
 #: 没有路径字段（`tfield` 一个字节不许改），唯一的来源就是这个槽位。
 #: 以前它写 `paths.dataset_path()` —— 那在「用户导过一份」之后报的是**交付数据集**
 #: 的名字，一条不报错但指错地方的岔路。
+#:
+#: `probe_dataset` 是第七个，**理由与 `_build_pipeline` 同族**（有意绕开缓存）：
+#: 它加载的是用户刚交上来的那一份，文件下一步就改名 —— 按临时名算出的缓存键
+#: 从诞生起就是废的。让 `api/uploads.py` 自己 import `load_dataset` 也能达到
+#: 同样效果，但那要给**整个模块**开白名单（`WHITELIST`），而这里只需点名一个出口。
+#:
+#: `install_dataset` 是第八个，也是本白名单里**第一个写入口**。门槛比读入口高，
+#: 所以理由要写足：它是「先清缓存、再改指针」这两步的**唯一**组合入口，
+#: 写反了不会有任何报错，只会留下一个「新指针配旧缓存」的瞬间 ——
+#: 而那正是导入成功后的第一个请求。合成一个具名出口，顺序就不可能写反。
 ALLOWED_FROM_DEPS = frozenset({
     "get_dataset", "get_pipeline", "get_train_dataset", "get_live_frames",
-    "_build_pipeline", "current_dataset_path",
+    "_build_pipeline", "current_dataset_path", "probe_dataset", "install_dataset",
 })
 
 #: 与 `api.deps` 无关的、任何位置都不许直接取用的通用黑名单（直取后端库/缓存类）。
@@ -180,11 +190,11 @@ def test_api_层从_deps_只许取_get_dataset():
     files = _api_files()
 
     # 非空断言：目录改名/搬走后这条守卫不许变成空过。
-    # 底是怎么来的：本仓 `backend/api/` 下现共 **11** 个 `*.py`
-    # （6 个顶层模块 + routes/ 下 5 个），其中 **4** 个是非 `__init__` 的路由模块。
+    # 底是怎么来的：本仓 `backend/api/` 下现共 **12** 个 `*.py`
+    # （7 个顶层模块 + routes/ 下 5 个），其中 **4** 个是非 `__init__` 的路由模块。
     # 取 6 与 4 是留了余量、又足够说明「确实扫到了东西」的下界。
     assert len(files) >= 6, (
-        f"`backend/api/` 下只扫到 {len(files)} 个 .py（本仓当前 11 个）—— "
+        f"`backend/api/` 下只扫到 {len(files)} 个 .py（本仓当前 12 个）—— "
         "目录结构变了，这条守卫已经扫不到东西，成了空过"
     )
     route_mods = [
@@ -210,7 +220,7 @@ def test_api_层从_deps_只许取_get_dataset():
     )
 
 
-def test_白名单只有那六个出口():
+def test_白名单只有那八个出口():
     """白名单是一份**写死的声明**。它悄悄变长，是这道守卫失效的第一种方式。
 
     第三、第四、第五个（`get_train_dataset` / `get_live_frames` / `_build_pipeline`）
@@ -222,8 +232,13 @@ def test_白名单只有那六个出口():
     第六个（`current_dataset_path`，2026-10-06 加）也是有意加的，理由见上面
     常量旁边。**它属于「纯读入口」那一族** —— 加读入口的门槛比加写入口低，
     因为读入口掩盖不了「两次读之间状态被改」那类错。
+
+    第七、第八个（`probe_dataset` / `install_dataset`，2026-10-06 数据导入
+    那批一起加）同样是有意加的，理由见常量旁边。⚠️ **`install_dataset` 是本
+    白名单里第一个写入口** —— 看到它在名单上就该多问一句：「为什么这条路由
+    能改当前数据集」。答案是：它是那次改动的**唯一**入口。
     """
     assert ALLOWED_FROM_DEPS == frozenset({
         "get_dataset", "get_pipeline", "get_train_dataset", "get_live_frames",
-        "_build_pipeline", "current_dataset_path",
+        "_build_pipeline", "current_dataset_path", "probe_dataset", "install_dataset",
     })

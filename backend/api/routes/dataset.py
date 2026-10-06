@@ -5,11 +5,12 @@ import math
 from typing import Any
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from tfield import config as C
+from tfield.data.loader import dataset_signature
 
-from .. import deps, paths, ported
+from .. import deps, paths, ported, uploads
 
 router = APIRouter(tags=["dataset"])
 
@@ -285,3 +286,61 @@ def get_layer_timeheight(step: int | None = None) -> dict[str, Any]:
         "source": "实测棚温（每层各测点的实测值取均值），不是模型预测",
         "sheds": out,
     }
+
+
+# ── 上传（页① 的第一块）──
+
+
+@router.post("/dataset/upload")
+async def upload_dataset(request: Request, name: str = "") -> dict[str, Any]:
+    """收一份 xlsx，换掉当前数据集（规格书 §四）。
+
+    **原始请求体，不是 multipart。** `name` 走 query 不走请求头：`X-Filename`
+    里的中文要走 RFC 5987 编码，而 query 天生是 UTF-8 —— 少一层编码就少一处
+    「某些文件名会乱码」。
+
+    ⚠️ **不预跑管线**（§4.2）：上传校验只做「能加载 + 切分两侧非空」。
+    `fit` 一次要几十秒到几分钟，每传一次就卡一次，而这一步的职责只是
+    「这份数据能不能跑」。
+
+    失败时**当前数据集一个字节不改** —— 那由 `uploads.accept()` 的临时文件
+    与 `deps.install_dataset()` 的顺序保证，这个函数里没有第二条改指针的路径。
+    """
+    reject = uploads.precheck(name, _content_length(request))
+    if reject is not None:
+        raise HTTPException(status_code=reject.status, detail=reject.detail)
+
+    data = await request.body()
+    try:
+        info = uploads.accept(data, name, dest_dir=paths.UPLOADS)
+    except uploads.Rejected as r:
+        raise HTTPException(status_code=r.status, detail=r.detail)
+
+    # 先清缓存、再改指针（顺序不可分割，所以合成 `install_dataset` 一个入口）。
+    deps.install_dataset(info.path)
+
+    # ⚠️ 签名**在改名之后**才算：`dataset_signature` 里带着**绝对路径**，
+    # 拿临时名算出来的那个数与 `GET /api/dataset` 随后报的不是一个 ——
+    # 而前端拿它作身份（页① 那张卡、Future 的「换没换」判断）。
+    return {
+        "signature": dataset_signature(info.path),
+        "file": info.path.name,
+        "n_times": info.n_times,
+        "n_columns": info.n_columns,
+        "time_start": info.time_start,
+        "time_end": info.time_end,
+    }
+
+
+def _content_length(request: Request) -> int | None:
+    """`Content-Length`，读不出来就当没有。
+
+    **不做任何猜测**：没有这个头（chunked 传输）时返回 None，`precheck` 放行 ——
+    放行的代价是那个 body 会被读进内存，而不放行的代价是**正常上传全被拒**。
+    真实浏览器发 blob 一定带这个头。
+    """
+    raw = request.headers.get("content-length")
+    try:
+        return int(raw) if raw is not None else None
+    except ValueError:
+        return None

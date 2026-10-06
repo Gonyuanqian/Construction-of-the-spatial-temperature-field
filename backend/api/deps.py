@@ -188,7 +188,7 @@ def install_dataset(path: pathlib.Path | str) -> None:
     而那一刻恰好是导入成功后的第一个请求。合成一个入口，顺序就不可能写反。
 
     它也顺手把白名单只撑大一个名字（`api/**` 从 `deps` 取名字受
-    `tests/test_routes_use_cache.py` 守着，见 Task 3）。
+    `tests/test_routes_use_cache.py` 守着）。
     """
     reset_cache()
     set_current_dataset(path)
@@ -249,6 +249,26 @@ def get_dataset(path: pathlib.Path | str | None = None) -> Dataset:
     if path is None:
         path = current_dataset_path()
     return _CACHE.get(path)
+
+
+def probe_dataset(path: pathlib.Path | str) -> Dataset:
+    """**试加载**：只回答「这份文件读不读得成数据集」，**不进任何缓存**。
+
+    上传通道专用。它必须绕开 `_CACHE`，理由是**缓存键在这里从诞生起就是废的**：
+    上传时文件还叫 `.<名字>.<pid>.part`，加载完紧接着就改名 ——
+    按临时名算出来的 key 指向一个下一毫秒就不存在的路径。
+    真放进缓存，它占掉 LRU 的一格，而且永远不可能再被命中。
+
+    ⚠️ 它**不是** `get_dataset()` 的替代品：那个问的是「现在在用的是哪一份」，
+    这个问的是「用户刚交上来的这一份能不能用」。两条问题不一样，
+    合起来会让「当前数据集」这个指针被一次试加载悄悄改掉。
+
+    为什么写在这里而不是 `api/uploads.py`：本仓有一条源码守卫
+    （`tests/test_routes_use_cache.py`）规定 **`load_dataset` 只许出现在
+    `api/deps.py`**。把试加载放进 `uploads.py` 就得给那个模块开一张
+    整模块的白名单，而这里只需要多一个**点名**的出口。
+    """
+    return load_dataset(path)
 
 
 #: 留出切分的缓存。键 = (数据集签名, 切点)。

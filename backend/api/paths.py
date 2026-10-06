@@ -15,6 +15,12 @@ CONFIGS = BACKEND / "configs"
 DIST = PROJECT / "frontend" / "dist"      # Vite 的构建产物，生产形态由 FastAPI 托管
 API_PORT = 8503
 
+#: 上传的数据集落这儿。**不是新发明的目录** —— `.gitignore` 里早就写着
+#: `backend/configs/uploads/`，注释是「上传的数据集（用户自带，不进仓库）」。
+#: 与 `CONFIGS` 一样做成模块级常量：测试要能把它换到 `tmp_path` 上，
+#: 否则每条上传用例都会往真的 `configs/` 里写东西。
+UPLOADS = CONFIGS / "uploads"
+
 
 def dataset_path() -> pathlib.Path:
     """本项目的数据集。

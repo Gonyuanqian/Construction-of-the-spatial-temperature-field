@@ -20,7 +20,7 @@ from starlette.types import Scope
 
 from tfield.calibration import TOOL_VERSION
 
-from . import paths
+from . import paths, uploads
 from .errors import NO_DATASET_DETAIL, NoDatasetError
 from .routes import calibration as calibration_routes
 from .routes import dataset as dataset_routes
@@ -123,11 +123,16 @@ def create_app() -> FastAPI:
     app.include_router(live_routes.router, prefix="/api")
 
     @app.get("/api/health")
-    def health() -> dict[str, str]:
+    def health() -> dict[str, Any]:
         # spec §5.1：健康接口的契约是「存活 **+ 后端库版本**」。
         # 只回 ok 会让前端无从回答「跑着的后端是哪个版本」——
         # 而多版本并存（Streamlit 版还在一台机器上）时这正是第一个要看的数。
-        return {"status": "ok", "version": TOOL_VERSION}
+        #
+        # `max_upload_bytes` 也在这里：上限这个数**由后端说了算**，
+        # 前端不许自己写死一个（规格书 §4.4）。前端不读它也不碍事 ——
+        # 413 的 detail 里带着同一个数，这条只是让它有地方问。
+        return {"status": "ok", "version": TOOL_VERSION,
+                "max_upload_bytes": uploads.MAX_UPLOAD_BYTES}
 
     # 生产形态：一个进程同时供 API 与前端构建产物（spec §二）。
     # 必须带守卫 —— StaticFiles 在目录不存在时构造就抛错，那会让
