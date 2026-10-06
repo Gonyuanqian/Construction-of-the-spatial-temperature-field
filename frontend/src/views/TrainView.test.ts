@@ -156,7 +156,12 @@ describe('页② 模型训练', () => {
     const stamps = w.findAll('.prov')
     expect(stamps.length, '这一页一个出处图章都没有').toBeGreaterThan(0)
     expect(stamps.map((s) => s.text())).toContain('包')
-    expect(stamps[0].attributes('title')).toContain('随标定包')
+    // 这一条要的是**两种来源都说得清自己的来历**，不是「包」恰好排在第一枚。
+    // 页顶那一排指标卡插进来之后，第一枚图章是「特征列」那格的「算」
+    // （它取自 /api/features，是现算的），所以按次序取 [0] 就不对了。
+    const titles = stamps.map((s) => s.attributes('title') ?? '')
+    expect(titles.some((t) => t.includes('随标定包'))).toBe(true)
+    expect(titles.some((t) => t.includes('现场重算'))).toBe(true)
   })
 
   it('页标题就是导航里那条的标签（房规：页标题 = 导航标签）', async () => {
@@ -214,5 +219,67 @@ describe('页② 模型训练', () => {
     expect(text).not.toContain(' · ')           // 中点元信息串
     expect(text).not.toContain('→')
     expect(text).not.toContain('↳')
+  })
+
+  it('一排指标卡，五格，其中一格不是数字（spec §6.2 页②、§十 的判据）', async () => {
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    const cards = w.findAll('.stat')
+    expect(cards.map((c) => c.find('.label').text()))
+      .toEqual(['特征列', '折数', 'MAE', 'gap', '最差折'])
+    // 第五格是折名，不是数 —— 通用的大数字栅格不会有这样一格
+    expect(Number.isNaN(Number(cards[4].find('.value').text()))).toBe(true)
+  })
+
+  it('MAE 那一格报的是 B 组，不是挑参数用的 A 组', async () => {
+    // 这是本页最贵的口径：`ab` 的 A 组 MAE（0.115698）比 B 组（0.162401）好看，
+    // 而 A 组正是**拿来挑参数的那一组**。印 A 组 = 用调过参的那组自夸。
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    const mae = w.findAll('.stat').find((c) => c.find('.label').text() === 'MAE')!
+    expect(mae.find('.value').text()).toBe('0.162')
+  })
+
+  it('五格全挂在标定包上，图章只有一个字「包」（spec §七）', async () => {
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    const cards = w.findAll('.stat')
+    expect(cards.map((c) => c.find('.prov').text())).toEqual(['算', '包', '包', '包', '包'])
+  })
+
+  it('指标卡不改三段标题的数量与次序（spec §十三.1）', async () => {
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.findAll('h3').map((e) => e.text()))
+      .toEqual(['特征值的构造', '最优参数的选择', '模型训练'])
+    expect(w.findAll('.stat').length).toBeGreaterThan(0)
+  })
+
+  it('未标定时标定那四格一张都不渲染 —— 包里没有的数不许凑（spec §6.2）', async () => {
+    stub({
+      '/api/features': FEATURES,
+      '/api/calibration': {
+        ...CAL, present: false, reason: '还没有标定包',
+        metrics: [], params: [], plateau: [], tuned_keys: [],
+        worst_fold: null, ab: null, n_folds: 0,
+      },
+    })
+    const w = mount(TrainView)
+    await flushPromises()
+    const labels = w.findAll('.stat').map((c) => c.find('.label').text())
+    expect(labels).toEqual(['特征列'])
+  })
+
+  it('散文折进唯一一处「口径与出处」', async () => {
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    const why = w.findAll('details.why')
+    expect(why.length).toBe(1)
+    expect(why[0].text()).toContain('留一测点')
   })
 })
