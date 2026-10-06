@@ -60,6 +60,26 @@ const summary = computed(() => cal.data.value?.ab ?? null)
  */
 const fmt = (v: number | null, digits: number): string =>
   v === null ? '—' : v.toFixed(digits)
+
+/**
+ * 「参数与当前数据集不匹配」那一句（规格书 §七）。
+ *
+ * 与 `reason`（「这一份数据集还没有标定包」）**不是同一件事**，所以两处都留：
+ * 后者是系统的正常起点，前者说的是「屏上这些数背后是另一份数据」——
+ * 换数据集之后用户要看的就是这一句。
+ *
+ * 该跑哪条命令由后端给不了（`scripts/` 不在 API 的知识里），就写死在这里；
+ * 命令本身是 `2026-10-01-后端架构-design.md` §6.4 里那一条，改它要一起改这里。
+ * `scripts/calibrate.py` 在 `backend/` 下，所以要连工作目录一起说 ——
+ * 只说文件名，用户会在仓库根目录敲，然后得到一句「找不到文件」。
+ */
+const mismatchLine = computed(() => {
+  const m = cal.data.value?.mismatch
+  if (!m) return ''
+  return `参数与当前数据集不匹配，指标无效（上一次标定对应 ${m.created_at ?? '时间不详'}）。`
+    + '要拿到对当前数据集有效的参数，需离线跑一次标定：'
+    + '在 backend/ 目录下跑 python scripts/calibrate.py'
+})
 </script>
 
 <template>
@@ -110,6 +130,12 @@ const fmt = (v: number | null, digits: number): string =>
       <p v-if="cal.data.value && !cal.data.value.present" class="unset">
         <strong>未标定</strong>：{{ cal.data.value.reason }}
       </p>
+
+      <!-- 换数据集之后那一句。`v-if` 而不是拼进 reason：
+           两句话说的是两件事，合成一句就分不出「从来没标过」与「换了一份」。
+           `role="alert"` 是硬约束（错误必须是 alert）——这一句**作废了屏上
+           已有的数**，属于最该被读到的那些话。 -->
+      <p v-if="mismatchLine" role="alert" class="alert">{{ mismatchLine }}</p>
 
       <table v-if="cal.data.value?.params.length">
         <thead>

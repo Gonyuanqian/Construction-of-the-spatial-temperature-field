@@ -282,4 +282,40 @@ describe('页② 模型训练', () => {
     expect(why.length).toBe(1)
     expect(why[0].text()).toContain('留一测点')
   })
+
+  it('换数据集之后说清「参数与当前数据集不匹配」，并给出该跑哪条命令', async () => {
+    // 规格书 §七。这一句与「还没标定」是**两件事**：
+    // 后者是系统的正常起点，前者说明屏上这些数背后是另一份数据。
+    stub({
+      '/api/features': FEATURES,
+      '/api/calibration': {
+        ...CAL,
+        present: false,
+        reason: '这一份数据集还没有标定包。',
+        mismatch: { dataset_sig: '别的签名', created_at: '2026-07-27T20:00:00',
+                    file: 'bundle_x-h20260727T1200_abc.json' },
+        metrics: [], params: [], plateau: [], tuned_keys: [],
+        worst_fold: null, ab: null, n_folds: 0,
+      },
+    })
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.text()).toContain('参数与当前数据集不匹配')
+    expect(w.text()).toContain('2026-07-27T20:00:00')
+    expect(w.text()).toContain('scripts/calibrate.py')
+  })
+
+  it('没有 mismatch 时不说那句话 —— 「从来没标过」是另一件事', async () => {
+    stub({
+      '/api/features': FEATURES,
+      '/api/calibration': {
+        ...CAL, present: false, reason: '这一份数据集还没有标定包。', mismatch: null,
+        metrics: [], params: [], plateau: [], tuned_keys: [],
+        worst_fold: null, ab: null, n_folds: 0,
+      },
+    })
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.text()).not.toContain('参数与当前数据集不匹配')
+  })
 })

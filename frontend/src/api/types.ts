@@ -178,6 +178,14 @@ export interface CalibrationPayload {
    */
   reason: string | null
   /**
+   * 指纹对不上时，上一次标定对的是哪一份（规格书 §七）。`null` = 从来没有标过。
+   *
+   * ⚠️ **两个分支都给这一格**（有包时是 `null`）。这一格只在 `present === false`
+   * 时有意义，但它不是「有时有、有时没有」的键 —— 那种键会让手写的夹具静默
+   * 渲染成 `undefined`，而冒烟测试照样绿（与 `n_all_columns` 是同一个坑）。
+   */
+  mismatch: { dataset_sig: string; created_at: string | null; file: string } | null
+  /**
    * ⚠️ 三个都是 `string | null`。它们来自标定包自身（生成时刻、工具版本、
    * 分组签名）；**没有包时整组都不存在**，线上就是 null，不是空串 ——
    * 空串会被读成「有包但字段是空的」。

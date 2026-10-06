@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
-from api import deps                                     # noqa: E402
+from api import deps, paths, routes                      # noqa: E402
 from api.main import create_app                          # noqa: E402
 from tfield import config as C                           # noqa: E402
 
@@ -389,3 +389,102 @@ def _current_dataset():
     """
     from api import deps, paths
     deps.set_current_dataset(paths.dataset_path())
+
+
+# ── 换数据集之后的标定（规格书 §七）──
+
+def test_换了数据集之后报出上一次标定对的是谁(client, tmp_path, monkeypatch):
+    """规格书 §七：`present=False` 那条路上要走两种处境分开。
+
+    现在的 `NO_BUNDLE_REASON` 是「这一份数据集还没有标定包」——
+    这句话在**换数据集之后**不够：它把
+      · 这份数据集从来没标过（系统的正常起点），
+      · 这份数据集是刚换上的，上一次标定对的是**另一份**数据，
+    说成了一种。用户要看的是后一句。
+    """
+    monkeypatch.setattr(paths, "UPLOADS", tmp_path / "uploads")
+    deps.set_current_dataset(paths.dataset_path())
+    deps.reset_cache()
+
+    # 先确认：交付数据集**有**包（这一条的前提），所以 mismatch 必须是 None
+    assert client.get("/api/calibration").json()["mismatch"] is None
+
+    # 换一份（同名不同路径 → 签名不同 → 没有一份包对得上）
+    from tfield.data.loader import test_data_path
+    r = client.post("/api/dataset/upload?name=另一份.xlsx",
+                    content=test_data_path().read_bytes(),
+                    headers={"Content-Type": "application/octet-stream"})
+    assert r.status_code == 200, r.text
+
+    body = client.get("/api/calibration").json()
+    assert body["present"] is False
+    m = body["mismatch"]
+    assert m is not None
+    assert m["dataset_sig"] != body["dataset_sig"]      # 上一次标的是**另一份**
+    assert m["created_at"]
+    assert m["file"].startswith("bundle_") and m["file"].endswith(".json")
+
+    # 收尾：把交付数据集装回去，别留给后面的模块
+    deps.install_dataset(paths.dataset_path())
+
+
+def test_从来没有标过的数据集_mismatch_是_null(client, monkeypatch, tmp_path):
+    """反面的那一种：`configs/` 是空的 → 没有「上一次」，不许编一个出来。"""
+    monkeypatch.setattr(routes.calibration, "CONFIGS_ROOT", tmp_path)
+    deps.set_current_dataset(paths.dataset_path())
+    deps.reset_cache()
+    body = client.get("/api/calibration").json()
+    assert body["present"] is False
+    assert body["mismatch"] is None
+
+
+def test_configs_里有一份读不动的包_mismatch_要跳过它而不是把接口打挂(
+        client, monkeypatch, tmp_path):
+    """Review Focus 之外的第六类输入：`configs/` 里躺着半份包。
+
+    `save_bundle()` 是 `write_text` —— 不是原子的。跑标定跑到一半 Ctrl-C，
+    或者盘写满，都会留下一份**截断的 JSON**。它照样叫 `bundle_*.json`，
+    照样会被 glob 到。
+
+    期望：读不动的那一份**跳过**（说不清它标的是哪一份数据集，就不能替它说），
+    剩下的照常挑。**不许把 `/api/calibration` 打成 500** —— 这一页的全部职责
+    就是把口径说清楚，为一份读不动的文件整页报错，是把用户手里能用的东西
+    也一起拿走了。
+    """
+    (tmp_path / "bundle_6145fa9261e89f1b_d6294c09.json").write_text(
+        '{"dataset_sig": "6145fa9261e89f1b", "created_at": "2026-0', encoding="utf-8")
+    monkeypatch.setattr(routes.calibration, "CONFIGS_ROOT", tmp_path)
+    deps.set_current_dataset(paths.dataset_path())
+    deps.reset_cache()
+
+    r = client.get("/api/calibration")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["present"] is False
+    assert body["mismatch"] is None
+
+
+def test_坏包旁边有一份好包时_照旧报出好包那一份(client, monkeypatch, tmp_path):
+    """跳过坏的那一份，不等于整条路都不报 —— 好的那一份要说出来。"""
+    from dataclasses import replace
+    from tfield.calibration import load_bundle, save_bundle
+
+    # 拿交付那份包改成「别的签名」再存回去。**不能用一份手写的两键 JSON**：
+    # 那份东西 `from_dict` 会直接拒（它要 `search` 等字段），于是它落在
+    # 「坏包」那一类里，这条测试就证不了「好包照旧报得出来」。
+    real = load_bundle(sorted(paths.CONFIGS.glob("bundle_*.json"))[0])
+    assert real is not None
+    save_bundle(replace(real, dataset_sig="别的签名"), root=tmp_path)
+    (tmp_path / "bundle_截断的.json").write_text("{ 半份", encoding="utf-8")
+
+    monkeypatch.setattr(routes.calibration, "CONFIGS_ROOT", tmp_path)
+    deps.set_current_dataset(paths.dataset_path())
+    deps.reset_cache()
+
+    m = client.get("/api/calibration").json()["mismatch"]
+    assert m is not None
+    assert m["dataset_sig"] == "别的签名"
+    assert m["created_at"] == real.created_at
+    # 报出来的是好的那一份，不是坏的那一份
+    assert m["file"].startswith("bundle_别的签名_")
+

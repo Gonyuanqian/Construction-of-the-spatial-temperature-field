@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from tfield import config as C
-from tfield.calibration import load_for
+from tfield.calibration import load_bundle, load_for
 from tfield.pipeline import PipelineConfig
 
 from .. import deps, paths, ported
@@ -55,6 +55,7 @@ def get_calibration() -> dict[str, Any]:
         return {
             "present": False,
             "reason": NO_BUNDLE_REASON,
+            "mismatch": _mismatch(ds.signature),
             "created_at": None, "tool_version": None,
             "groups_sig": None, "dataset_sig": ds.signature,
             "feature_groups": list(C.DEFAULT_FEATURE_GROUPS),
@@ -86,6 +87,7 @@ def get_calibration() -> dict[str, Any]:
     return {
         "present": True,
         "reason": None,
+        "mismatch": None,
         "created_at": bundle.created_at,
         "tool_version": bundle.tool_version,
         "groups_sig": bundle.groups_sig,
@@ -108,6 +110,53 @@ def get_calibration() -> dict[str, Any]:
         "ab_note": _AB_NOTE,
         "note": CALIBRATION_NOTE,
     }
+
+
+def _mismatch(ds_sig: str) -> dict[str, Any] | None:
+    """`configs/` 下有没有**别的数据集**的标定包。
+
+    有的话它是那份包的 `dataset_sig` / `created_at` / 文件名 —— 据此页② 能说出
+    「参数与当前数据集不匹配，指标无效（上一次标定对应 <created_at>）」。
+
+    ⚠️ 只在 `bundle is None` 这条路上被调用，所以「存在的包按定义都对不上」——
+    不必再比一遍。真正要挑的是**报哪一个**：取 `created_at` 最新的那一个。
+    `configs/` 里可能同时躺着好几代的包（本仓现在就有两个），挑第一个会让界面
+    报出一份谁也不记得的旧包；挑最新的那个才是用户心里的「上一次」。
+
+    读包用库的 `load_bundle()` 而不是自己 `json.loads`：包的结构（包括
+    `dataset_sig` 在哪个键上）是库的知识，这里再解析一遍就是第二套口径。
+    一次只在这条罕见路径上读，794 KB 的包读几个可以接受。
+
+    不做 job API、不做「点一下就重标」的按钮（裁定 C）——
+    `2026-10-01-后端架构-design.md` §6.4 逐字写着它是**离线发布流程**。
+    """
+    found: list[dict[str, Any]] = []
+    for path in sorted(CONFIGS_ROOT.glob("bundle_*.json")):
+        # ⚠️ 读不动的那一份**跳过，不是把接口打挂**。`configs/` 是离线发布流程
+        # 的产出目录，人手动往里放过东西；一个写了一半的文件（磁盘满、复制中断、
+        # 编辑器存到一半）在这里就是一个「半份 JSON」，而 `load_bundle` 会**抛**
+        # ——`from_json` 是 `cls.from_dict(json.loads(s))`，`json.loads` 抛
+        # `JSONDecodeError`，`from_dict` 缺键抛 `KeyError`。
+        #
+        # 这个 except 是有意写宽的：这一条路的全部意义是「页② 能不能说清上一次
+        # 标定对的是谁」，它**不该**成为 200 的分支里唯一一个 500 的出口。窄捉
+        # 某几种异常，等于把没列到的那一种留在原地 —— 而它的表现形式是整页崩掉。
+        # 代价写在明面上：configs/ 里全是坏包时，页② 会说「这一份数据集还没有
+        # 标定包」，也就是把「包坏了」说成「没标过」。两者要用户做的事是同一件
+        # （跑一次标定），所以这个谎是软性的、可自愈的。
+        try:
+            bundle = load_bundle(path)
+        except Exception:
+            continue
+        if bundle is None or bundle.dataset_sig == ds_sig:
+            continue
+        found.append({"dataset_sig": bundle.dataset_sig,
+                      "created_at": bundle.created_at,
+                      "file": path.name})
+    if not found:
+        return None
+    # `created_at` 是 ISO 串，字典序就是时间序；缺失的排到最后。
+    return max(found, key=lambda d: (d["created_at"] or "", d["file"]))
 
 
 def _finite(v: float | None) -> float | None:

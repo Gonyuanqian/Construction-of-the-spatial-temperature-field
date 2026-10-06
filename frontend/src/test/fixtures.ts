@@ -137,6 +137,9 @@ export const PAGE_PAYLOADS: Record<string, unknown> = {
   },
   '/api/calibration': {
     present: false, reason: '还没有标定包', created_at: null, tool_version: null,
+    // 与上面 `n_all_columns` 同一个坑：这一格后端**两个分支都给**，
+    // 缺了它页② 会静默渲染 `undefined`，而冒烟测试照样绿。
+    mismatch: null,
     groups_sig: null, dataset_sig: 's', feature_groups: [], trend_kind: 'xgboost',
     tuned_keys: [], params: [], plateau: [], lz_note: null,
     metrics: [], per_point: [], ab: null, fold_kind: null, n_folds: 0,
