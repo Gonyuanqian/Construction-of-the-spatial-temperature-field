@@ -58,6 +58,11 @@ export interface DatasetPayload {
   time_end: string
   sheds: Record<string, number>
   positions: Position[]
+  // 测点编号（B1、B2……），**单独一格**：`positions` 是几何，编号是展示。
+  // 混在一起的话，每个读 `positions` 的地方都要重新想一遍「多出来的是不是几何」
+  // （后端有 `test_测点的几何形状没有被这次改动动到` 守着同一件事）。
+  // 次序由后端 `api/routes/dataset.py::_point_codes` 定：层从高到低，同层 x 从左到右。
+  point_codes: Record<string, string>
   temperature: TempStat[]
   fix: FixPayload
   checks: CheckRowPayload[]

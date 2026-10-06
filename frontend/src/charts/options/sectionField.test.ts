@@ -10,6 +10,9 @@ import {
 const PALETTE: Palette = {
   paper: '#F7F6F2', ink: '#211F1C', inkMuted: '#5C5850', steel: '#DEDCD6',
   leaf: '#14532D', leafSoft: '#E7EFE9', net: '#0B0F0D',
+  // 页① 切面图的三层点色。这一张图不用它们，但 `Palette` 是整个调色板
+  // 一份读出来的 —— 用得着用不着的令牌都在同一个对象上（与 `net` 同理）。
+  layerTop: '#C44E52', layerMid: '#4C72B0', layerLow: '#55A868',
 }
 
 /** 4×4 的小场，四种格子各占一角（与 pick.test.ts 同一套夹具，便于对照）。 */

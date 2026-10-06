@@ -16,6 +16,10 @@ export interface Palette {
   leaf: string
   leafSoft: string
   net: string
+  /** 切面图的测点分层色（页①）：顶层 / 中层 / 底层。 */
+  layerTop: string
+  layerMid: string
+  layerLow: string
 }
 
 const MAP: Record<keyof Palette, string> = {
@@ -26,6 +30,9 @@ const MAP: Record<keyof Palette, string> = {
   leaf: '--leaf',
   leafSoft: '--leaf-soft',
   net: '--net',
+  layerTop: '--layer-top',
+  layerMid: '--layer-mid',
+  layerLow: '--layer-low',
 }
 
 export function readPalette(el: HTMLElement = document.documentElement): Palette {

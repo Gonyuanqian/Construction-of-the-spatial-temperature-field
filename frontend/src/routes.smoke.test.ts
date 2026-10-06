@@ -68,6 +68,9 @@ function installTokens(): void {
   root.style.setProperty('--leaf', '#14532D')
   root.style.setProperty('--leaf-soft', '#E7EFE9')
   root.style.setProperty('--net', '#0B0F0D')
+  root.style.setProperty('--layer-top', '#C44E52')
+  root.style.setProperty('--layer-mid', '#4C72B0')
+  root.style.setProperty('--layer-low', '#55A868')
 }
 
 const PAYLOADS: Record<string, unknown> = {
@@ -75,7 +78,7 @@ const PAYLOADS: Record<string, unknown> = {
   '/api/dataset': {
     signature: 's', file: 'f.xlsx', n_times: 1, n_columns: 1,
     time_start: 't', time_end: 't',
-    sheds: { p1: 3 }, positions: [], temperature: [],
+    sheds: { p1: 3 }, positions: [], point_codes: {}, temperature: [],
     fix: { n_rows: 1, fixed_indices: [], monotonic_before: true,
            monotonic_after: true, spacing_seconds: 300, n_gaps: 0 },
     checks: [], checks_note: '',

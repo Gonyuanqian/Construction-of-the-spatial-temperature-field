@@ -22,6 +22,7 @@ def get_dataset() -> dict[str, Any]:
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"数据集不存在：{path}")
     ts = ds.wide[C.COL_TIMESTAMP]
+    codes = _point_codes(ds)
     return {
         "signature": ds.signature,
         "file": path.name,
@@ -44,6 +45,11 @@ def get_dataset() -> dict[str, Any]:
             {"id": pos, "x": float(p.x), "z": float(p.z), "layer": p.layer}
             for pos, p in ds.layout.items()
         ],
+        # 测点编号单独一格，**不塞进 `positions`**：那一格是几何
+        # （`test_测点的几何形状没有被这次改动动到` 守着），而编号是展示。
+        # 混在一起的话，每个读 `positions` 的地方都要重新想一遍
+        # 「多出来的那个字段是不是几何」。
+        "point_codes": codes,
         "fix": {
             "n_rows": ds.fix.n_rows,
             "fixed_indices": list(ds.fix.fixed_indices),
@@ -62,6 +68,26 @@ def get_dataset() -> dict[str, Any]:
         "checks_note": ported.checks_note(),
         "temperature": _temperature_stats(ds),
     }
+
+
+def _point_codes(ds) -> dict[str, str]:
+    """测点的展示编号：`B1`、`B2`……（页① 切面图上点旁那一个）。
+
+    **不来自数据集。** `测点字典` sheet 里只有设备通道号（`1, 0.15, 0.40`
+    —— 1 是棚 1、3 是棚 2、5 是棚 3），没有 B 编号。这一套是用户给的那张
+    切面图上的编号，次序从图上逐点抄下来：**先按高度分层、层从高到低
+    （拱顶那层在前），同层按 x 从左到右。**
+
+    为什么在后端算：编号是**屏上要显示的字符串**，而前端不做任何计算
+    （spec §六 硬约束 1）。为什么落在这里而不是 `tfield` 库里：它是展示
+    约定，不是数据 —— 库里放的是这个棚怎么长的，不是这张图怎么标。
+
+    按规则算而不是写一张八行的表：换一份数据集时表会缺项，而缺项在图上
+    表现为「有几个点没编号」，最容易被当成有意为之。规则永远覆盖得住，
+    而规则本身由 `test_测点编号按参考图的次序排` 钉在参考图的那八个编号上。
+    """
+    order = sorted(ds.layout.items(), key=lambda kv: (-kv[1].z, kv[1].x))
+    return {pos: f"B{i}" for i, (pos, _) in enumerate(order, start=1)}
 
 
 def _finite(v: float) -> float | None:

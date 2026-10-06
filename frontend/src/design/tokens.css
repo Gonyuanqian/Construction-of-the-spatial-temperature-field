@@ -47,6 +47,13 @@
      cividis 必须【正向】：反过来的话 52 °C 是深蓝、42 °C 是亮黄，读起来是拧的。 */
   --temp-scale: cividis;
   --err-scale: RdBu_r;
+  /* 页① 切面图上的测点：按高度分三层，一层一色。这三个值是**在用户给的
+     参考切面图上取的**（seaborn deep 的红/蓝/绿），不是在这里挑的 ——
+     参考图怎么分，图上就怎么分。只给切面图用，不进任何界面的底色或文字。
+     温度色标（cividis）不拿来当分类色：那会把「颜色 = 温度」这条读法弄坏。 */
+  --layer-top: #C44E52;
+  --layer-mid: #4C72B0;
+  --layer-low: #55A868;
   /* 「无测量带」的斜纹。它与 z > 1.10 m 那条虚线是同一套语言（spec §七 主张 2） */
   --unknown-stripe: repeating-linear-gradient(
     45deg, transparent 0 5px, rgba(33, 31, 28, 0.16) 5px 6px);

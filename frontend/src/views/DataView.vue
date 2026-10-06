@@ -78,10 +78,13 @@ const failure = computed(() =>
       <StatCard label="重复样本量" :value="fmtInt(ds.data.value.n_dup_times)" prov="live" />
     </StatRow>
 
-    <!-- 主图（页① 只剩这一张 —— 「昼夜与残差」已整块撤下） -->
+    <!-- 主图（页① 只剩这一张 —— 「昼夜与残差」已整块撤下）。
+         只画一座棚的切面：三座棚的八个点位是同一套，并排放三张是把同一个
+         形状画三遍，而每格只剩三分之一宽。420px 是照参考图的纵横比定的，
+         压到 300px 拱会显得又宽又扁。 -->
     <Card class="block">
-      <h3>测点的空间分布</h3>
-      <EChart v-if="v1" :option="v1" height="300px" />
+      <h3>棚的切面与测点</h3>
+      <EChart v-if="v1" :option="v1" height="420px" />
       <p v-else-if="ds.error.value || arch.error.value" class="note state">测点或几何没取到，见上方提示。</p>
       <p v-else class="note state">正在取几何与测点…</p>
     </Card>
@@ -100,8 +103,13 @@ const failure = computed(() =>
         缺失样本量是整张宽表里没有值的格子数。
       </p>
       <p class="note">
-        三座棚并排，标注是该测点的全时段均值（后端算的）。
-        虚线以上是 z = 1.10 m 以上的无测量带：那里没有任何传感器，不报数。
+        切面只画一座棚：三座棚的八个点位是同一套，并排放三张是把同一个形状画三遍。
+        测点按高度分三层着色，点旁的编号由后端按「层从高到低、同层从左到右」排出，
+        与切面图上的编号一致。
+      </p>
+      <p class="note">
+        z = 1.10 m 以上没有任何传感器，不报数。每个点的 5 天均值在鼠标停上去时
+        报出来，三座棚各一行（均值是后端算的）。
       </p>
       <p class="note">本页的出处图章只有一个意思：算，就是这次请求现算出来的数。</p>
     </details>

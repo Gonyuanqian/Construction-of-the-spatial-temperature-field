@@ -69,6 +69,8 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
       '--card', '--radius', '--shadow',
       '--lh-body', '--gap-s', '--gap-m', '--gap-l', '--gap-xl',
       '--rule', '--sidebar-w', '--temp-scale', '--err-scale',
+      // 切面图的测点分层色（页①，2026-10-06）：取自用户给的参考图
+      '--layer-top', '--layer-mid', '--layer-low',
     ]
     const missing = need.filter((t) => !css.includes(`${t}:`))
     expect(missing, `tokens.css 少了这些令牌：${missing.join('、')}`).toEqual([])

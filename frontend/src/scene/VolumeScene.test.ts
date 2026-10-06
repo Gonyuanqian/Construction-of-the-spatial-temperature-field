@@ -19,6 +19,9 @@ function installEnvironment(): void {
   root.style.setProperty('--leaf', '#14532D')
   root.style.setProperty('--leaf-soft', '#E7EFE9')
   root.style.setProperty('--net', '#0B0F0D')
+  root.style.setProperty('--layer-top', '#C44E52')
+  root.style.setProperty('--layer-mid', '#4C72B0')
+  root.style.setProperty('--layer-low', '#55A868')
   vi.stubGlobal('ResizeObserver', class {
     observe() {}
     unobserve() {}

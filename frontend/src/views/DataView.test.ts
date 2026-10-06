@@ -23,6 +23,9 @@ function installEnvironment(): void {
   root.style.setProperty('--leaf', '#14532D')
   root.style.setProperty('--leaf-soft', '#E7EFE9')
   root.style.setProperty('--net', '#0B0F0D')
+  root.style.setProperty('--layer-top', '#C44E52')
+  root.style.setProperty('--layer-mid', '#4C72B0')
+  root.style.setProperty('--layer-low', '#55A868')
   vi.stubGlobal('ResizeObserver', class {
     observe() {}
     unobserve() {}
@@ -38,6 +41,8 @@ const DATASET = {
   time_start: '2026-07-23T11:00:00', time_end: '2026-07-27T23:55:00',
   sheds: { p1: 3, p2: 9, p3: 15 },
   positions: [{ id: 'x0.15_z0.4', x: 0.15, z: 0.4, layer: 'z0.4' }],
+  // 测点编号单独一格，与 `positions`（几何）分开。
+  point_codes: { 'x0.15_z0.4': 'B1' },
   temperature: [{ shed: 'p1', position: 'x0.15_z0.4', mean: 38.4, min: 24.1, max: 45.0 }],
   fix: {
     n_rows: 1308, fixed_indices: [60, 348, 636, 924, 1212],
