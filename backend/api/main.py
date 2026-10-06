@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+import pathlib
 from typing import Any
 
 from fastapi import FastAPI
@@ -20,7 +21,7 @@ from starlette.types import Scope
 
 from tfield.calibration import TOOL_VERSION
 
-from . import paths, uploads
+from . import deps, paths, uploads
 from .errors import NO_DATASET_DETAIL, NoDatasetError
 from .routes import calibration as calibration_routes
 from .routes import dataset as dataset_routes
@@ -73,6 +74,29 @@ class SPAStaticFiles(StaticFiles):
             raise
 
 
+def _is_current_dataset(target: Any) -> bool:
+    """这个缺掉的文件，是不是**现在正该用的那一份数据集**。
+
+    ⚠️ 判据是「就是它」，不是「在上传目录里」：后者会把上传目录里任何一个
+    别的缺文件也算进来，而那正是这条 handler 要划清的那条线。
+
+    取不到当前数据集（压根是空态）时返回 False —— 空态下「还没有在用数据集」
+    由 409 那条 handler 管，此时冒出来的 `FileNotFoundError` 必然不是数据集的事。
+
+    ⚠️ 拿不到 `filename` 也返回 False，不猜。猜错的方向只有一个：把一次真故障
+    说成「数据集文件不见了」，然后让人去重导一份数据集。
+    """
+    if not target:
+        return False
+    try:
+        current = deps.current_dataset_path()
+    except NoDatasetError:
+        return False
+    # `Path` 的比较在 Windows 上不分大小写（`PureWindowsPath` 的语义），
+    # 正是这里要的：盘符与路径的大小写不该决定报 404 还是 500。
+    return pathlib.Path(str(target)) == pathlib.Path(current)
+
+
 def create_app() -> FastAPI:
     # version 取自 `tfield.calibration.TOOL_VERSION`，不写字面量：
     # 标定包的 `tool_version` 用的是同一个数，两处各写一份就会漂 ——
@@ -105,14 +129,25 @@ def create_app() -> FastAPI:
     async def _no_dataset(_req: Request, _exc: NoDatasetError) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": NO_DATASET_DETAIL})
 
-    # ⚠️ 这条**比 409 那条宽**，代价要认：非数据集的缺文件（比如某份配置）
-    # 从此也报 404 而不是 500。两条都上屏成 alert，差别只在状态码与那句话，
-    # 而 detail 里带着路径，所以仍然可诊断。换来的是「文件不见了」在
-    # **每一条**接口上都成立 —— 有了「当前数据集」这个指针之后，它可能发生在
-    # 任何一条接口上，而仓里只有 `/api/dataset` 那一处显式接住它。
+    # ⚠️ 这条只管**当前数据集那一份文件**。
+    #
+    # 上一版是不管谁的缺文件一律 404。那样把「文件不见了」在每一条接口上都
+    # 立起来了，代价是认下来的：**非数据集的缺文件也被说成数据集的事**。
+    # 那句话会让用户去重导数据集，而真正缺的可能完全是别的东西；更要紧的是
+    # 它把**服务端自己的故障**（磁盘、权限、写坏的路径）翻成一个看着像用户
+    # 问题的 404 —— 排查的时候手上连一条栈都没有。
+    #
+    # 划清之后，计划原本要的那件事一点没少：数据集可能在任何一条接口上
+    # 缺掉，而这里判的是「缺的就是它」，与哪条接口无关。
     @app.exception_handler(FileNotFoundError)
     async def _file_gone(_req: Request, exc: FileNotFoundError) -> JSONResponse:
-        target = getattr(exc, "filename", None) or (exc.args[0] if exc.args else "（路径不详）")
+        # `filename` 由 `open()` 那一层填，实测就是这个文件的绝对路径。
+        # **不再回退到 `exc.args[0]`**：errno 风格的 FileNotFoundError 里
+        # `args[0]` 是 errno（一个整数），那样会印出「数据集文件不见了：2」。
+        # 拿不到就当作不是数据集的事，交给下面那条 500。
+        target = getattr(exc, "filename", None)
+        if not _is_current_dataset(target):
+            raise exc
         return JSONResponse(status_code=404,
                             content={"detail": f"数据集文件不见了：{target}"})
 

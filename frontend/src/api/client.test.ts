@@ -29,6 +29,20 @@ describe('getJson', () => {
     expect(err).toBeInstanceOf(ApiError)
     expect((err as ApiError).message).toContain('连不上后端')
   })
+
+  it('连不上后端那句话里没有禁用字形', async () => {
+    // ⚠️ **这一条只有在这个文件里测得出来。** `design/prose.test.ts` 扫的是
+    // 四个视图的 `<template>`，而这句话是在 `client.ts` 里拼好、由页面
+    // 原样上屏的 —— 它绕开了全部三条上屏字形守卫（prose / NoDataset /
+    // routes.smoke 各扫各的那一块）。这句话出现得早（比本计划早），
+    // 所以它一次都没被扫到过。
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
+    const err = await getJson('/api/health').catch((e) => e)
+    const msg = (err as ApiError).message
+    for (const bad of ['——', '**', '`', ' · ', '→', '↳']) {
+      expect(msg, `${bad} 是禁用字形`).not.toContain(bad)
+    }
+  })
 })
 
 describe('uploadDataset', () => {

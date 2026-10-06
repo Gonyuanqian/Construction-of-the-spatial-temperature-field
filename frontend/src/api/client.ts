@@ -14,7 +14,11 @@ export class ApiError extends Error {
   }
 }
 
-const OFFLINE = '连不上后端（8503）——确认 API 服务已经起来'
+//: ⚠️ 这里原来用的是**两侧破折号**，而那是本仓明令禁用的上屏字形之一。
+//: 它一直没被抓住，因为三条上屏字形守卫各自只扫一块地方（`design/prose.test.ts`
+//: 扫四个视图的 template、`NoDataset.test.ts` 与 `routes.smoke.test.ts` 各扫
+//: 自己那一片），而这句话是在这个文件里拼好、由页面原样上屏的 —— 三块都不覆盖它。
+const OFFLINE = '连不上后端（8503）。确认 API 服务已经起来'
 
 /**
  * 后端的报错在 `detail` 里，原样透出来，别吞掉。

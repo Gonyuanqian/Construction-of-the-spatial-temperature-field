@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 from dataclasses import dataclass
 
 import pandas as pd
@@ -90,6 +91,19 @@ def _size(n: int) -> str:
     return f"{n / 1024 / 1024:.1f} MiB"
 
 
+#: 盘符前缀。`D:evil.xlsx` / `Z:pwn.xlsx` / `c:..\\evil.xlsx` 都从这儿拿掉。
+#:
+#: ⚠️ 这不是上面那四种穿越写法的「又一种」，是**另一类**：那四种都含分隔符，
+#: 取 basename 就干净了；而 `D:evil.xlsx` 一个分隔符都没有，`PurePosixPath` 眼里
+#: 它就是一个普通文件名。可它在 Windows 上是**盘符相对路径** ——
+#: `上传目录 / "D:evil.xlsx"` 会**丢掉左边**（`pathlib` 的规矩：右操作数带盘符
+#: 就顶掉左边的盘符），于是临时文件与最终文件双双落到 `D:` 那一侧。
+#: 实测过：`Uploaded.path` 会变成 `WindowsPath('D:evil.xlsx')`。
+#: 一旦落在那儿，`Rejected` 之后 `finally` 里的 `tmp.unlink()` 删的是 D: 上那份，
+#: 上传目录里干干净净 —— 看起来像什么都没发生。
+_DRIVE = re.compile(r"^[A-Za-z]:")
+
+
 def safe_name(name: str) -> str:
     """只留 basename。`../../evil.xlsx` 与 `..\\..\\evil.xlsx` 都回 `evil.xlsx`。
 
@@ -98,10 +112,14 @@ def safe_name(name: str) -> str:
     文件名里的反斜杠 —— 或者更糟，落在 `pathlib` 眼里仍是一条相对路径。
     两种写法都要在测试里钉住。
 
+    ⚠️ **再拿掉盘符前缀**（见 `_DRIVE`）。Windows 上文件名本来就不许含 `:`，
+    所以这一步不会误伤一个合法的名字 —— 它只可能拿掉一个盘符。
+
     **不回退成「随机名」**：中文文件名要能原样保留（§4.1 把文件名放进 query
     正是为了这个），把名字换掉会让「我刚才传的是哪一份」无从对照。
     """
     base = pathlib.PurePosixPath(name.replace("\\", "/")).name
+    base = _DRIVE.sub("", base)
     if base in ("", ".", ".."):
         return "dataset.xlsx"
     return base
@@ -120,9 +138,24 @@ def accept(data: bytes, name: str, *, dest_dir: pathlib.Path) -> Uploaded:
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     target = dest_dir / safe_name(name)
+    # ⚠️ 这一句是「不许逃出上传目录」的**执行点**，不是 `safe_name` 的复述。
+    # `safe_name` 是尽力而为的清洗（它现在会把盘符拿掉），而这里问的是不变量：
+    # 拼出来的目标文件是不是就在上传目录里。两者都要有，理由不同 ——
+    # 清洗解决「用户传了什么」，断言解决「这段代码将来被改坏了没有」。
+    # 那条盘符的 bug 就是这样绕过全部四种穿越写法的：名字里没有分隔符，
+    # 而 `pathlib` 把右操作数的盘符当成了地址的一部分。
+    if target.parent != dest_dir:
+        raise Rejected(400, f"文件名不能带盘符或路径：{name}")
     tmp = target.with_name(f".{target.name}.{os.getpid()}.part")
     try:
-        tmp.write_bytes(data)
+        try:
+            tmp.write_bytes(data)
+        except OSError as exc:
+            # ⚠️ 与下面那条 409 **必须分开**：那个是「目标文件被 Excel 开着」，
+            # 用户关掉程序就好；这一条是**服务端自己**写不动（磁盘满、没权限），
+            # 用户在这里做不了任何事。合成一条消息会把后者的用户指到一个
+            # 关不掉的程序上去；不接的话则是一片裸 500，连「写不动」都没说。
+            raise Rejected(507, f"服务端写不进上传目录，请检查磁盘空间与权限：{exc}") from exc
         ds = _load_or_reject(tmp)
         try:
             tmp.replace(target)

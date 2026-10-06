@@ -245,13 +245,38 @@ def test_不是_xlsx_的字节报_400(client):
 # ── T8 文件名不许逃出目录 ──
 
 
-@pytest.mark.parametrize("bad", ["../../evil.xlsx", "..\\..\\evil.xlsx",
-                                 "C:\\Windows\\evil.xlsx", "/etc/evil.xlsx"])
-def test_文件名不许逃出上传目录(client, uploads_dir, bad):
-    """T8：路径穿越。四种写法，全是「文件落在 uploads 里、名字只剩 basename」。"""
+@pytest.mark.parametrize("bad,want", [
+    ("../../evil.xlsx", "evil.xlsx"),
+    ("..\\..\\evil.xlsx", "evil.xlsx"),
+    ("C:\\Windows\\evil.xlsx", "evil.xlsx"),
+    ("/etc/evil.xlsx", "evil.xlsx"),
+    # ⚠️ **盘符前缀是另一类，不是上面四种的又一种写法。** 上面四种都含分隔符，
+    # 取 basename 就干净了；`D:evil.xlsx` 一个分隔符都没有，于是
+    # `PurePosixPath("D:evil.xlsx").name` 就是整串。而它在 Windows 上是
+    # **盘符相对路径** —— `上传目录 / "D:evil.xlsx"` 会**丢掉左边**
+    # （右操作数带盘符就顶掉左边的盘符），临时文件跟着落到 D: 那一侧。
+    # 实测：`D:evil.xlsx` 与 `Z:pwn.xlsx` 两种形状都会逃出去。
+    ("D:evil.xlsx", "evil.xlsx"),
+    ("Z:pwn.xlsx", "pwn.xlsx"),
+])
+def test_文件名不许逃出上传目录(client, uploads_dir, bad, want):
+    """T8：路径穿越。六种写法，全是「文件落在 uploads 里、名字只剩 basename」。"""
     assert post(client, ORIGINAL, name=bad).status_code == 200
-    assert [p.name for p in uploads_dir.iterdir()] == ["evil.xlsx"]
-    assert not (uploads_dir.parent / "evil.xlsx").exists()
+    assert [p.name for p in uploads_dir.iterdir()] == [want]
+    assert not (uploads_dir.parent / want).exists()
+
+
+def test_盘符名在_safe_name_这一层就被拿掉():
+    """上一条的单测版，**故意不碰磁盘**。
+
+    `D:evil.xlsx` 在修好之前会让 `accept()` 往 D: 上写临时文件 ——
+    在 D: 存在、且它有 per-drive 当前目录的机器上，那是**真的写出去了**，
+    只是随后被 `finally` 删掉。一条测试不该有这种副作用，所以这里直接问
+    `safe_name` 要答案：它是被改的那个函数，也是唯一该有盘符知识的地方。
+    """
+    for bad, want in [("D:evil.xlsx", "evil.xlsx"), ("Z:pwn.xlsx", "pwn.xlsx"),
+                      ("c:..\\evil.xlsx", "evil.xlsx")]:
+        assert uploads.safe_name(bad) == want, bad
 
 
 def test_中文文件名正常落盘(client, uploads_dir):
@@ -311,3 +336,80 @@ def test_上限由后端报出来():
     c = TestClient(create_app())
     assert c.get("/api/health").json()["max_upload_bytes"] == uploads.MAX_UPLOAD_BYTES
     assert uploads.MAX_UPLOAD_BYTES == 32 * 1024 * 1024
+
+
+# ── 起点那一头：空态 → 导入 → 有数据（验收 ①②）──
+
+
+def test_从空态导入一份_这条路走得通(client):
+    """**整个系统的第一条路**：还没有在用数据集 → 传一份 → 各页就有数据了。
+
+    这一条只有在这个文件里测得出来的差别：别的上传用例都先
+    `deps.set_current_dataset(...)` 把起点放在「已经有一份」上，于是
+    「空态」这个**真正的起点**从来没有和上传这条路一起走过。上传路由恰好
+    不在导入前读当前数据集，所以它现在是对的 —— 但没有任何东西钉着它：
+    哪天有人在 `accept()` 前面加一句 `deps.current_dataset_path()`（很自然：
+    想「顺手确认一下现在用的是什么」），这条路上就会多出一个 409，
+    而所有别的用例照样全绿。
+    """
+    deps.clear_current_dataset()
+    deps.reset_cache()
+    empty = client.get("/api/dataset")
+    assert empty.status_code == 409, empty.text      # 起点：空态
+
+    r = post(client, ORIGINAL, name=NAME)
+    assert r.status_code == 200, r.text
+
+    after = client.get("/api/dataset")
+    assert after.status_code == 200, after.text      # 导入之后，这一页就有数据了
+    assert after.json()["signature"] == r.json()["signature"]
+    assert after.json()["file"] == NAME
+
+
+# ── 服务端自己写不动盘的时候 ──
+
+
+def test_写不进上传目录时报得清_而不是裸_500(client, monkeypatch):
+    """磁盘满 / 没权限时，用户要看的是「服务端写不动」，不是一片空白。
+
+    与「文件被占用」那条（409）**必须分开**：一个是服务端自己的问题
+    （换个地方、清磁盘），一个是用户关掉 Excel 就能解决的。同一条消息
+    会把前者的用户指到一个关不掉的程序上去。
+
+    ⚠️ 用 `raise_server_exceptions=False` 收 500：默认那个会把异常直接抛进
+    测试里，于是断言永远跑不到 —— 而这一条要断言的正是「返回了什么」。
+    """
+    def boom(self, data):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(pathlib.Path, "write_bytes", boom)
+    c = TestClient(create_app(), raise_server_exceptions=False)
+    r = post(c, ORIGINAL, name=NAME)
+    assert r.status_code == 507, r.text
+    assert "写不进" in r.json()["detail"]
+
+
+# ── 全局那两条 handler 各自的范围 ──
+
+
+def test_别的文件不见了_不许报成数据集文件不见了(monkeypatch):
+    """`FileNotFoundError → 404` 只该罩住**当前数据集**那一条路。
+
+    非数据集的缺文件借「数据集文件不见了：<路径>」这句话混过去，是把一句
+    真话用错了地方：它会让用户去重导数据集，而真正缺的可能完全是别的东西。
+    更要紧的是它把**服务端自己的故障**翻成一个看着像用户问题的 404 ——
+    排查的时候，手上连一条栈都没有。
+
+    `/api/calibration` 走到这一步是因为它问 `deps.get_train_dataset()`，
+    而那个出口在本仓里没有自己接住缺文件（只有 `/api/dataset` 接了）。
+    """
+    def boom(*a, **k):
+        raise FileNotFoundError(2, "No such file or directory",
+                                "C:/somewhere/else/notes.txt")
+
+    monkeypatch.setattr(deps, "get_train_dataset", boom)
+    deps.set_current_dataset(paths.dataset_path())
+    c = TestClient(create_app(), raise_server_exceptions=False)
+    r = c.get("/api/calibration")
+    assert r.status_code != 404, r.text
+    assert "数据集文件不见了" not in r.text
