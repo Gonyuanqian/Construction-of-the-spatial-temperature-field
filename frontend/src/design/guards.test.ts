@@ -85,6 +85,59 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
     expect(hits, '色值必须来自 tokens.css，但发现：\n' + hits.join('\n')).toEqual([])
   })
 
+  it('一层 `.seg` 不裁焦点环，也不自己写 outline', () => {
+    // 终审 I-4：计划把「分段控件的 `:focus-visible` 不许被新样式盖掉」列为
+    // 最可能咬到真人的前四条之一，还写着「Task 4 的 ModeSwitch.test.ts」——
+    // 而那个文件里一条都没有。缓解本身在（全局那条还在、组件没覆盖它），
+    // 但**无人回归**。jsdom 量不到 outline 画出来是什么样，所以退到源码文本，
+    // 与上面两条守卫同一个手法。
+    //
+    // 两件事各钉一次：
+    // ① 组件自己不许写 `outline` —— 一写就把 `base.css` 那条盖掉；
+    // ② 容器不许 `overflow: hidden` —— `:focus-visible` 带 `outline-offset: 2px`，
+    //    伸出按钮盒的那 2px 会被祖先裁掉（首个/末个按钮尤甚）。圆角改由
+    //    首末子元素各自带，视觉不变。
+    // 扫**所有**定义了 `.seg` 的组件，不是写死一个文件 —— 页③ 与实时屏的
+    // 左栏切换也用它，写死一处等于新加的第二处没人守。
+    const withSeg = VUE.filter((p) =>
+      /\.seg\s*\{/.test(readFileSync(p, 'utf8')))
+    expect(withSeg.map((p) => p.slice(SRC.length)).sort(),
+      '`.seg` 的守卫扫不到任何文件，说明它已经空转了').toEqual([
+      '/components/ModeSwitch.vue',
+      '/views/FieldView.vue',
+      '/views/LiveView.vue',
+    ])
+    for (const p of withSeg) {
+      const css = readFileSync(p, 'utf8')
+      const rel = p.slice(SRC.length)
+      expect(css, `${rel} 自己写了 outline，全局那条就没了`).not.toMatch(/outline\s*:/)
+      const seg = css.match(/\.seg\s*\{[^}]*\}/)?.[0] ?? ''
+      expect(seg, `${rel} 的 .seg 会把焦点环裁掉`).not.toMatch(/overflow/)
+    }
+    // 正着也钉一遍：被继承的那条还在 `base.css` 里，而且底色是 `--leaf`。
+    const base = readFileSync(join(SRC, 'design', 'base.css'), 'utf8')
+    const focus = base.match(/:focus-visible\s*\{[^}]*\}/)?.[0] ?? ''
+    expect(focus, 'base.css 里没有 :focus-visible 规则').not.toBe('')
+    expect(focus).toContain('var(--leaf)')
+  })
+
+  it('一排指标卡在窄屏上换行，不被压窄也不撑出横向滚动', () => {
+    // 终审 I-4 的另一半，与上一条同病：计划写着「Task 3 的 StatRow 守卫」
+    // 测 1280px 五卡换行，而 `StatRow.test.ts` 里**没有任何**与 flex-wrap /
+    // min-width / 溢出相关的断言。jsdom 不做布局（`getBoundingClientRect()`
+    // 一律回 0），所以这里量的是规则本身。
+    //
+    // ⚠️ 这条**够不着**真正的版面：1280 / 1440 / 2560 下到底破不破版，
+    // 仍是人工验收项（§十二.8），不是这条测试能证明的。
+    const text = readFileSync(join(SRC, 'components', 'StatRow.vue'), 'utf8')
+    const rule = text.match(/\.stats\s*\{[^}]*\}/)?.[0] ?? ''
+    expect(rule, 'StatRow 里没有 .stats 规则').not.toBe('')
+    expect(rule, '窄屏上不换行就会压成窄条或撑出横向滚动').toMatch(/flex-wrap:\s*wrap/)
+    // 换行要有阈值，不然永远不换 —— `min-width` 就是那个阈值。
+    const child = text.match(/\.stats\s*>\s*:deep\(\*\)\s*\{[^}]*\}/)?.[0] ?? ''
+    expect(child, '一排的每一张卡没有最小宽度').toMatch(/min-width:\s*\d+px/)
+  })
+
   it('palette.ts 只按名字读令牌，不重打一遍色值', () => {
     // 图表要的是真颜色字符串（canvas 不认 var(--ink)），所以 palette.ts 得把
     // 令牌读成值。但**读**不等于**抄**：色值只在 tokens.css 里存在一次。

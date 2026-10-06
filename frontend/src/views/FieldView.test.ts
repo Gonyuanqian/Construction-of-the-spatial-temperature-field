@@ -412,4 +412,39 @@ describe('页③ 空间温度场的构建', () => {
     expect(why.length).toBe(1)
     expect(why[0].text()).toContain('三种回答')
   })
+
+  it('视图切换是一条分段控件，不是一排带圆角边框的按钮（spec §九 / 终审 I-1）', async () => {
+    // spec §九 逐字要求：`fieldset.rail-box` 的「一个 legend 加几个按钮」
+    // 改成**分段控件** —— 一条描边的底，内部按钮无边框、无间距、相邻处一条竖线，
+    // 选中的那个叶子底。这一块正是 §一 成因 5「chrome 是细线」的现场：
+    // 各带圆角边框的按钮摆一排，读起来是「带框的小表单」，不是开关。
+    //
+    // 顺带把 `data-view` 钉上：§十三.4 要求页③ 与实时屏的视图按钮**都**带它，
+    // 而页③ 这边一直没带（实时屏有）——两条页面对同一件事给了两套钩子，
+    // 改的时候只测得到一半。
+    stub(OK)
+    const w = mountView()
+    await flushPromises()
+    const seg = w.find('fieldset.rail-box .seg')
+    expect(seg.exists(), '视图切换没有分段控件的底').toBe(true)
+    expect(seg.findAll('button').map((b) => b.text())).toEqual(['断面', '三维'])
+    expect(seg.findAll('[data-view]').map((b) => b.attributes('data-view')))
+      .toEqual(['section', 'volume'])
+  })
+
+  it('时刻在屏上处处走 `fmtTime`，不把 ISO 的 T 印给人看（终审 I-3）', async () => {
+    // `format.ts` 存在的**全部理由**就是「同一个数在四页上是同一种写法」，
+    // 而 `fmtTime` 的 doc 第一句就是「ISO 里那个 T 不给人看」。
+    // 这一页原来有两处直接把载荷里的 `2026-07-27T12:00:00` 铺在屏上
+    // （指标卡的「时刻」与左栏游标下面那一行）——同一页上两个时刻两种写法，
+    // 正是本次要治的「文档感」的另一种形态。
+    stub(OK)
+    const w = mountView()
+    await flushPromises()
+    expect(w.text(), '屏上还印着带 T 的时间戳').not.toContain('2026-07-27T')
+
+    const card = w.findAll('.stat')[0]
+    expect(card.find('.label').text()).toBe('时刻')
+    expect(card.find('.value').text()).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
+  })
 })

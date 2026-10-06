@@ -87,8 +87,8 @@ const failure = computed(() =>
     <Card class="block">
       <h3>测点的空间分布</h3>
       <EChart v-if="v1" :option="v1" height="300px" />
-      <p v-else-if="ds.error.value || arch.error.value" class="note">测点或几何没取到，见上方提示。</p>
-      <p v-else class="note">正在取几何与测点…</p>
+      <p v-else-if="ds.error.value || arch.error.value" class="note state">测点或几何没取到，见上方提示。</p>
+      <p v-else class="note state">正在取几何与测点…</p>
     </Card>
 
     <!-- 口径与出处：一页最多一处（spec §八）。收起来，但内容始终在 DOM 里。 -->

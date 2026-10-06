@@ -28,7 +28,7 @@ import StatCard from '../components/StatCard.vue'
 import StatRow from '../components/StatRow.vue'
 import { useAsync } from '../composables/useAsync'
 import { FIELD_VIEWS } from '../design/copy'
-import { fmt1, fmtRange } from '../design/format'
+import { fmt1, fmtRange, fmtTime } from '../design/format'
 import { readPalette } from '../design/palette'
 
 // 三维那一块**整块懒加载**：`import()` 的路径是**字面量**，打包器静态可分析，
@@ -153,16 +153,22 @@ const failure = computed(() =>
          `#rail-extra` 还没进文档、按字符串找不着。`defer` 把落点解析推迟到
          整棵树挂完之后的 post-flush —— 那时落点已在文档里。 -->
     <Teleport defer to="#rail-extra">
-      <fieldset class="rail-box">
+      <fieldset class="rail-box rail-switch">
         <legend>视图</legend>
-        <button
-          v-for="v in FIELD_VIEWS" :key="v.key"
-          type="button"
-          :class="{ on: view === v.key }"
-          :disabled="!v.enabled"
-          :title="v.enabled ? '' : v.why"
-          @click="view = v.key"
-        >{{ v.label }}</button>
+        <!-- 分段控件（spec §九）：一条描边的底，里头的按钮无边框、无间距、
+             相邻处一条竖线，选中的那个叶子底。原来每个按钮各带圆角边框、
+             彼此留缝，读起来是「带框的小表单」——§一 成因 5 说的正是这个。 -->
+        <div class="seg">
+          <button
+            v-for="v in FIELD_VIEWS" :key="v.key"
+            type="button" :data-view="v.key"
+            :class="{ on: view === v.key }"
+            :disabled="!v.enabled"
+            :title="v.enabled ? '' : v.why"
+            @click="view = v.key"
+          >{{ v.label }}</button>
+        </div>
+        <!-- 未开放的理由留在分段控件外面：它是说明，不是开关的一部分。 -->
         <p v-for="v in FIELD_VIEWS.filter((x) => !x.enabled)" :key="`why-${v.key}`" class="note">
           {{ v.label }}：{{ v.why }}
         </p>
@@ -176,7 +182,7 @@ const failure = computed(() =>
           :value="tIndex" aria-label="时刻游标" @input="onSeek"
         >
         <!-- 占位不写破折号：spec §8.5 禁的正是这种装饰性连接符。 -->
-        <p class="num">{{ sections.data.value?.time ?? '还没取到' }}</p>
+        <p class="num">{{ sections.data.value ? fmtTime(sections.data.value.time) : '还没取到' }}</p>
         <div class="row">
           <button type="button" @click="step(-1)">上一帧</button>
           <button type="button" @click="step(1)">下一帧</button>
@@ -190,7 +196,7 @@ const failure = computed(() =>
          通用的大数字栅格永远不会有一个格子在拒绝报数。 -->
     <StatRow v-if="sections.data.value">
       <StatCard
-        label="时刻" :value="sections.data.value.time" prov="live" compact
+        label="时刻" :value="fmtTime(sections.data.value.time)" prov="live" compact
       />
       <StatCard
         label="色标"
@@ -220,14 +226,14 @@ const failure = computed(() =>
           </span>
         </div>
         <EChart v-if="v5" :option="v5" height="420px" @pick="onPick" />
-        <p v-else-if="sections.error.value" class="note">场没取到，见上方提示。</p>
-        <p v-else class="note">正在取场…（第一次要训练模型，可能要等一会儿）</p>
+        <p v-else-if="sections.error.value" class="note state">场没取到，见上方提示。</p>
+        <p v-else class="note state">正在取场…（第一次要训练模型，可能要等一会儿）</p>
       </Card>
 
       <!-- 2. 点选读数 -->
       <Card class="block">
         <h3>这一格是什么</h3>
-        <p v-if="!readout" class="note">还没点任何格子。上图里点一下。</p>
+        <p v-if="!readout" class="note state">还没点任何格子。上图里点一下。</p>
         <table v-else>
           <tbody>
             <tr><th>位置</th><td class="num">{{ readout.where }}</td></tr>
@@ -240,19 +246,19 @@ const failure = computed(() =>
       <Card class="block">
         <h3>这一点的 5 天</h3>
         <EChart v-if="vCurve" :option="vCurve" height="300px" />
-        <p v-else-if="curve.loading.value" class="note">正在取曲线…</p>
-        <p v-else-if="curve.data.value && !curve.data.value.defined" class="note">
+        <p v-else-if="curve.loading.value" class="note state">正在取曲线…</p>
+        <p v-else-if="curve.data.value && !curve.data.value.defined" class="note state">
           该点无定义（拱外或在无测量带里），不画曲线。
         </p>
-        <p v-else class="note">点一个格子看它在整个时间轴上怎么变。</p>
+        <p v-else class="note state">点一个格子看它在整个时间轴上怎么变。</p>
       </Card>
 
       <!-- 4. ΔT 第四格 -->
       <Card class="block">
         <h3>竖直软单调投影改了多少</h3>
         <EChart v-if="vDelta" :option="vDelta" height="320px" />
-        <p v-else-if="compare.error.value" class="note">对比没取到，见上方提示。</p>
-        <p v-else class="note">正在取对比…</p>
+        <p v-else-if="compare.error.value" class="note state">对比没取到，见上方提示。</p>
+        <p v-else class="note state">正在取对比…</p>
       </Card>
 
       <!-- 口径与出处：一页最多一处（spec §八）。收起来，但内容始终在 DOM 里。 -->
@@ -289,8 +295,33 @@ const failure = computed(() =>
   border: var(--rule); padding: var(--gap-s);
   margin: 0 0 var(--gap-s); font-size: var(--size-note);
 }
-.rail-box button { font: inherit; cursor: pointer; }
-.rail-box button.on { font-weight: var(--w-strong); }
+/* 开关那一块：外框去掉，描边交给里面的分段控件（spec §九）。
+   只加在视图切换上，不动三维面板里另外两个 `rail-box`（它们真的是表单）。 */
+.rail-switch { border: 0; padding: 0; margin: 0 0 var(--gap-m); }
+.rail-switch > legend { padding: 0; font-size: var(--size-label); color: var(--ink-muted); }
+.seg {
+  display: flex;
+  align-items: stretch;
+  margin-top: var(--gap-s);
+  border: 1px solid var(--steel);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+.seg button {
+  flex: 1 1 auto;
+  font: inherit; cursor: pointer;
+  background: transparent;
+  border: 0; border-radius: 0;
+  padding: 3px 10px;
+  color: var(--ink-muted);
+}
+/* 圆角由首末两个按钮自己收 —— 不用 `overflow: hidden`：那一句会把
+   `:focus-visible` 伸出按钮盒 2px 的焦点环裁掉（终审 M-8，`guards.test.ts` 有守卫）。 */
+.seg button:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.seg button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+.seg button + button { border-left: 1px solid var(--steel); }
+.seg button.on { background: var(--leaf); color: var(--paper); }
+.seg button:disabled { cursor: not-allowed; }
 .why { margin-top: var(--gap-l); }
 .why summary { font-size: var(--size-label); color: var(--ink-muted); cursor: pointer; }
 .why > p { margin-top: var(--gap-s); }

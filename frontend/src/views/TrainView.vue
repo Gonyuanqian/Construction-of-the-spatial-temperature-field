@@ -218,7 +218,7 @@ const fmt = (v: number | null, digits: number): string =>
         </template>
       </template>
 
-      <p v-else class="note">正在读标定包…</p>
+      <p v-else class="note state">正在读标定包…</p>
     </Card>
 
     <!-- 口径与出处：一页最多一处（spec §八）。收起来，但内容始终在 DOM 里。 -->

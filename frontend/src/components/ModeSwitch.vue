@@ -45,7 +45,6 @@ const model = defineModel<string>({ default: 'train' })
   align-items: stretch;
   border: 1px solid var(--steel);
   border-radius: var(--radius);
-  overflow: hidden;
   background: var(--card);
 }
 .seg .mode {
@@ -55,6 +54,11 @@ const model = defineModel<string>({ default: 'train' })
   padding: 3px 14px;
   color: var(--ink-muted);
 }
+/* 圆角由首末两个按钮自己收 —— 不用 `overflow: hidden`。那一句会把
+   `:focus-visible` 的 `outline-offset: 2px` 伸出按钮盒的那一圈裁掉，
+   键盘用户看到的焦点环是断的（终审 M-8）。 */
+.seg .mode:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.seg .mode:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
 .seg .mode + .mode { border-left: 1px solid var(--steel); }
 .seg .mode.on { background: var(--leaf); color: var(--paper); }
 .seg .mode.off { cursor: not-allowed; }

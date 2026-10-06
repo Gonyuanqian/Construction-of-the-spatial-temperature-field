@@ -245,4 +245,34 @@ describe('LiveView', () => {
     // 折进去的东西还在 DOM 里（收起来不等于删掉 —— spec §八 选它不选弹层的理由）
     expect(why[0].text().length).toBeGreaterThan('口径与出处'.length)
   })
+
+  it('「看哪一块」是一条分段控件，不是一排带圆角边框的按钮（spec §九 / 终审 I-1）', async () => {
+    // 与页③ 的视图切换同一块 chrome、同一条要求：它得像个开关。
+    // 这条与页③ 那条合起来才说明「两页共用一种控件」，只测一页等于没测另一半。
+    stubFetch()
+    const w = mount(LiveView)
+    await flushPromises()
+    await w.get('button[data-act="prepare"]').trigger('click')
+    await flushPromises()
+    const seg = w.find('fieldset.rail-box .seg')
+    expect(seg.exists(), '视图切换没有分段控件的底').toBe(true)
+    expect(seg.findAll('[data-view]').map((b) => b.attributes('data-view')))
+      .toEqual(['section', 'volume'])
+  })
+
+  it('本帧时刻走 `fmtTime`，不把 ISO 的 T 印给人看（终审 I-3）', async () => {
+    // 与页③ 同款：`format.ts` 立的是「同一个数在四页上是同一种写法」，
+    // 这一屏原来有两处直接铺载荷（指标卡与「第 n 帧」下面那一行数字）。
+    stubFetch()
+    const w = mount(LiveView)
+    await flushPromises()
+    // 帧载荷要等源准备好才取 —— 先点「准备」，第四格才有时刻可谈。
+    await w.get('button[data-act="prepare"]').trigger('click')
+    await flushPromises()
+    expect(w.text(), '屏上还印着带 T 的时间戳').not.toContain('2026-07-27T')
+
+    const card = w.findAll('.stat')[3]
+    expect(card.find('.label').text()).toBe('本帧时刻')
+    expect(card.find('.value').text()).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
+  })
 })

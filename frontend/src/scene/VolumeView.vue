@@ -17,6 +17,7 @@ import type { VolumePayload } from '../api/types'
 import { getJson } from '../api/client'
 import { interpretVolumePick, pickText } from '../charts/pick'
 import { useAsync } from '../composables/useAsync'
+import { fmtTime } from '../design/format'
 import { markerPoint, snapIndex, type HoverPick } from './hover'
 import VolumeScene from './VolumeScene.vue'
 import {
@@ -102,7 +103,10 @@ const readout = computed(() => {
   const [mx, my, mz] = markerPoint(p, k)
   const plane = p.planes[k.planeIndex]
   return {
-    time: p.time,
+    // 时刻走 `fmtTime`：这一块是页③ 与实时屏共用的，两个页面上的断面读数
+    // 都走它，三维这一半跟上 —— 否则「同一个数四页同一种写法」在**同一页内**
+    // 就先破了（终审 I-3）。
+    time: fmtTime(p.time),
     where: `最近格点 (${mx.toFixed(2)}, ${my.toFixed(2)}, ${mz.toFixed(2)})`,
     text: pickText(interpretVolumePick(p, k.planeIndex, k.ix, k.iz), p.max_measured_z),
     // 「密度即可信度」在读数上也说一遍：这一片是量的，还是算的（规格书 §5.3）。
@@ -122,7 +126,7 @@ const readout = computed(() => {
 const stale = computed(() => {
   const p = volume.data.value
   if (!p || !props.clockTime || p.time === props.clockTime) return ''
-  return `画面仍是 ${p.time} 的场，正在构 ${props.clockTime} 的场。`
+  return `画面仍是 ${fmtTime(p.time)} 的场，正在构 ${fmtTime(props.clockTime)} 的场。`
 })
 
 /* ── 坐标查询 ─────────────────────────────────────────────── */
@@ -171,7 +175,7 @@ function runQuery() {
   const k = { planeIndex, ix, iz }
   const [mx, my, mz] = markerPoint(p, k)
   queryAnswer.value = {
-    time: p.time,
+    time: fmtTime(p.time),
     // 吸附后的坐标**必须写出来**：用户输的是 5.4、拿到的是 5.5 的值，
     // 不写出来就是撒谎（规格书 §6.2）。
     where: `最近格点 (${mx.toFixed(2)}, ${my.toFixed(2)}, ${mz.toFixed(2)})`,
@@ -191,7 +195,7 @@ function runQuery() {
 
     <p v-if="volume.error.value" role="alert" class="alert">{{ volume.error.value }}</p>
     <p v-if="stale" class="note" role="status">{{ stale }}</p>
-    <p v-if="volume.loading.value" class="note">正在构体…（{{ clockTime || '…' }}）</p>
+    <p v-if="volume.loading.value" class="note">正在构体…（{{ clockTime ? fmtTime(clockTime) : '…' }}）</p>
 
     <template v-if="spec && volume.data.value">
       <p class="note">{{ volume.data.value.note }}</p>

@@ -33,6 +33,7 @@ import StatCard from '../components/StatCard.vue'
 import StatRow from '../components/StatRow.vue'
 import { useAsync } from '../composables/useAsync'
 import { FIELD_VIEWS } from '../design/copy'
+import { fmtTime } from '../design/format'
 import { readPalette } from '../design/palette'
 
 // 三维整块懒加载，`FieldView` 同款写法。占位用 `h()` 不用字符串模板：
@@ -162,7 +163,7 @@ const readout = computed(() => {
     <p v-if="error" role="alert" class="alert">{{ error }}</p>
 
     <!-- 一行写完，别换行：这一句是要被断言、也是要被读的。 -->
-    <p v-if="status" class="note" role="status">
+    <p v-if="status" class="note state" role="status">
       实时源{{ ready ? '已就绪' : '还没准备' }}：第 {{ status.cursor }} 帧，共 {{ status.total }} 帧，{{ intervalText }}。帧历史在内存里，重启服务就回到第 0 帧。
     </p>
 
@@ -175,7 +176,7 @@ const readout = computed(() => {
       <StatCard label="一帧" :value="intervalText" prov="live" compact />
       <StatCard
         label="本帧时刻"
-        :value="frame.data.value?.frame.time ?? '—'"
+        :value="frame.data.value ? fmtTime(frame.data.value.frame.time) : '—'"
         prov="live" compact
       />
     </StatRow>
@@ -196,7 +197,7 @@ const readout = computed(() => {
       <span v-if="busy" class="note">正在处理…</span>
     </div>
 
-    <p v-if="!ready" class="note">
+    <p v-if="!ready" class="note state">
       准备要建一次管线，第一次要等几十秒。这之后每一帧是秒级的。
     </p>
 
@@ -216,19 +217,19 @@ const readout = computed(() => {
             {{ frame.data.value.calibrated ? '已标定' : '未标定（兜底参数）' }}
           </span>
         </div>
-        <p class="num">{{ frame.data.value.frame.time }}</p>
-        <p class="note">
+        <p class="num">{{ fmtTime(frame.data.value.frame.time) }}</p>
+        <p class="note reading">
           棚顶气象：气温 {{ show(frame.data.value.frame.bg_temp) }} °C，
           湿度 {{ show(frame.data.value.frame.bg_rh) }} %，
           光照 {{ show(frame.data.value.frame.bg_light) }} lux。
         </p>
-        <p class="note">
+        <p class="note reading">
           这一帧的 24 路实测读数（次序：p1 的 8 个位置，然后 p2、p3）：
           <span class="num">{{ frame.data.value.frame.sensor_temps.map(show).join('、') }}</span>
         </p>
 
         <EChart v-if="v5" :option="v5" height="420px" @pick="onPick" />
-        <p v-else class="note">正在构这一帧的场…</p>
+        <p v-else class="note state">正在构这一帧的场…</p>
 
         <table v-if="readout">
           <tbody>
@@ -236,17 +237,21 @@ const readout = computed(() => {
             <tr><th>回答</th><td>{{ readout.text }}</td></tr>
           </tbody>
         </table>
-        <p v-else class="note">点一个格子看它的读数。</p>
+        <p v-else class="note state">点一个格子看它的读数。</p>
       </Card>
-      <p v-else-if="frame.loading.value" class="note">正在取这一帧…</p>
+      <p v-else-if="frame.loading.value" class="note state">正在取这一帧…</p>
 
-      <fieldset class="rail-box">
+      <fieldset class="rail-box rail-switch">
         <legend>看哪一块</legend>
-        <button
-          v-for="v in FIELD_VIEWS" :key="v.key"
-          type="button" :data-view="v.key" :class="{ on: view === v.key }"
-          @click="view = v.key"
-        >{{ v.label }}</button>
+        <!-- 与页③ 同一条分段控件（spec §九）—— 两页共用一种控件，
+             样式各写一份但规则一致，`guards.test.ts` 有一条守卫同时扫这两处。 -->
+        <div class="seg">
+          <button
+            v-for="v in FIELD_VIEWS" :key="v.key"
+            type="button" :data-view="v.key" :class="{ on: view === v.key }"
+            @click="view = v.key"
+          >{{ v.label }}</button>
+        </div>
       </fieldset>
 
       <!-- 三维那一块就是页③ 的那一块，取数口换成实时这条。切过去才懒加载它。 -->
@@ -278,8 +283,31 @@ const readout = computed(() => {
   border: var(--rule); padding: var(--gap-s);
   margin: 0 0 var(--gap-s); font-size: var(--size-note);
 }
-.rail-box button { font: inherit; cursor: pointer; }
-.rail-box button.on { font-weight: var(--w-strong); }
+/* 开关那一块：外框去掉，描边交给里面的分段控件（spec §九）。 */
+.rail-switch { border: 0; padding: 0; margin: 0 0 var(--gap-m); }
+.rail-switch > legend { padding: 0; font-size: var(--size-label); color: var(--ink-muted); }
+.seg {
+  display: flex;
+  align-items: stretch;
+  margin-top: var(--gap-s);
+  border: 1px solid var(--steel);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+.seg button {
+  flex: 1 1 auto;
+  font: inherit; cursor: pointer;
+  background: transparent;
+  border: 0; border-radius: 0;
+  padding: 3px 10px;
+  color: var(--ink-muted);
+}
+/* 圆角由首末两个按钮自己收，不用 `overflow: hidden`（会裁掉焦点环，终审 M-8）。 */
+.seg button:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.seg button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+.seg button + button { border-left: 1px solid var(--steel); }
+.seg button.on { background: var(--leaf); color: var(--paper); }
+.seg button:disabled { cursor: not-allowed; }
 .why { margin-top: var(--gap-l); }
 .why summary { font-size: var(--size-label); color: var(--ink-muted); cursor: pointer; }
 .why > p { margin-top: var(--gap-s); }

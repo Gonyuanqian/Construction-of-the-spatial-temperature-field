@@ -117,7 +117,7 @@ describe('页③ 三维面板', () => {
     // 只说「正在构体」不够 —— 这一条要的是「说清自己构的是**哪一刻**」，
     // 而那半句由 `正在构体…（{{ clockTime }}）` 提供。把它删掉，光断言
     // 「正在构体」照样绿：名字承诺的失败模式就抓不到了。
-    expect(w.text()).toContain(VOLUME.time)
+    expect(w.text()).toContain('2026-07-23 12:00')
     release()
     await flushPromises()
     expect(w.text()).not.toContain('正在构体')
@@ -127,8 +127,8 @@ describe('页③ 三维面板', () => {
     stub()
     const w = await mountView(12, '2026-07-23T17:40:00')
     expect(w.text()).toContain('画面仍是')
-    expect(w.text()).toContain(VOLUME.time)
-    expect(w.text()).toContain('2026-07-23T17:40:00')
+    expect(w.text()).toContain('2026-07-23 12:00')
+    expect(w.text()).toContain('2026-07-23 17:40')
   })
 
   it('时刻对上了就不说那句', async () => {
@@ -145,7 +145,7 @@ describe('页③ 三维面板', () => {
     await flushPromises()
     const table = w.find('table')
     expect(table.exists(), '悬停之后读数表没出现').toBe(true)
-    expect(table.text()).toContain(VOLUME.time)
+    expect(table.text()).toContain('2026-07-23 12:00')
     // 夹具里 (ix=1, iz=1) 那一格是 2（`test/fixtures.ts` 的 `makeValues()`）。
     // 用夹具自己的数，不另写一个：写死一个夹具里没有的数，这条会红，
     // 而红的原因是夹具对不上，不是功能坏了。
@@ -253,6 +253,20 @@ describe('页③ 三维面板', () => {
     const value = byMouse.match(/现场重算：[\d.]+ °C/)
     expect(value, '悬停读数里没有那句数值').toBeTruthy()
     expect(byQuery).toContain(value![0])
+  })
+
+  it('读数表里的时刻走 `fmtTime`，不把 ISO 的 T 印给人看（终审 I-3）', async () => {
+    // 这一块是页③ 与实时屏共用的三维面板；它的两张读数表原来直接铺载荷里的
+    // `2026-07-23T12:00:00`。同一页上断面读数走 `fmtTime`、三维读数不走，
+    // 「同一个数四页同一种写法」就不成立了。
+    stub()
+    // 时钟故意与载荷错开：这条要看的是**一整屏**，包括「画面仍是…」那句
+    // 里嵌着的两个时刻 —— 它们原先也是原样铺出来的。
+    const w = await mountView(12, '2026-07-23T17:40:00')
+    w.findComponent({ name: 'VolumeScene' }).vm.$emit('hover', { planeIndex: 0, ix: 1, iz: 1 })
+    await flushPromises()
+    expect(w.text(), '屏上还印着带 T 的时间戳').not.toContain('2026-07-23T')
+    expect(w.find('table').text()).toMatch(/2026-07-23 12:00/)
   })
 
   it('**坐标查询要写出吸附之后的坐标，不插值**', async () => {
