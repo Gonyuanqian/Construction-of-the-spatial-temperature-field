@@ -18,6 +18,12 @@ class FixReport:
     monotonic_after: bool
     spacing_seconds: float | None
     gaps: tuple[tuple[pd.Timestamp, pd.Timestamp], ...]   # 相邻但不满足采样间隔的两个时刻
+    #: 修复**前**的原始轴里有几个时刻是重复的（多出来的那几行，不是涉及的行数）。
+    #:
+    #: ⚠️ **只在原始文件上才有意义**：修完的轴严格递增（不递增就直接抛），
+    #: 拿修完的轴算这个数恒为 0。页① 报的是这一份数据「从哪来」，
+    #: 所以报的是原始文件里的那一份。
+    duplicate_count: int = 0
 
 
 @dataclass(frozen=True)

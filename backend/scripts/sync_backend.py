@@ -31,6 +31,12 @@ SKIP_SUFFIXES = {".pyc", ".pyo"}
 #: 计划原本算的是三条。Task 9 追加了第四条 `field/constraints.py`（见下）——
 #: 它不在计划枚举的范围里，是**接完实时帧再算场**时才暴露的：`light_at` 直接读
 #: `ds.wide[C.BG_LIGHT].iloc[t_index]`，而实时帧不在宽表里。
+#:
+#: 2026-10-06 页① 改版又追加了最后两条（用户裁定：那排卡片换成
+#: 样本数 / 样本时间范围 / 缺失样本量 / 重复样本量）。「重复样本量」要报
+#: **原始文件**里的重复时刻数，而修复前的轴在 `repair_axis` 里用完就丢了 ——
+#: 要留住它，公开类型 `FixReport` 得多一个字段。那一个决定同时落在两个文件上，
+#: 是这次改版唯一动到库的地方。
 #: （`api/` 是新项目自己的邻居包，不在 `sync_backend.py` 的比较范围里。）
 KNOWN_DIVERGENCES: dict[str, str] = {
     "data/loader.py":
@@ -42,6 +48,10 @@ KNOWN_DIVERGENCES: dict[str, str] = {
         "副本的 ti 用 len(ds.wide) 而不是写死的 C.EXPECTED_ROWS（训练段只有 1164 行）",
     "field/constraints.py":
         "副本的 light_at 走 pipe.bg_light_at 而不是 ds.wide.iloc（实时帧不在宽表里）",
+    "data/types.py":
+        "副本的 FixReport 多了 duplicate_count（页① 要报原始文件的重复时刻数）",
+    "data/timestamp.py":
+        "副本在 repair_axis 里数原始轴的重复时刻，填进 FixReport",
 }
 
 

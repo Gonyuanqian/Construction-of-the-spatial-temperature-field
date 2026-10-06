@@ -255,3 +255,16 @@ def test_dist_存在时根路径返回_index_html(tmp_path, monkeypatch):
     # health 每加一个字段（比如 spec §5.1 要的 version），两条守卫测试
     # 都要跟着改，而它们真正要守的东西一个字都没变。
     assert c.get("/api/health").json()["status"] == "ok"
+
+
+def test_数据集接口报出缺失量与重复量(client):
+    """页① 那排卡片要的四项里，有两项是这次新加的数：
+
+    缺失样本量 = 宽表里 NaN 的**格子**数（与 `check_missing` 同一口径，
+    不是「有缺失的行数」—— 两者今天都是 0，但这个数说的是前者）。
+    重复样本量 = **原始文件**里重复的时刻数（多出来的那几行）。修完的轴
+    严格递增，拿它算恒为 0，所以它必须来自修复前的原始轴。
+    """
+    body = client.get("/api/dataset").json()
+    assert body["n_missing"] == 0
+    assert body["n_dup_times"] == 4

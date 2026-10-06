@@ -50,6 +50,9 @@ def repair_axis(ts: pd.Series) -> tuple[pd.DatetimeIndex, FixReport]:
     """
     raw = pd.DatetimeIndex(pd.to_datetime(ts))
     monotonic_before = bool(raw.is_monotonic_increasing)
+    # 原始轴上的重复时刻。**必须在下面修之前算** —— 修完的轴严格递增，
+    # 再算就是恒 0。多移 8 小时的那几行里，落在列内的会撞上已有时刻。
+    duplicate_count = int(pd.Series(raw).duplicated().sum())
 
     values = list(raw)
     step = _typical_step(values)
@@ -81,5 +84,6 @@ def repair_axis(ts: pd.Series) -> tuple[pd.DatetimeIndex, FixReport]:
         monotonic_after=True,
         spacing_seconds=spacing,
         gaps=gaps,
+        duplicate_count=duplicate_count,
     )
     return idx, report

@@ -34,6 +34,7 @@ const DATASET = {
   signature: '6145fa9261e89f1b',
   file: '人参棚_多棚温湿度_气象时间对齐数据集.xlsx',
   n_times: 1308, n_columns: 52,
+  n_missing: 0, n_dup_times: 4,
   time_start: '2026-07-23T11:00:00', time_end: '2026-07-27T23:55:00',
   sheds: { p1: 3, p2: 9, p3: 15 },
   positions: [{ id: 'x0.15_z0.4', x: 0.15, z: 0.4, layer: 'z0.4' }],
@@ -111,34 +112,55 @@ describe('页① 数据导入与检查', () => {
     vi.restoreAllMocks()
   })
 
-  it('把数据集的形状原样显示出来', async () => {
+  it('一排四张卡：样本数 / 样本时间范围 / 缺失样本量 / 重复样本量', async () => {
     stub({ '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH,
            '/api/field/arch': ARCH, '/api/dataset': DATASET })
     const w = mountView()
     await flushPromises()
-    expect(w.text()).toContain('1308')
-    expect(w.text()).toContain('52')
-    expect(w.text()).toContain('6145fa9261e89f1b')
+    const cards = w.findAll('.stat')
+    expect(cards.map((c) => c.find('.label').text()))
+      .toEqual(['样本数', '样本时间范围', '缺失样本量', '重复样本量'])
+    const value = (label: string) =>
+      cards.find((c) => c.find('.label').text() === label)!.find('.value').text()
+    expect(value('样本数')).toBe('1308')
+    // 时刻走 `fmtTime`（不带 T、不带秒），两端用「至」接 —— §8.5 禁的是
+    // 破折号与中点那类装饰连接符，「至」不在禁列。
+    expect(value('样本时间范围')).toBe('2026-07-23 11:00 至 2026-07-27 23:55')
+    expect(value('缺失样本量')).toBe('0')
+    expect(value('重复样本量')).toBe('4')
   })
 
-  it('三项检查逐条渲染，证据用后端给的原话', async () => {
-    stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH,
-           '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH })
+  it('这一排卡铺浅叶色底，与页上别处的白卡分得开', async () => {
+    stub({ '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH,
+           '/api/field/arch': ARCH, '/api/dataset': DATASET })
     const w = mountView()
     await flushPromises()
-    for (const c of DATASET.checks) {
-      expect(w.text()).toContain(c.name)
-      expect(w.text()).toContain(c.evidence)
-    }
+    expect(w.find('.stats').classes(), '这一排卡没有铺浅叶底').toContain('tinted')
   })
 
-  it('被砍掉的五项在页面上看得见（Review Focus #5）', async () => {
-    stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH,
-           '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH })
+  it('「数据检查」那张表整块撤下 —— 四个数已经在上面的卡片里', async () => {
+    // 用户 2026-10-06 裁定：表去掉，内容换成页顶那排卡。接口照旧返回
+    // `checks`/`checks_note`（夹具里还在），前端不再渲染它们 ——
+    // 所以这条同时钉住了「后端那份数据不能漏到屏上」。
+    stub({ '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH,
+           '/api/field/arch': ARCH, '/api/dataset': DATASET })
     const w = mountView()
     await flushPromises()
-    expect(w.text()).toContain('卡死')
-    expect(w.text()).toContain('跨棚离群')
+    expect(w.findAll('table').length, '页① 还有一张表').toBe(0)
+    expect(w.text()).not.toContain('在查什么')
+    expect(w.text()).not.toContain('结构完整性')
+    expect(w.text()).not.toContain('跨棚离群')
+  })
+
+  it('指纹与列数不再出现在页面上', async () => {
+    // 五张卡换四张，指纹与列数都没了新位置。指纹撤下之后，页尾那两句
+    // 讲「指纹是数据集身份」的话也一并删了 —— 留着就是讲一个屏上没有的东西。
+    stub({ '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH,
+           '/api/field/arch': ARCH, '/api/dataset': DATASET })
+    const w = mountView()
+    await flushPromises()
+    expect(w.text()).not.toContain('6145fa9261e89f1b')
+    expect(w.text()).not.toContain('指纹')
   })
 
   it('后端挂了就说清是哪个接口挂了，不是一片空白', async () => {
@@ -164,41 +186,30 @@ describe('页① 数据导入与检查', () => {
     expect(w.text()).toContain('换数据集')
   })
 
-  it('数据集身份旁边带出处图章（整句在 title 上）', async () => {
+  it('四张卡各自带出处图章（屏上一个字，整句在 title 上）', async () => {
     stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH,
            '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH })
     const w = mountView()
     await flushPromises()
-    // 屏上是一个字（spec 2026-10-06 §七 降噪），整句在 title 上没丢。
-    const stamp = w.find('.prov')
-    expect(stamp.exists(), '数据集身份旁边没有出处图章').toBe(true)
-    expect(stamp.text()).toBe('算')
-    expect(stamp.attributes('title')).toContain('现场重算')
+    const stamps = w.findAll('.stat .prov')
+    expect(stamps.length, '四张卡的图章不齐').toBe(4)
+    for (const s of stamps) {
+      expect(s.text()).toBe('算')
+      expect(s.attributes('title')).toContain('现场重算')
+    }
   })
 
-  it('首屏是一排指标卡，不是一张键值表（spec §6.2）', async () => {
+  it('首屏是一排指标卡，主图在它们下面（spec §6.2）', async () => {
     stub({ '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH,
            '/api/field/arch': ARCH, '/api/dataset': DATASET })
     const w = mountView()
     await flushPromises()
     const cards = w.findAll('.stat')
-    expect(cards.length, '页① 的指标卡不是五张').toBe(5)
-    expect(cards.map((c) => c.find('.label').text()))
-      .toEqual(['个时刻', '列', '起', '止', '指纹'])
-    // 指标卡排在页面最前 —— 页① 的第一张表必须是下面那张检查表
-    const firstTable = w.find('table')
-    expect(firstTable.text(), '第一张表变成了身份表').toContain('在查什么')
-  })
-
-  it('指纹是完整的那一串，出处图章在它旁边', async () => {
-    stub({ '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH,
-           '/api/field/arch': ARCH, '/api/dataset': DATASET })
-    const w = mountView()
-    await flushPromises()
-    const fp = w.findAll('.stat').find((c) => c.find('.label').text() === '指纹')!
-    expect(fp.find('.value').text()).toBe('6145fa9261e89f1b')
-    expect(fp.find('.value').classes()).toContain('compact')
-    expect(fp.find('.prov').text()).toBe('算')
+    expect(cards.length, '页① 的指标卡不是四张').toBe(4)
+    // 长值那一格收一档字号，卡片高度不变（`compact`）；四格等宽由 StatRow 管。
+    const span = cards.find((c) => c.find('.label').text() === '样本时间范围')!
+    expect(span.find('.value').classes()).toContain('compact')
+    expect(w.findAllComponents({ name: 'EChart' }).length, '主图不见了').toBe(1)
   })
 
   it('散文折进「口径与出处」，正文里不再有裸的说明段（spec §八）', async () => {
@@ -210,7 +221,7 @@ describe('页① 数据导入与检查', () => {
     expect(why.length, '「口径与出处」不是恰好一处').toBe(1)
     expect(why[0].find('summary').text()).toContain('口径与出处')
     // 收起来的 `<details>` 内容仍在 DOM 里 —— 这正是选它而不是弹层的首要理由
-    expect(why[0].text()).toContain('卡死')
+    expect(why[0].text()).toContain('只读')
   })
 
   it('页① 只剩一张主图 —— 「昼夜与残差」整块撤下（spec §6.2 页① 修订）', async () => {

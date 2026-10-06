@@ -49,6 +49,11 @@ export interface DatasetPayload {
   file: string
   n_times: number
   n_columns: number
+  // 页① 那排卡片的两格。两个都由后端算（spec §六 硬约束 1）：
+  // `n_missing` 是缺失的**格子**数，`n_dup_times` 是**原始文件**里重复的
+  // 时刻数 —— 修完的轴严格递增，拿它算恒为 0，所以那一格必须来自修复前。
+  n_missing: number
+  n_dup_times: number
   time_start: string
   time_end: string
   sheds: Record<string, number>

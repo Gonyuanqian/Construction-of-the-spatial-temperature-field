@@ -77,3 +77,18 @@ def test_异常超过八小时则报错而不是硬修():
 
 def test_偏移量常量():
     assert TS_SHIFT == pd.Timedelta(hours=8)
+
+
+def test_报出原始文件里的重复时刻数():
+    """重复只在**修复前**的原始轴上存在 —— 修完的轴严格递增，拿它算必然恒为 0。
+
+    五处缺陷里只有四处真的撞上了已有时刻：最后那处（索引 1212）被移到
+    2026-07-28 00:00，落在这一列之外，所以它只是乱序，不构成重复。
+    """
+    _, rep = repair_axis(_corrupt(_clean()))
+    assert rep.duplicate_count == 4
+
+
+def test_干净序列的重复数是零():
+    _, rep = repair_axis(_clean())
+    assert rep.duplicate_count == 0

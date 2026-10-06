@@ -2,9 +2,8 @@
 /**
  * 页① 数据导入与检查。
  *
- * 三块，从上到下：一排指标卡 → 三项检查 → 一张分布图。
- * 次序不是排版偏好：先知道「这是哪份数据」，再看「它可不可信」，
- * 最后才谈「信号藏在哪」。反过来读的人会先看图形再发现数据是坏的。
+ * 两块，从上到下：一排指标卡 → 一张分布图。
+ * 次序不是排版偏好：先知道「这是哪份数据」，再看「信号藏在哪」。
  *
  * 2026-10-06（spec §6.2 页① 修订）：原来那张 4 行键值表换成了一排指标卡；
  * 「昼夜与残差」整块撤下 —— 用户裁定，两条折线与右侧热图共用一份图表配置，
@@ -12,6 +11,15 @@
  * 否则每开一次页① 白白多发两条请求。
  * `charts/options/diurnalResidual.ts` **保留不删**：撤下是「不用展示」，
  * 不是「不需要它」—— 它带测试、带完整规格注释，要接回来只改一处 import。
+ *
+ * 2026-10-06 二次修订（用户裁定）：那排卡片换成**样本数 / 样本时间范围 /
+ * 缺失样本量 / 重复样本量**，卡片铺 `--leaf-soft`；下面那张「数据检查」表
+ * **整块撤下**（四个数已经在上面的卡片里，同一页说两遍）。接口照旧返回
+ * `checks` / `checks_note`，这一页不再读它们。
+ *
+ * 随表一起没了去向的还有两个数：**列数**（原第三张卡）与**指纹**（原第五张卡）。
+ * 指纹撤下之后，页尾那两句讲「指纹里的绝对路径就是数据集身份」的话
+ * 也一并删了 —— 留着就是在讲一个屏上已经不存在的东西。
  *
  * **这一页不做任何计算**（硬约束 1）。连测点的 5 天均值都是后端算好送来的，
  * 图表里的每一个数都能追到后端某一行。
@@ -55,35 +63,22 @@ const failure = computed(() =>
 
     <p v-if="failure" role="alert" class="alert">{{ failure }}</p>
 
-    <!-- 1. 指标卡片一排（spec §6.2 页①，取代原来那张 4 行键值表） -->
-    <StatRow v-if="ds.data.value">
-      <StatCard label="个时刻" :value="fmtInt(ds.data.value.n_times)" prov="live" />
-      <StatCard label="列" :value="fmtInt(ds.data.value.n_columns)" prov="live" />
-      <StatCard label="起" :value="fmtTime(ds.data.value.time_start)" prov="live" compact />
-      <StatCard label="止" :value="fmtTime(ds.data.value.time_end)" prov="live" compact />
-      <StatCard label="指纹" :value="ds.data.value.signature" prov="live" compact />
+    <!-- 指标卡片一排（spec §6.2 页①）。四个数**全部由后端算**（硬约束 1）：
+         前端一处加法都没有，这里只把它们排成一排。
+         铺浅叶底（`tint`）是为了与页上别处的白卡分得开 —— 这一排是「这份数据的
+         体检结论」，白卡是「内容」。 -->
+    <StatRow v-if="ds.data.value" tint>
+      <StatCard label="样本数" :value="fmtInt(ds.data.value.n_times)" prov="live" />
+      <StatCard
+        label="样本时间范围"
+        :value="`${fmtTime(ds.data.value.time_start)} 至 ${fmtTime(ds.data.value.time_end)}`"
+        prov="live" compact
+      />
+      <StatCard label="缺失样本量" :value="fmtInt(ds.data.value.n_missing)" prov="live" />
+      <StatCard label="重复样本量" :value="fmtInt(ds.data.value.n_dup_times)" prov="live" />
     </StatRow>
 
-    <!-- 2. 三项检查 -->
-    <Card v-if="ds.data.value" class="block">
-      <h3>数据检查</h3>
-      <table>
-        <thead>
-          <tr><th>#</th><th>检查</th><th>在查什么</th><th>结论</th><th>证据</th></tr>
-        </thead>
-        <tbody>
-          <tr v-for="c in ds.data.value.checks" :key="c.no">
-            <td class="num">{{ c.no }}</td>
-            <td>{{ c.name }}</td>
-            <td class="note">{{ c.what }}</td>
-            <td :class="c.status === 'ok' ? 'ok' : 'warn'">{{ c.status === 'ok' ? '通过' : '注意' }}</td>
-            <td class="num">{{ c.evidence }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </Card>
-
-    <!-- 3. 主图（页① 只剩这一张 —— 「昼夜与残差」已整块撤下） -->
+    <!-- 主图（页① 只剩这一张 —— 「昼夜与残差」已整块撤下） -->
     <Card class="block">
       <h3>测点的空间分布</h3>
       <EChart v-if="v1" :option="v1" height="300px" />
@@ -100,10 +95,10 @@ const failure = computed(() =>
         一次，界面上还没有入口，和「空间温度场的构建」一样排在后续计划里。
       </p>
       <p class="note">
-        指纹里的绝对路径是数据集身份的一部分：换了位置就是另一个身份，
-        标定包也会跟着失效。
+        重复样本量说的是原始文件里的重复时刻：那是已知缺陷（每天 16:00 的行被写成
+        次日 00:00），读进来时已按 8 小时回退修好，所以下面的图与数都是修复之后的。
+        缺失样本量是整张宽表里没有值的格子数。
       </p>
-      <p class="note">{{ ds.data.value?.checks_note }}</p>
       <p class="note">
         三座棚并排，标注是该测点的全时段均值（后端算的）。
         虚线以上是 z = 1.10 m 以上的无测量带：那里没有任何传感器，不报数。

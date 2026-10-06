@@ -138,6 +138,19 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
     expect(child, '一排的每一张卡没有最小宽度').toMatch(/min-width:\s*\d+px/)
   })
 
+  it('页① 那排卡的浅叶底走令牌，而且只改底色', () => {
+    // 2026-10-06 用户裁定：页① 那排卡换成四个数，并铺 `--leaf-soft`。
+    // 这条守两件事：
+    // ① 色必须从令牌来。写成十六进制会被上面那条全局守卫拦下，但**换一个
+    //    令牌**不会 —— 那同样把「这一排是体检结论、别处是内容」说没了。
+    // ② 只许动 background。圆角与阴影全站各一档（spec §四），在一条
+    //    tinted 规则里偷偷加第二种，正是那个 SaaS 套装的招牌。
+    const text = readFileSync(join(SRC, 'components', 'StatRow.vue'), 'utf8')
+    const rule = text.match(/\.stats\.tinted[^{]*\{[^}]*\}/)?.[0] ?? ''
+    expect(rule, 'StatRow 里没有浅叶底那条规则').toContain('var(--leaf-soft)')
+    expect(rule, '浅叶底那一条只该改背景色').not.toMatch(/border-radius|box-shadow/)
+  })
+
   it('palette.ts 只按名字读令牌，不重打一遍色值', () => {
     // 图表要的是真颜色字符串（canvas 不认 var(--ink)），所以 palette.ts 得把
     // 令牌读成值。但**读**不等于**抄**：色值只在 tokens.css 里存在一次。

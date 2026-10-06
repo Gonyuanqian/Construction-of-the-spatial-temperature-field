@@ -27,6 +27,16 @@ def get_dataset() -> dict[str, Any]:
         "file": path.name,
         "n_times": int(ds.wide.shape[0]),
         "n_columns": int(ds.wide.shape[1]),
+        # 页① 那排卡片要的另外两格。**都由后端算**：前端不做任何数值计算。
+        #
+        # `n_missing` 是缺失的**格子**数（不是「有缺失的行数」），与
+        # `ported.check_missing` 同一口径 —— 同一屏上两个「缺失」必须是一个意思。
+        #
+        # `n_dup_times` 来自修复**前**的原始轴（`FixReport.duplicate_count`）。
+        # 修完的轴严格递增（不递增就直接抛），拿它算这个数恒为 0 —— 那样这一格
+        # 就成了一句永远不变的套话，而不是「这份数据从哪来」。
+        "n_missing": int(ds.wide.isna().sum().sum()),
+        "n_dup_times": int(ds.fix.duplicate_count),
         "time_start": ts.iloc[0].isoformat(),
         "time_end": ts.iloc[-1].isoformat(),
         "sheds": {s: float(y) for s, y in ds.sheds.items()},

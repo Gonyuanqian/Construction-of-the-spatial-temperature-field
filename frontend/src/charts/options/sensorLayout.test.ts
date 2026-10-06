@@ -17,6 +17,7 @@ const ARCH: ArchPayload = {
 function ds(positions = 8): DatasetPayload {
   return {
     signature: 'x', file: 'f.xlsx', n_times: 1308, n_columns: 52,
+    n_missing: 0, n_dup_times: 0,
     time_start: '', time_end: '',
     sheds: { p1: 3, p2: 9, p3: 15 },
     positions: Array.from({ length: positions }, (_, i) => ({
