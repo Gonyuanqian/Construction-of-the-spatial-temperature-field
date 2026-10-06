@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { useAsync } from './useAsync'
+import { ApiError } from '../api/client'
 
 describe('useAsync', () => {
   it('成功后 data 有值、error 为空、loading 归位', async () => {
@@ -31,6 +32,27 @@ describe('useAsync', () => {
     fail = false
     await run()
     expect(error.value).toBe('')
+  })
+
+  it('把状态码带出来 —— 页① 要拿它把「还没导入」与「出错了」分开', async () => {
+    // `error` 只有一个字符串，`409` 与 `500` 在它眼里长得一样。而这两种错
+    // 必须分得开：把 500 说成「你还没开始」，会让用户去导一份数据集来解决
+    // 一个后端没起来的问题（规格书 §二.1）。
+    const { status, run } = useAsync(async () => {
+      throw new ApiError('还没有导入数据集。', 409)
+    })
+    expect(status.value).toBe(0)
+    await run()
+    expect(status.value).toBe(409)
+  })
+
+  it('不是 ApiError 的错，状态码是 0（不是某个 HTTP 码）', async () => {
+    // `0` 是本仓 `ApiError` 表示「连不上」的那个值，这里再借它一次表示
+    // 「这个错压根没有状态码」。**不能借 409** —— 那会让一个连不上的错
+    // 被当成空态。
+    const { status, run } = useAsync(async () => { throw new Error('连不上后端') })
+    await run()
+    expect(status.value).toBe(0)
   })
 
   it('两次并发只留最后一次的结果（防止旧响应盖掉新的）', async () => {

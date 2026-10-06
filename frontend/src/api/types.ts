@@ -429,3 +429,13 @@ export interface VolumePayload {
   elapsed_ms: number
   note: string
 }
+
+/** 导入成功后后端给的那一份摘要（规格书 §4.3）。**不是** `GET /api/dataset` 的整份载荷。 */
+export interface UploadResult {
+  signature: string
+  file: string
+  n_times: number
+  n_columns: number
+  time_start: string
+  time_end: string
+}

@@ -12,12 +12,13 @@
 import { ref, type Ref } from 'vue'
 
 import { ApiError, getJson } from '../api/client'
-import type { DatasetPayload } from '../api/types'
+import type { DatasetPayload, UploadResult } from '../api/types'
 
 export type DatasetState = 'probing' | 'ok' | 'missing' | 'error'
 
 const state = ref<DatasetState>('probing')
 const version = ref(0)
+const lastImport = ref<UploadResult | null>(null)
 
 async function probe(): Promise<void> {
   try {
@@ -42,8 +43,15 @@ async function probe(): Promise<void> {
  * 清掉别的状态（页② 上用户选的特征组），而那与换数据集无关。
  *
  * 状态直接置 `ok` 而不重新探测：导入刚刚成功，那个事实是确定的。
+ *
+ * ⚠️ **`result` 也存在这个单例里，不是页① 自己的 `ref`。** 上面那个版本号
+ * 会把页① 当场卸掉再挂一次，搁在组件里的摘要会**在写上去的同一瞬间被
+ * 自己的重挂载抹掉** —— 于是规格书 §五 要的那一行「当前数据集：…」
+ * 在真机上只闪一帧就没了。而只看 `DataView` 的测试（没有 `RouterView`）
+ * 看不见这件事：它挂着的那个实例根本不会被卸掉。
  */
-function onImported(): void {
+function onImported(result: UploadResult): void {
+  lastImport.value = result
   state.value = 'ok'
   version.value += 1
 }
@@ -52,16 +60,19 @@ function onImported(): void {
 function reset(): void {
   state.value = 'probing'
   version.value = 0
+  lastImport.value = null
 }
 
 export interface DatasetStatus {
   state: Ref<DatasetState>
   version: Ref<number>
+  /** 最近一次导入的摘要（规格书 §五 那一行）。跨重挂载活着，刷新页面才没。 */
+  lastImport: Ref<UploadResult | null>
   probe: () => Promise<void>
-  onImported: () => void
+  onImported: (result: UploadResult) => void
   reset: () => void
 }
 
 export function useDataset(): DatasetStatus {
-  return { state, version, probe, onImported, reset }
+  return { state, version, lastImport, probe, onImported, reset }
 }

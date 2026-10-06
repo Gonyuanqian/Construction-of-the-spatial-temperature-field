@@ -92,6 +92,25 @@ export const NO_DATASET = {
   why: '到「数据导入与检查」那一页选一份 xlsx 导入，这一页的内容都按它算出来。',
 } as const
 
+/**
+ * 导入块（页① 的第一块，规格书 §五）。**空态下这是全系统唯一可用的一块。**
+ *
+ * `done` 后面拼出来的整句是规格书定死的形状：
+ * 「当前数据集：<文件名>，<N> 个时刻，<起始> 至 <结束>」。
+ *
+ * ⚠️ `hint` 里**不写 `②③④`**（计划原文写的是它们）：那是规格书自己的页码
+ * 记法，屏幕上的读者只有导航栏上那几个页名 —— 本仓别的文案一律按页名称呼
+ * 别的页面（`NO_DATASET.why` 说的就是「数据导入与检查」那一页）。一个只在
+ * 规格书里存在的记号印到屏上，等于让读者去翻规格书。
+ */
+export const IMPORT = {
+  title: '数据集导入',
+  hint: '选一份 xlsx。导入之后，这一份就是全系统在用的数据，各页内容都按它重新算一遍。',
+  idle: '导入',
+  busy: '正在导入…',
+  done: '当前数据集',
+} as const
+
 export type ProvKind = keyof typeof PROV
 
 export type ModeItem = (typeof MODES)[number]

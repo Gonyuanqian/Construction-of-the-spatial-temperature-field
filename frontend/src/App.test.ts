@@ -132,6 +132,12 @@ describe('数据集闸门与重挂载', () => {
 
   const JSON_HEAD = { 'Content-Type': 'application/json' }
 
+  /** 一份导入摘要。文件名与 `PAGE_PAYLOADS['/api/dataset']` 里那份**故意不同**。 */
+  const IMPORTED = {
+    signature: '新', file: '人参棚 副本.xlsx', n_times: 1308, n_columns: 52,
+    time_start: '2026-07-23T11:00:00', time_end: '2026-07-27T23:55:00',
+  }
+
   /**
    * 一个记请求的替身：`calls` 里是每一条请求的 URL。
    *
@@ -211,11 +217,29 @@ describe('数据集闸门与重挂载', () => {
     const before = calls.filter((u) => u.includes('/api/features')).length
     expect(before, '页② 一开始就没取数，这条测试守不住任何东西').toBeGreaterThan(0)
 
-    useDataset().onImported()
+    useDataset().onImported(IMPORTED)
     await flushPromises()
     await flushPromises()
 
     const after = calls.filter((u) => u.includes('/api/features')).length
     expect(after, '导入之后页② 没有被重新挂载').toBeGreaterThan(before)
+  })
+
+  it('重挂载之后，页① 那一行「当前数据集」还在', async () => {
+    // ⚠️ 这一条**只有在这里测得出来**。`DataView.test.ts` 直接 mount 页①，
+    // 没有 `RouterView`、没有 `:key`，那个实例根本不会被卸掉 —— 于是
+    // 「摘要是组件里的 ref」这个写法在那里是**全绿**的，而在真机上那一行
+    // 会在写上去的同一瞬间被自己的重挂载抹掉。
+    //
+    // 文件名故意与 `/api/dataset` 载荷里的那份不同（载荷里是下划线那份）：
+    // 找得到它，就证明它来自导入摘要，而不是取数回来的载荷。
+    stubCounting(200)
+    const w = await mountAt('/data')
+    useDataset().onImported(IMPORTED)
+    await flushPromises()
+    await flushPromises()
+
+    expect(w.text()).toContain('人参棚 副本.xlsx')
+    expect(w.text()).toContain('1308 个时刻')
   })
 })

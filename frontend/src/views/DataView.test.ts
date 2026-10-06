@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
 import DataView from './DataView.vue'
+import { useDataset } from '../composables/useDataset'
 
 /**
  * 两件测试环境的事，都在这里备好（Ruling P5）：
@@ -115,6 +116,9 @@ describe('页① 数据导入与检查', () => {
   beforeEach(() => {
     installEnvironment()
     vi.restoreAllMocks()
+    // 数据集单例是模块级的：页① 现在会读它的 `lastImport`，不清就等于让
+    // 结果取决于文件里谁先跑。
+    useDataset().reset()
   })
 
   it('一排四张卡：样本数 / 样本时间范围 / 缺失样本量 / 重复样本量', async () => {
@@ -178,17 +182,17 @@ describe('页① 数据导入与检查', () => {
     expect(w.text()).toContain('数据集不存在')
   })
 
-  it('页① 说清了「换数据集」这块还没有入口', async () => {
-    // 页名与导航标签是「数据导入与检查」，spec §2.1 的第 1 块也确实是
-    // 「数据集导入 —— 换数据集」。但本轮只交付了**只读的**身份卡，没有换数据集的
-    // 入口（那要新接口、缓存失效、以及指纹一变 ②③④ 全锁的一整套，不在本轮）。
-    // 名字许诺了、界面上没有、还不说 —— 这正是「被砍掉的五项检查」那条
-    // Review Focus 的同一形态，所以按同样的办法钉住：**自己说出来**。
+  it('页尾那段「还没有入口」的话已经删掉 —— 现在入口就在页顶', async () => {
+    // 这条**取代**了原来那条「页① 说清了『换数据集』这块还没有入口」。
+    // 那条钉的是「名字许诺了、界面上没有、还不说」；现在界面上有了
+    // （页顶的导入块），那句话就成了一句**当着入口说没有入口**的话 ——
+    // 比不说更坏。所以改钉它的反面：旧话不许残留。
     stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH,
            '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH })
     const w = mountView()
     await flushPromises()
-    expect(w.text()).toContain('换数据集')
+    expect(w.text()).not.toContain('还没有入口')
+    expect(w.find('input[type="file"]').exists(), '页顶没有导入块').toBe(true)
   })
 
   it('四张卡各自带出处图章（屏上一个字，整句在 title 上）', async () => {
@@ -259,5 +263,197 @@ describe('页① 数据导入与检查', () => {
     await flushPromises()
     expect(asked.some((u) => u.includes('/api/dataset/timeseries'))).toBe(false)
     expect(asked.some((u) => u.includes('/api/dataset/layer-timeheight'))).toBe(false)
+  })
+})
+
+describe('页① 第一块：数据导入', () => {
+  beforeEach(() => {
+    installEnvironment()
+    vi.restoreAllMocks()
+    // 单例是模块级的，会跨用例留下上一次的版本号 —— 不清就等于让用例的
+    // 结果取决于文件里谁先跑。
+    useDataset().reset()
+  })
+
+  /** 一次「选中文件」：把一个 File 塞进 input，再触发 change。 */
+  async function pickFile(w: ReturnType<typeof mountView>, name = '人参棚 副本.xlsx') {
+    const input = w.find('input[type="file"]')
+    const file = new File([new Uint8Array([1, 2, 3])], name)
+    Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
+    await input.trigger('change')
+    return file
+  }
+
+  it('没选文件时按钮是禁用的 —— 不是一个点了没反应的按钮', async () => {
+    stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH })
+    const w = mountView()
+    await flushPromises()
+    const btn = w.find('button.import')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('disabled')).toBeDefined()
+  })
+
+  it('导入成功后写一行身份，并让外壳重挂载', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).includes('/api/dataset/upload')) {
+        expect(init?.method).toBe('POST')
+        return new Response(JSON.stringify({
+          signature: '新', file: '人参棚 副本.xlsx', n_times: 1308, n_columns: 52,
+          time_start: '2026-07-23T11:00:00', time_end: '2026-07-27T23:55:00',
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response(JSON.stringify(
+        String(url).includes('/api/field/arch') ? ARCH : DATASET), {
+        status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const before = useDataset().version.value
+    const w = mountView()
+    await flushPromises()
+    await pickFile(w)
+    await w.find('button.import').trigger('click')
+    await flushPromises()
+
+    expect(w.text()).toContain('人参棚 副本.xlsx')
+    // 四个数全部来自上传响应，前端一处加法都没有。
+    expect(w.text()).toContain('1308')
+    expect(w.text()).toContain('2026-07-23 11:00 至 2026-07-27 23:55')
+    // 外壳的版本号前进了 —— 当前挂着的那一页（就是这一页）随组件一起
+    // 被丢掉再挂一次，页面上任何一处旧 datum 都不可能留在原处。
+    expect(useDataset().version.value).toBe(before + 1)
+  })
+
+  it('导入中按钮禁用并写「正在导入…」，不做假进度条', async () => {
+    let release: (() => void) | null = null
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('/api/dataset/upload')) {
+        await new Promise<void>((res) => { release = res })
+        return new Response(JSON.stringify({
+          signature: '新', file: 'a.xlsx', n_times: 1, n_columns: 2,
+          time_start: '2026-07-23T11:00:00', time_end: '2026-07-23T11:00:00',
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response(JSON.stringify(
+        String(url).includes('/api/field/arch') ? ARCH : DATASET), {
+        status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const w = mountView()
+    await flushPromises()
+    await pickFile(w)
+    await w.find('button.import').trigger('click')
+    await flushPromises()
+
+    const btn = w.find('button.import')
+    expect(btn.text()).toContain('正在导入')
+    expect(btn.attributes('disabled')).toBeDefined()
+    // 这一句是**文字**，不是进度条：假进度条只会撒谎。
+    expect(w.find('progress').exists()).toBe(false)
+    expect(w.find('[role="progressbar"]').exists()).toBe(false)
+
+    release!()
+    await flushPromises()
+    expect(w.find('button.import').text()).toContain('导入')
+  })
+
+  it('失败时把后端那句话原样摆出来，并且不动版本号', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('/api/dataset/upload')) {
+        return new Response('{"detail":"这份文件读不成数据集：KeyError: 宽表"}', {
+          status: 400, headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response(JSON.stringify(
+        String(url).includes('/api/field/arch') ? ARCH : DATASET), {
+        status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const before = useDataset().version.value
+    const w = mountView()
+    await flushPromises()
+    await pickFile(w)
+    await w.find('button.import').trigger('click')
+    await flushPromises()
+
+    const alert = w.find('[role="alert"]')
+    expect(alert.exists(), '导入失败没有 role="alert"').toBe(true)
+    expect(alert.text()).toContain('KeyError: 宽表')
+    // 失败不算导入成功 —— 版本号不动，界面不许重挂载（否则用户会以为成了）
+    expect(useDataset().version.value).toBe(before)
+  })
+
+  it('导入块在页① 的最上面 —— 这是系统的起点', async () => {
+    stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH })
+    const w = mountView()
+    await flushPromises()
+    const h3s = w.findAll('h3').map((h) => h.text())
+    expect(h3s[0]).toContain('导入')
+  })
+
+  it('这一块的文案没有禁用字形', async () => {
+    stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH })
+    const w = mountView()
+    await flushPromises()
+    for (const bad of ['——', '**', '`', ' · ', '→', '↳']) {
+      expect(w.text(), `出现了被禁的 ${JSON.stringify(bad)}`).not.toContain(bad)
+    }
+  })
+})
+
+describe('页① 的空态：只有导入块，没有一句告警', () => {
+  beforeEach(() => {
+    installEnvironment()
+    vi.restoreAllMocks()
+    useDataset().reset()
+  })
+
+  /** 后端在没导入数据集时的原话（`api/errors.py` 的 `NO_DATASET_DETAIL`）。 */
+  const NO_DATASET = '还没有导入数据集。到「数据导入与检查」那一页导入一份 xlsx。'
+
+  function stubEmpty() {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('/api/field/arch')) {
+        return new Response(JSON.stringify(ARCH), {
+          status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      // `/api/field/arch` 是纯常量，空态下**照常 200**。所以这一页的
+      // 空态不是「全挂」，而是「数据集那一路 409、几何那一路好好的」。
+      return new Response(JSON.stringify({ detail: NO_DATASET }), {
+        status: 409, headers: { 'Content-Type': 'application/json' } })
+    }))
+  }
+
+  it('没有 role="alert" —— 空态是起点，不是故障', async () => {
+    // 这是**验收的人第一次打开系统**看到的画面。把 409 原样摆成一条告警，
+    // 他会以为哪里坏了（规格书 §二.1：空态是系统的起点）。
+    stubEmpty()
+    const w = mountView()
+    await flushPromises()
+    expect(w.findAll('[role="alert"]').length, '空态下出现了告警').toBe(0)
+    expect(w.text()).not.toContain('还没有导入数据集')
+  })
+
+  it('导入块在，其余三块都不在 —— 空态下它是唯一可用的一块', async () => {
+    stubEmpty()
+    const w = mountView()
+    await flushPromises()
+    expect(w.find('input[type="file"]').exists()).toBe(true)
+    expect(w.find('button.import').exists()).toBe(true)
+    // 指标卡（没数据可报）、主图（没几何可画）、口径与出处（里面那句
+    // 「数据集：」会印成一个空值）—— 三块在空态下都没有可说的东西。
+    expect(w.findAll('.stat').length).toBe(0)
+    expect(w.findAllComponents({ name: 'EChart' }).length).toBe(0)
+    expect(w.findAll('details').length).toBe(0)
+    // 那句「测点或几何没取到」是在指一条并不存在的上方提示。
+    expect(w.text()).not.toContain('没取到')
+  })
+
+  it('500 照旧报出来 —— 只有 409 才是空态', async () => {
+    // 把 500 也吞成空态，就等于让用户去导一份数据集来解决一个后端没起来的
+    // 问题 —— 这正是规格书 §二.1 点名要分开的两种错。
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      '{"detail":"Internal Server Error"}',
+      { status: 500, headers: { 'Content-Type': 'application/json' } })))
+    const w = mountView()
+    await flushPromises()
+    expect(w.find('[role="alert"]').exists()).toBe(true)
+    expect(w.text()).toContain('Internal Server Error')
+    expect(w.findAll('details').length, '500 不该被当成空态').toBe(1)
   })
 })
