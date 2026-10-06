@@ -18,15 +18,37 @@
  * 是全程唯一「不提数据」的一列 —— 演示时它只是噪声，而且「实时源的状态」
  * 才是这一屏要说的事。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import ModeSwitch from './components/ModeSwitch.vue'
 import NavRail from './components/NavRail.vue'
+import NoDataset from './components/NoDataset.vue'
 import TitleBar from './components/TitleBar.vue'
+import { useDataset } from './composables/useDataset'
 
 const route = useRoute()
 const router = useRouter()
+
+/** 数据集的状态与版本号。**全前端唯一一次探测**（规格书 §六、硬约束 3）。 */
+const dataset = useDataset()
+onMounted(() => { void dataset.probe() })
+
+/**
+ * 空态闸门。**判断只在这一处** —— ②③④ 与实时模式各写一遍就是五处判断，
+ * 而它们一定会分家（四个页面说没数据、一个页面说有）。
+ *
+ * 页① 例外：它就是那个入口，空态下它渲染导入块，不渲染空态提示。
+ *
+ * ⚠️ `state === 'missing'` 而不是「不是 ok」：`probing` 与 `error` 都不该
+ * 走这条路 —— 后者的代价最重，它会把「后端挂了」说成「你还没开始」，
+ * 让用户去导一份数据集来解决一个后端没起来的问题。
+ *
+ * `probing` 走的这一条**有个代价，写在明面上**：探测落地之前页面会真挂一次、
+ * 真取一次数。拿它换的是「已经导过数据集的人不会先看见一屏『先导入数据集』」。
+ * 两害相权，取后者 —— 一瞬的取数没人看得见，一瞬的假空态每个人都会看见。
+ */
+const gate = computed(() => dataset.state.value === 'missing' && route.path !== '/data')
 
 /** 训练模式最后停留的那一页。切回来还回这里 —— 演示时不用重新点一遍。 */
 const lastTrainPath = ref('/data')
@@ -52,7 +74,8 @@ const showRail = computed(() => route.meta.rail !== false)
   <div class="body">
     <NavRail v-if="showRail" />
     <main class="page">
-      <RouterView />
+      <RouterView v-if="!gate" :key="dataset.version.value" />
+      <NoDataset v-else />
     </main>
   </div>
 </template>

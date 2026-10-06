@@ -78,6 +78,20 @@ export const PROV = {
   test: { mark: '测', why: '只有验收测试守（界面上不校验，靠后端测试钉住的数）' },
 } as const
 
+/**
+ * 空态那一句话。**五个页面共用同一句**（规格书 §六）。
+ *
+ * 与 `PROV` 同一个理由：五个页面各写一句，迟早漂成五种说法 ——
+ * 而用户看到的是「系统有五个地方没数据」，实际只有一件事没做。
+ *
+ * ⚠️ 这**不是错误文案**：空态是系统的起点。所以这里不出现「错误」「失败」，
+ * 也不出现状态码 —— `NoDataset.test.ts` 逐条守着这三样。
+ */
+export const NO_DATASET = {
+  headline: '先导入数据集',
+  why: '到「数据导入与检查」那一页选一份 xlsx 导入，这一页的内容都按它算出来。',
+} as const
+
 export type ProvKind = keyof typeof PROV
 
 export type ModeItem = (typeof MODES)[number]

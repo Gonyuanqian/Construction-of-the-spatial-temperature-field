@@ -90,3 +90,76 @@ export function makeLiveFramePayload(over: Partial<LiveFramePayload> = {}): Live
     ...over,
   }
 }
+
+
+/**
+ * 每个接口的**最小可用载荷**，按路径前缀索引。
+ *
+ * **为什么是共享的**：`routes.smoke.test.ts` 与 `App.test.ts` 都要把整个外壳
+ * （进而把某一页）挂起来，而挂起来就会取数。两份各写一遍的话，后写的那份
+ * 一定会少一两个字段 —— 而缺字段的表现是**某页在渲染中途抛**，报错离「少了一个
+ * mock 字段」这件事很远（`DataView.test.ts` 顶部记过同一个坑）。
+ *
+ * 取值的原则是「**能让每一页不抛就算数**」，不是「像真的」：这一组要测的是
+ * 外壳与路由，不是任何一页的内容。
+ *
+ * ⚠️ `/api/dataset` 在这张表里是 **200**（「在用一份数据集」）。空态那几条用例
+ * 由 `App.test.ts` 自己覆盖成 409/500 —— 它要的正是这个开关。
+ */
+export const PAGE_PAYLOADS: Record<string, unknown> = {
+  '/api/health': { status: 'ok', version: '0.1.0' },
+  '/api/dataset': {
+    signature: 's', file: 'f.xlsx', n_times: 1, n_columns: 1,
+    time_start: 't', time_end: 't',
+    sheds: { p1: 3 }, positions: [], point_codes: {}, temperature: [],
+    fix: { n_rows: 1, fixed_indices: [], monotonic_before: true,
+           monotonic_after: true, spacing_seconds: 300, n_gaps: 0 },
+    checks: [], checks_note: '',
+  },
+  '/api/field/arch': {
+    x_min: 0, x_max: 2.1, z_max: 1.3017, max_measured_z: 1.1,
+    arch: [[0, 0.4535]], sheds: [{ id: 'p1', y: 3 }],
+  },
+  '/api/dataset/timeseries': {
+    n_times: 0, time: [], bg_temp: [], sensors: {}, shed_mean: {},
+    detrended: {}, detrended_mean: {}, detrended_domain: [-3, 3], note: '',
+  },
+  '/api/dataset/layer-timeheight': {
+    step: 1, n_times: 0, n_columns: 0, time: [], x_label: '', source: '', sheds: {},
+  },
+  '/api/features': {
+    default_groups: [], groups: [], all_columns: [],
+    // 后端给的全列计数。前端不许用 `all_columns.length` 自己数，
+    // 所以 mock 里也必须给 —— 缺了它页面会静默渲染 `undefined`，
+    // 而测试照样绿。这里与 `all_columns: []` 自洽：并集长度 0。
+    n_all_columns: 0,
+    notes: [],
+  },
+  '/api/calibration': {
+    present: false, reason: '还没有标定包', created_at: null, tool_version: null,
+    groups_sig: null, dataset_sig: 's', feature_groups: [], trend_kind: 'xgboost',
+    tuned_keys: [], params: [], plateau: [], lz_note: null,
+    metrics: [], per_point: [], ab: null, fold_kind: null, n_folds: 0,
+    worst_fold: null, ab_note: '', note: '兜底参数不是最优',
+  },
+  // 实时那一屏（`/live` 不进 NAV_ITEMS，逐页循环扫不到它）。**两条都给**：
+  // 只给 status 的话，状态条一准备好页面就去取帧、拿到 404，帧那一块
+  // （气象、24 路读数、分级那几句）根本渲染不出来。
+  '/api/live/status': makeLiveStatus({ state: 'ready', running: false, cursor: 3, total: 144 }),
+  '/api/live/frame/': makeLiveFramePayload(),
+}
+
+/**
+ * 按**最长前缀**匹配回答的路径表查找。
+ *
+ * ⚠️ 用 `find` 而不用最长匹配的话，`/api/dataset` 会把
+ * `/api/dataset/timeseries` 与 `/api/dataset/layer-timeheight` 一起吃掉 ——
+ * 图表构造器里再报错，离现场很远。
+ */
+export function matchPayload(url: string,
+                             table: Record<string, unknown> = PAGE_PAYLOADS): unknown | undefined {
+  const key = Object.keys(table)
+    .filter((k) => url.includes(k))
+    .sort((a, b) => b.length - a.length)[0]
+  return key ? table[key] : undefined
+}

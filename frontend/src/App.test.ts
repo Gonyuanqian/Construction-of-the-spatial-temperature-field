@@ -1,17 +1,29 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory } from 'vue-router'
 
 import App from './App.vue'
 import { createAppRouter } from './router'
 import { NAV_ITEMS, SYSTEM_TITLE } from './design/copy'
+import { useDataset } from './composables/useDataset'
+import { matchPayload, PAGE_PAYLOADS } from './test/fixtures'
 
 /**
  * 这一组测的是外壳，但它经 RouterView 把页①（DataView）也挂了起来，
  * 而页① 现在要用调色板（Ruling P5）：jsdom 不加载 tokens.css，`readPalette()`
- * 读不到就抛。所以外壳测试也得先把令牌装上。EChart 在这一组里不会挂载
- * （页① 的数据接口回 404，v1/v2 都是 null），故不需要 ResizeObserver 夹具。
+ * 读不到就抛。所以外壳测试也得先把令牌装上。
+ *
+ * ⚠️ **EChart 要换掉**（与 `routes.smoke.test.ts` 同一手法）。原来这一组不需要它
+ * —— 页① 的数据接口回 404，两张图都是 null，图表压根不挂。`数据集闸门`那一段
+ * 起不了这个作用：它喂的是真形状载荷，两张图会真的去 mount，而 jsdom 没有
+ * canvas，zrender 会抛 `Cannot read properties of null (reading 'clearRect')`。
+ * 那一抛还是**未捕获异常** —— 会把跑在它前后的用例一起带红，
+ * 报错位置与真正的原因隔得很远。`vi.mock` 会被提升到文件顶端，
+ * 所以它对整个文件生效；这与外壳测试要测的东西无关。
  */
+vi.mock('./charts/EChart.vue', () => ({
+  default: { name: 'EChart', props: ['option'], template: '<div />' },
+}))
 function installTokens() {
   const root = document.documentElement
   root.style.setProperty('--paper', '#F7F6F2')
@@ -107,5 +119,103 @@ describe('应用外壳', () => {
     // （同文件好几条用例都用着这个 helper，不动它的签名），所以上面那句从组件
     // 实例上读它挂着的那个 `$route`。
     expect(w.find('nav[aria-label="页面"]').exists()).toBe(false)
+  })
+})
+
+
+describe('数据集闸门与重挂载', () => {
+  // 外壳要挂到 document.body 上：页③ 有一个 `<Teleport to="#rail-extra">` 落点，
+  // 而字符串选择器的落点是在 **document** 上用 `querySelector` 找的 ——
+  // 游离挂载时找不到落点，Teleport 子树一个都不挂载，下一次重渲染就对着
+  // 从未挂载的旧 vnode 调 `patchElement` → 崩。与 routes.smoke.test.ts 同一个理由。
+  enableAutoUnmount(afterEach)
+
+  const JSON_HEAD = { 'Content-Type': 'application/json' }
+
+  /**
+   * 一个记请求的替身：`calls` 里是每一条请求的 URL。
+   *
+   * ⚠️ **除 `/api/dataset` 之外一律喂真形状**（`PAGE_PAYLOADS`），不是 `{}`。
+   * 因为闸门在 `probing` 那一瞬是**开着的**（见 App.vue 的注释）—— 页面会先
+   * 真的挂一次并取数。喂 `{}` 的话，`features.default_groups.join()` 这类
+   * 取值会当场抛，而报错看起来像「闸门写错了」。
+   */
+  function stubCounting(datasetStatus: number) {
+    const calls: string[] = []
+    // 只认**整条** `/api/dataset`：它是 `/api/dataset/timeseries` 的前缀，
+    // 用 includes 会把那两张图的取数一起打成 409。
+    const isProbe = (u: string) => /\/api\/dataset$/.test(u)
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const s = String(url)
+      calls.push(s)
+      if (isProbe(s)) {
+        return new Response(
+          JSON.stringify(datasetStatus === 200
+            ? PAGE_PAYLOADS['/api/dataset']
+            : { detail: '还没有导入数据集。' }),
+          { status: datasetStatus, headers: JSON_HEAD })
+      }
+      const hit = matchPayload(s)
+      return new Response(JSON.stringify(hit ?? {}), {
+        status: hit === undefined ? 404 : 200, headers: JSON_HEAD })
+    }))
+    return calls
+  }
+
+  async function mountAt(path: string) {
+    const router = createAppRouter(createMemoryHistory())
+    await router.push(path)
+    await router.isReady()
+    const w = mount(App, { attachTo: document.body, global: { plugins: [router] } })
+    await flushPromises()
+    return w
+  }
+
+  beforeEach(() => {
+    installTokens()
+    vi.restoreAllMocks()
+    useDataset().reset()
+  })
+
+  for (const path of ['/train', '/field', '/live']) {
+    it(`空态下 ${path} 说的是「先导入数据集」`, async () => {
+      stubCounting(409)
+      const w = await mountAt(path)
+      expect(w.text()).toContain('先导入数据集')
+    })
+  }
+
+  it('空态下页① 照常渲染它自己的内容（那一页就是入口）', async () => {
+    stubCounting(409)
+    const w = await mountAt('/data')
+    // 页① 是**唯一**不挂空态闸门的一页：它就是导入的入口，
+    // 把它也换成「先导入数据集」等于把用户关在门外。
+    expect(w.text()).not.toContain('先导入数据集')
+    expect(w.text()).toContain('数据导入与检查')
+  })
+
+  it('后端挂了不显示空态 —— 那不是「你还没开始」', async () => {
+    stubCounting(500)
+    const w = await mountAt('/train')
+    expect(w.text()).not.toContain('先导入数据集')
+  })
+
+  it('导入之后，当前挂着的那一页当场重取一遍', async () => {
+    // T11：防「key 没接上，或者接在了别处」。
+    //
+    // ⚠️ 这一条用 **200**，不用 409。计划原文写的是 409 —— 那样闸门是开着的，
+    // 页② 压根没挂上（渲染的是 NoDataset），`before` 会是 0，这条测试**自己
+    // 那条「守不住任何东西」的断言**就会先炸。200 才是「页② 真挂在那儿」的前提。
+    const calls = stubCounting(200)
+    await mountAt('/train')
+    const before = calls.filter((u) => u.includes('/api/features')).length
+    expect(before, '页② 一开始就没取数，这条测试守不住任何东西').toBeGreaterThan(0)
+
+    useDataset().onImported()
+    await flushPromises()
+    await flushPromises()
+
+    const after = calls.filter((u) => u.includes('/api/features')).length
+    expect(after, '导入之后页② 没有被重新挂载').toBeGreaterThan(before)
   })
 })
