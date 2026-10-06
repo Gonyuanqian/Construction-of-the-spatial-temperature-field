@@ -141,14 +141,6 @@ describe('页① 数据导入与检查', () => {
     expect(w.text()).toContain('跨棚离群')
   })
 
-  it('两张图都挂上了，并且拿到的是构造器产出的 option', async () => {
-    stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH,
-           '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH })
-    const w = mountView()
-    await flushPromises()
-    expect(w.findAllComponents({ name: 'EChart' }).length).toBe(2)
-  })
-
   it('后端挂了就说清是哪个接口挂了，不是一片空白', async () => {
     stub({ '/api/dataset': { detail: '数据集不存在：C:/x.xlsx' } })
     vi.stubGlobal('fetch', vi.fn(async () =>
@@ -172,17 +164,6 @@ describe('页① 数据导入与检查', () => {
     expect(w.text()).toContain('换数据集')
   })
 
-  it('右侧热图说明了它只画哪一个棚（同页另外两格是三棚合看）', async () => {
-    // 上格与下格遍历 ts.shed_mean / detrended_mean 的**每一个**棚，右格却只有
-    // 一棚。三格共用一条游标、并排摆着，读者会默认它们同范围 —— 却不同。
-    // 所以右格必须在页面上写明是哪一棚，不能只把棚号藏在代码里。
-    stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH,
-           '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH })
-    const w = mountView()
-    await flushPromises()
-    expect(w.text()).toContain('只画 p1 棚')
-  })
-
   it('数据集身份旁边带出处图章（整句在 title 上）', async () => {
     stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH,
            '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH })
@@ -193,5 +174,74 @@ describe('页① 数据导入与检查', () => {
     expect(stamp.exists(), '数据集身份旁边没有出处图章').toBe(true)
     expect(stamp.text()).toBe('算')
     expect(stamp.attributes('title')).toContain('现场重算')
+  })
+
+  it('首屏是一排指标卡，不是一张键值表（spec §6.2）', async () => {
+    stub({ '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH,
+           '/api/field/arch': ARCH, '/api/dataset': DATASET })
+    const w = mountView()
+    await flushPromises()
+    const cards = w.findAll('.stat')
+    expect(cards.length, '页① 的指标卡不是五张').toBe(5)
+    expect(cards.map((c) => c.find('.label').text()))
+      .toEqual(['个时刻', '列', '起', '止', '指纹'])
+    // 指标卡排在页面最前 —— 页① 的第一张表必须是下面那张检查表
+    const firstTable = w.find('table')
+    expect(firstTable.text(), '第一张表变成了身份表').toContain('在查什么')
+  })
+
+  it('指纹是完整的那一串，出处图章在它旁边', async () => {
+    stub({ '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH,
+           '/api/field/arch': ARCH, '/api/dataset': DATASET })
+    const w = mountView()
+    await flushPromises()
+    const fp = w.findAll('.stat').find((c) => c.find('.label').text() === '指纹')!
+    expect(fp.find('.value').text()).toBe('6145fa9261e89f1b')
+    expect(fp.find('.value').classes()).toContain('compact')
+    expect(fp.find('.prov').text()).toBe('算')
+  })
+
+  it('散文折进「口径与出处」，正文里不再有裸的说明段（spec §八）', async () => {
+    stub({ '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH,
+           '/api/field/arch': ARCH, '/api/dataset': DATASET })
+    const w = mountView()
+    await flushPromises()
+    const why = w.findAll('details.why')
+    expect(why.length, '「口径与出处」不是恰好一处').toBe(1)
+    expect(why[0].find('summary').text()).toContain('口径与出处')
+    // 收起来的 `<details>` 内容仍在 DOM 里 —— 这正是选它而不是弹层的首要理由
+    expect(why[0].text()).toContain('卡死')
+  })
+
+  it('页① 只剩一张主图 —— 「昼夜与残差」整块撤下（spec §6.2 页① 修订）', async () => {
+    // 用户 2026-10-06 裁定：两条折线与时间×高度热图共用一份图表配置，整块删。
+    // 这条测试**取代**了原来那条「两张图都挂上了」。
+    stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH })
+    const w = mountView()
+    await flushPromises()
+    expect(w.findAllComponents({ name: 'EChart' }).length).toBe(1)
+    expect(w.text()).not.toContain('昼夜与残差')
+  })
+
+  it('撤下之后，只为那一块存在的请求不再发（spec §6.2 页① 修订）', async () => {
+    // 死代码要连根拔：图删了而 `ts` / `th` 还在，就是每开一次页① 白发两条请求。
+    const asked: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      asked.push(String(input))
+      // 只把 `/api/dataset` 回成数据集，其余一律 404。
+      // **不能全回 DATASET**：那样 `arch` 会拿到一个数据集形状的载荷，
+      // 而 `buildSensorLayoutOption` 会去 `arch.sheds.map(...)` —— sheds 在
+      // 数据集里是个对象，于是抛一个 unhandled rejection。断言照样过，
+      // 但测试输出不再干净：一条测试留下一个没人处理的错误，比它变红更坏。
+      if (String(input).endsWith('/api/dataset')) {
+        return new Response(JSON.stringify(DATASET), {
+          status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response('{"detail":"这条测试不关心这个接口"}', { status: 404 })
+    }))
+    mountView()
+    await flushPromises()
+    expect(asked.some((u) => u.includes('/api/dataset/timeseries'))).toBe(false)
+    expect(asked.some((u) => u.includes('/api/dataset/layer-timeheight'))).toBe(false)
   })
 })
