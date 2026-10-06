@@ -213,4 +213,36 @@ describe('LiveView', () => {
     })
     expect(calls.some((c) => c.includes('/api/field/volume'))).toBe(false)
   })
+
+  it('一排四张指标卡，且都在报「算」（spec §6.2 页⑤）', async () => {
+    stubFetch()
+    const w = mount(LiveView)
+    await flushPromises()
+    const cards = w.findAll('.stat')
+    expect(cards.map((c) => c.find('.label').text()))
+      .toEqual(['帧', '共', '一帧', '本帧时刻'])
+    for (const c of cards) expect(c.find('.prov').text()).toBe('算')
+  })
+
+  it('指标卡在状态还没 ready 时也立得住 —— 四格都不空', async () => {
+    // 挂载后 status 是 idle（替身默认回的），`frame` 因此还没取。
+    // 指标卡挂在 status 上、不挂在 frame 上，就是为了这时候四格仍在。
+    stubFetch()
+    const w = mount(LiveView)
+    await flushPromises()
+    for (const c of w.findAll('.stat')) {
+      expect(c.find('.value').text(), `${c.find('.label').text()} 那一格是空的`).not.toBe('')
+    }
+  })
+
+  it('散文折进唯一一处「口径与出处」', async () => {
+    stubFetch()
+    const w = mount(LiveView)
+    await flushPromises()
+    const why = w.findAll('details.why')
+    expect(why.length).toBe(1)
+    expect(why[0].find('summary').text()).toContain('口径与出处')
+    // 折进去的东西还在 DOM 里（收起来不等于删掉 —— spec §八 选它不选弹层的理由）
+    expect(why[0].text().length).toBeGreaterThan('口径与出处'.length)
+  })
 })

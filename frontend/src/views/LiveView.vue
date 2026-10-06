@@ -9,8 +9,9 @@
  * 时钟在服务端，是 `(started_at, now)` 的纯函数。本地再维护一个「第几帧」
  * 迟早与服务端漂开，而这一屏最不能错的就是「现在演的是第几帧」。
  *
- * ⚠️ **不用 `Provenance kind="live"`**：那里的 `live` 意思是「从接口实时取的」
- * （页③ 用它标已标定），与「实时模式」不是一回事。用在这里会被读成命名约定。
+ * ⚠️ **「实时模式」与图章的 `live` 不是一回事**：前者是这一屏的名字，
+ * 后者说的是「这个数是这次请求现算的」。四个指标格子都挂 `live` 图章 ——
+ * 它们确实都是 `/api/live/*` 现算的。别把两个词混成一个。
  *
  * 控件**在页内**，不走 `Teleport to="#rail-extra"` —— 实时模式收起导航
  * （`App.vue` 的 `route.meta.rail`），而 `#rail-extra` 由 `NavRail` 渲染，
@@ -27,6 +28,9 @@ import { getJson, postJson } from '../api/client'
 import EChart from '../charts/EChart.vue'
 import { buildSectionFieldOption, shedOfSeries } from '../charts/options/sectionField'
 import { interpretPick, pickText } from '../charts/pick'
+import Card from '../components/Card.vue'
+import StatCard from '../components/StatCard.vue'
+import StatRow from '../components/StatRow.vue'
 import { useAsync } from '../composables/useAsync'
 import { FIELD_VIEWS } from '../design/copy'
 import { readPalette } from '../design/palette'
@@ -155,17 +159,26 @@ const readout = computed(() => {
   <section>
     <h2>实时模式</h2>
 
-    <p class="note">
-      数据集末 144 帧留了出（2026-07-27 12:00 起），模型只在其余 1164 帧上标定过一次。
-      这里一帧一帧把它们接进时间轴。
-    </p>
-
     <p v-if="error" role="alert" class="alert">{{ error }}</p>
 
     <!-- 一行写完，别换行：这一句是要被断言、也是要被读的。 -->
     <p v-if="status" class="note" role="status">
       实时源{{ ready ? '已就绪' : '还没准备' }}：第 {{ status.cursor }} 帧，共 {{ status.total }} 帧，{{ intervalText }}。帧历史在内存里，重启服务就回到第 0 帧。
     </p>
+
+    <!-- 指标卡片一排（spec §6.2 页⑤）。
+         挂在 `status` 上、**不挂在 `frame` 上**：状态是纯读、挂载即到，
+         帧要等源准备好了才有。挂在帧上会让这一排在 idle 时整排消失。 -->
+    <StatRow v-if="status">
+      <StatCard label="帧" :value="`第 ${status.cursor} 帧`" prov="live" compact />
+      <StatCard label="共" :value="`${status.total} 帧`" prov="live" compact />
+      <StatCard label="一帧" :value="intervalText" prov="live" compact />
+      <StatCard
+        label="本帧时刻"
+        :value="frame.data.value?.frame.time ?? '—'"
+        prov="live" compact
+      />
+    </StatRow>
 
     <div class="row">
       <button
@@ -196,7 +209,7 @@ const readout = computed(() => {
 
       <p v-if="frame.error.value" role="alert" class="alert">{{ frame.error.value }}</p>
 
-      <div v-if="frame.data.value" class="block">
+      <Card v-if="frame.data.value" class="block">
         <div class="row head">
           <h3>第 {{ frame.data.value.frame.n }} 帧</h3>
           <span class="tag">
@@ -224,7 +237,7 @@ const readout = computed(() => {
           </tbody>
         </table>
         <p v-else class="note">点一个格子看它的读数。</p>
-      </div>
+      </Card>
       <p v-else-if="frame.loading.value" class="note">正在取这一帧…</p>
 
       <fieldset class="rail-box">
@@ -243,6 +256,15 @@ const readout = computed(() => {
         :clock-time="frame.data.value?.frame.time ?? ''"
       />
     </template>
+
+    <!-- 口径与出处：一页最多一处（spec §八）。收起来，但内容始终在 DOM 里。 -->
+    <details class="why">
+      <summary>口径与出处</summary>
+      <p class="note">
+        数据集末 144 帧留了出（2026-07-27 12:00 起），模型只在其余 1164 帧上标定过一次。
+        这里一帧一帧把它们接进时间轴。
+      </p>
+    </details>
   </section>
 </template>
 
@@ -258,4 +280,7 @@ const readout = computed(() => {
 }
 .rail-box button { font: inherit; cursor: pointer; }
 .rail-box button.on { font-weight: var(--w-strong); }
+.why { margin-top: var(--gap-l); }
+.why summary { font-size: var(--size-label); color: var(--ink-muted); cursor: pointer; }
+.why > p { margin-top: var(--gap-s); }
 </style>
