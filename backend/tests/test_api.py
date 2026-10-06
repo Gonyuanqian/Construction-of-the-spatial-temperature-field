@@ -210,12 +210,26 @@ def test_configs_是绝对路径():
     assert paths.CONFIGS.parent.name == "backend"
 
 
-def test_数据集不存在时报_404_而不是_500(client, monkeypatch):
-    monkeypatch.setattr(paths, "dataset_path",
-                        lambda: pathlib.Path("C:/definitely/not/here.xlsx"))
-    r = client.get("/api/dataset")
-    assert r.status_code == 404
-    assert "数据集不存在" in r.json()["detail"]
+def test_数据集不存在时报_404_而不是_500(client):
+    """「文件不见了」是 404，不是 500 —— 与「还没导入」（409）判然两种。
+
+    ⚠️ 造这个状态的写法在 2026-10-06 换过：以前是 monkeypatch
+    `paths.dataset_path`，因为那时 `GET /api/dataset` 读的就是它。
+    现在那个接口问的是「**现在在用哪一份**」（`deps._CURRENT`），
+    monkeypatch `paths.dataset_path` 对它**不再有任何影响** ——
+    留着老写法的话，这条测试会变成一条恒过的空过（请求照常 200）。
+
+    换成设置槽位，读的正是实现现在读的那个变量。断言一个字没改。
+    """
+    from api import deps
+    deps.set_current_dataset(pathlib.Path("C:/definitely/not/here.xlsx"))
+    try:
+        r = client.get("/api/dataset")
+        assert r.status_code == 404
+        assert "数据集不存在" in r.json()["detail"]
+    finally:
+        # `_CURRENT` 是进程级的：不恢复就是给后面跑的模块留一颗雷。
+        deps.set_current_dataset(paths.dataset_path())
 
 
 def test_dist_不存在时应用照样起得来(tmp_path, monkeypatch):
@@ -293,3 +307,21 @@ def test_测点编号按参考图的次序排(client):
         "x1.05_z0.4": "B7",
         "x1.95_z0.4": "B8",
     }
+
+
+
+@pytest.fixture(autouse=True)
+def _current_dataset():
+    """空态成为默认之后，这个文件也必须**显式声明**它测的是哪一份数据集。
+
+    2026-10-06 起，「当前在用哪一份数据集」是一个进程级的模块变量，启动时为空
+    （规格书 §1.1 的空态）。不声明的话，这个模块里凡是碰数据集的用例都会拿到 409，
+    而报错位置离现场很远。
+
+    写成 autouse 而不是改各文件形状各异的 `client` 夹具，是因为本仓还有 **6 处**
+    在测试里**内联**建 `TestClient(create_app())`（test_api.py ×2、
+    test_api_train.py ×3、test_deps.py ×1）—— 它们同样要碰数据集，
+    而只改 `client` 夹具会漏掉它们。一段代码、12 个文件、一模一样。
+    """
+    from api import deps, paths
+    deps.set_current_dataset(paths.dataset_path())

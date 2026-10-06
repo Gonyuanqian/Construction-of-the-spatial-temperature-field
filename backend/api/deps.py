@@ -33,6 +33,8 @@ from tfield.data.types import Dataset
 from tfield.features import build_features
 from tfield.pipeline import FieldPipeline, PipelineConfig
 
+from .errors import NoDatasetError
+
 Capacity = int
 FileKey = tuple[str, int, int]
 
@@ -150,6 +152,65 @@ class PipelineCache:
 _PIPELINES = PipelineCache()
 
 
+# ══════════════════════════ 当前数据集 ══════════════════════════
+#: 「现在在用哪一份」。**只活在内存里**（规格书 §1.3 裁定 A）：不写状态文件，
+#: 重启回空态 —— 与「启动时是空态」同一条规则。
+#:
+#: 为什么不做成 `paths.current_json()`：那会让「重启后屏幕上是什么」不再只由
+#: 这次操作决定，而消灭那件事正是这个功能的目的。
+_CURRENT: pathlib.Path | None = None
+
+
+def set_current_dataset(path: pathlib.Path | str) -> None:
+    """把「现在在用哪一份」指过去。**不校验文件在不在** —— 那是使用它的人的事。"""
+    global _CURRENT
+    _CURRENT = pathlib.Path(path)
+
+
+def current_dataset_path() -> pathlib.Path:
+    """现在在用的那一份。空态时抛 `NoDatasetError`（由 `main.py` 翻成 409）。"""
+    if _CURRENT is None:
+        raise NoDatasetError()
+    return _CURRENT
+
+
+def clear_current_dataset() -> None:
+    """打回空态。测试与「重启」用。"""
+    global _CURRENT
+    _CURRENT = None
+
+
+def install_dataset(path: pathlib.Path | str) -> None:
+    """换数据集：**先清缓存，再改指针**（规格书 §4.2 第 5 步）。
+
+    这两步合成一个函数而不是让调用点各写两行，只有一个理由：
+    **顺序写反了不会有任何报错，只会有一个「新指针配旧缓存」的瞬间** ——
+    而那一刻恰好是导入成功后的第一个请求。合成一个入口，顺序就不可能写反。
+
+    它也顺手把白名单只撑大一个名字（`api/**` 从 `deps` 取名字受
+    `tests/test_routes_use_cache.py` 守着，见 Task 3）。
+    """
+    reset_cache()
+    set_current_dataset(path)
+
+
+#: 换数据集时要作废的**其余东西**的登记处。
+#:
+#: 四样要一起清（规格书 §三.1）：前三个是 `reset_cache()` 自己管的三个缓存，
+#: 第四个是 `api/live.py` 的实时源 —— 它不在这里，而且 `live` 依赖 `deps`，
+#: 反过来 import 成环。所以由 `live` 在 import 时**把自己登记进来**。
+#:
+#: 显式调用（上传路由里写两行）要求**每个未来的调用点**都记得调两次，
+#: 而那正是今天这个漏的成因。「换数据集忘了清实时源」在结构上不可能发生，
+#: 比「记得调」可靠。
+_INVALIDATORS: list[Callable[[], None]] = []
+
+
+def on_dataset_change(fn: Callable[[], None]) -> None:
+    """登记一个「数据集换掉时请作废你自己」的回调。重复登记同一个函数无害。"""
+    _INVALIDATORS.append(fn)
+
+
 def get_pipeline(groups: tuple[str, ...] | None = None) -> FieldPipeline:
     """本项目管线的唯一入口。**路由层不许自己 new FieldPipeline、也不许自己 fit。**
 
@@ -176,10 +237,17 @@ _CACHE = DatasetCache()
 
 
 def get_dataset(path: pathlib.Path | str | None = None) -> Dataset:
-    """本项目数据集的唯一入口。**路由层不许直接 import load_dataset。**"""
+    """本项目数据集的唯一入口。**路由层不许直接 import load_dataset。**
+
+    `path=None` 时问「现在在用哪一份」：空态抛 `NoDatasetError`（由 `main.py`
+    翻成 409），指针指着盘上没有的文件时抛 `FileNotFoundError`（翻成 404）。
+
+    ⚠️ **这里不再回退到 `paths.dataset_path()`**（曾经是）。那条回退让
+    「交付数据集」在启动时自动生效 —— 与规格书 §1.1「不预置、不代劳」
+    正相反，而且它**不报错**：界面看起来一切正常，只是用的不是用户导的那一份。
+    """
     if path is None:
-        from . import paths
-        path = paths.dataset_path()
+        path = current_dataset_path()
     return _CACHE.get(path)
 
 
@@ -224,13 +292,19 @@ def get_live_frames(path: pathlib.Path | str | None = None,
 
 
 def reset_cache() -> None:
-    """换数据集之后（上传、重新导出）显式清一次。**三个缓存一起清。**
+    """换数据集之后（上传、重新导出）显式清一次。**三个缓存一起清，再叫所有登记者作废自己。**
 
     只清数据集不清管线是最坏的组合：数据集重读了，管线还是按旧数据 fit 出来的，
     于是「数据被替换就重标」整条防线失效，而 `n_loads` 会显示「确实重读了」——
     一条看起来正常的错。
+
+    ⚠️ 重建 `_CACHE` / `_PIPELINES` 是**换对象**不是 `clear()`：计数守卫
+    （`test_end_to_end.py`）替换的是 `deps._CACHE` 这个模块属性，`clear()`
+    会让它替换过的那个对象被清空、而模块属性还指着旧对象。
     """
     global _CACHE, _PIPELINES
     _CACHE = DatasetCache()
     _PIPELINES = PipelineCache()
     _HOLDOUTS.clear()      # 切分结果挂着旧的 Dataset 对象，留着就是「换了数据集还用旧训练段」
+    for fn in _INVALIDATORS:      # ← 第四个：实时源（由 api/live.py 登记）
+        fn()

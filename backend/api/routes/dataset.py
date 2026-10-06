@@ -16,16 +16,23 @@ router = APIRouter(tags=["dataset"])
 
 @router.get("/dataset")
 def get_dataset() -> dict[str, Any]:
-    path = paths.dataset_path()
+    # ⚠️ **不再显式传 path**。以前这里写 `deps.get_dataset(paths.dataset_path())`，
+    # 于是它绕过了「空态」，永远读交付数据集 —— 与规格书 §1.1「不预置、不代劳」
+    # 正相反，而且**不报错**：界面看起来一切正常，只是用的不是用户导的那一份。
+    #
+    # 现在问的是「现在在用哪一份」：
+    #   空态      → `deps.current_dataset_path()` 抛 `NoDatasetError`，main.py 翻成 409
+    #   文件不见了 → `get_dataset()` 抛 `FileNotFoundError`，下面接住翻成 404
+    cur = deps.current_dataset_path()
     try:
-        ds = deps.get_dataset(path)
+        ds = deps.get_dataset()
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"数据集不存在：{path}")
+        raise HTTPException(status_code=404, detail=f"数据集不存在：{cur}")
     ts = ds.wide[C.COL_TIMESTAMP]
     codes = _point_codes(ds)
     return {
         "signature": ds.signature,
-        "file": path.name,
+        "file": cur.name,
         "n_times": int(ds.wide.shape[0]),
         "n_columns": int(ds.wide.shape[1]),
         # 页① 那排卡片要的另外两格。**都由后端算**：前端不做任何数值计算。
@@ -134,17 +141,22 @@ def _temperature_stats(ds) -> list[dict[str, Any]]:
 
 
 def _load() -> Any:
-    """取数据集；文件不在时翻成 404，与 `/api/dataset` 同一口径。
+    """取当前在用的数据集；文件不在时翻成 404，与 `/api/dataset` 同一口径。
 
-    这两个接口照抄 brief 的写法是 `deps.get_dataset()`（无 path），
-    文件缺失时 `DatasetCache.key_of` 会抛 `FileNotFoundError` ——
-    不接住就是 HTTP 500，而「数据集不在」明明是 404。为与既有接口一致，
-    这里复用同一条 404 路径。defer `paths` 导入：测试需要 monkeypatch 它。
+    走 `deps.get_dataset()`（无 path）—— 它问的是「现在在用哪一份」，
+    空态会抛 `NoDatasetError`，由 `main.py` 的全局 handler 翻成 409。
+    这里只接住 `FileNotFoundError`：那是另一种错，404。
+
+    ⚠️ 404 的 detail 报的是**当前那份**的路径，不再是 `paths.dataset_path()`
+    （交付数据集）。报错里给一个不是正在用的路径，等于把人指错地方。
     """
     try:
         return deps.get_dataset()
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"数据集不存在：{paths.dataset_path()}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"数据集不存在：{deps.current_dataset_path()}",
+        ) from None
 
 
 def _sensor_keys(ds) -> list[tuple[str, str, str]]:

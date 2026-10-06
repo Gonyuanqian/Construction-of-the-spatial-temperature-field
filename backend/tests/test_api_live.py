@@ -394,3 +394,21 @@ def test_读数坏时是显式报错不是_500(raw_client, monkeypatch):
         r = raw_client.get(path)
         assert r.status_code == 400, path
         assert "时间戳" in r.json()["detail"], path
+
+
+
+@pytest.fixture(autouse=True)
+def _current_dataset():
+    """空态成为默认之后，这个文件也必须**显式声明**它测的是哪一份数据集。
+
+    2026-10-06 起，「当前在用哪一份数据集」是一个进程级的模块变量，启动时为空
+    （规格书 §1.1 的空态）。不声明的话，这个模块里凡是碰数据集的用例都会拿到 409，
+    而报错位置离现场很远。
+
+    写成 autouse 而不是改各文件形状各异的 `client` 夹具，是因为本仓还有 **6 处**
+    在测试里**内联**建 `TestClient(create_app())`（test_api.py ×2、
+    test_api_train.py ×3、test_deps.py ×1）—— 它们同样要碰数据集，
+    而只改 `client` 夹具会漏掉它们。一段代码、12 个文件、一模一样。
+    """
+    from api import deps, paths
+    deps.set_current_dataset(paths.dataset_path())

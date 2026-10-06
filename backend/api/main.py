@@ -14,12 +14,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
-from starlette.responses import FileResponse, Response
+from starlette.requests import Request
+from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.types import Scope
 
 from tfield.calibration import TOOL_VERSION
 
 from . import paths
+from .errors import NO_DATASET_DETAIL, NoDatasetError
 from .routes import calibration as calibration_routes
 from .routes import dataset as dataset_routes
 from .routes import features as features_routes
@@ -88,6 +90,32 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # ── 数据集那两种错，各翻各的 ──
+    #
+    # **为什么写进全局 handler 而不是每一条路由自己判**：这两个判断要在
+    # **每一条**接口上成立，而「以后新加的路由也不会漏」只有挂在全局才成立。
+    # 路由里各写一遍，漏一条就是一个 500 —— 而且漏的那条看起来和别的没区别。
+    #
+    # ⚠️ 两者**必须分开**（规格书 §二.1）：
+    #   409 = 还没导入。这是系统的**起点**，不是故障。
+    #   404 = 刚才还在用，盘上没了。这是故障。
+    # 合成一种，界面就会把「你还没开始」说成「出错了」，
+    # 而验收的人第一次打开系统看到的正是那一屏。
+    @app.exception_handler(NoDatasetError)
+    async def _no_dataset(_req: Request, _exc: NoDatasetError) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": NO_DATASET_DETAIL})
+
+    # ⚠️ 这条**比 409 那条宽**，代价要认：非数据集的缺文件（比如某份配置）
+    # 从此也报 404 而不是 500。两条都上屏成 alert，差别只在状态码与那句话，
+    # 而 detail 里带着路径，所以仍然可诊断。换来的是「文件不见了」在
+    # **每一条**接口上都成立 —— 有了「当前数据集」这个指针之后，它可能发生在
+    # 任何一条接口上，而仓里只有 `/api/dataset` 那一处显式接住它。
+    @app.exception_handler(FileNotFoundError)
+    async def _file_gone(_req: Request, exc: FileNotFoundError) -> JSONResponse:
+        target = getattr(exc, "filename", None) or (exc.args[0] if exc.args else "（路径不详）")
+        return JSONResponse(status_code=404,
+                            content={"detail": f"数据集文件不见了：{target}"})
+
     app.include_router(dataset_routes.router, prefix="/api")
     app.include_router(field_routes.router, prefix="/api")
     app.include_router(features_routes.router, prefix="/api")

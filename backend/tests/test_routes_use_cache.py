@@ -88,9 +88,15 @@ WHITELIST = frozenset({"deps.py"})
 #: 命中这个被改过的对象，而且不报任何错 —— 这正是这条守卫本来要拦的第一类错
 #: （共享实例被就地改）。放行的是**同一个 builder 函数**，不是「随便建」：
 #: 建出来的实例由 `api/live.py` 的模块级单例独自持有，不进任何路由的取用路径。
+#:
+#: `current_dataset_path` 是第六个，理由**是前四个那一族**（纯读入口，不绕过缓存）：
+#: `GET /api/dataset` 要报出「现在在用哪一份」的**文件名**，而 `Dataset` 身上
+#: 没有路径字段（`tfield` 一个字节不许改），唯一的来源就是这个槽位。
+#: 以前它写 `paths.dataset_path()` —— 那在「用户导过一份」之后报的是**交付数据集**
+#: 的名字，一条不报错但指错地方的岔路。
 ALLOWED_FROM_DEPS = frozenset({
     "get_dataset", "get_pipeline", "get_train_dataset", "get_live_frames",
-    "_build_pipeline",
+    "_build_pipeline", "current_dataset_path",
 })
 
 #: 与 `api.deps` 无关的、任何位置都不许直接取用的通用黑名单（直取后端库/缓存类）。
@@ -174,11 +180,11 @@ def test_api_层从_deps_只许取_get_dataset():
     files = _api_files()
 
     # 非空断言：目录改名/搬走后这条守卫不许变成空过。
-    # 底是怎么来的：本仓 `backend/api/` 下现共 **10** 个 `*.py`
-    # （5 个顶层模块 + routes/ 下 5 个），其中 **4** 个是非 `__init__` 的路由模块。
+    # 底是怎么来的：本仓 `backend/api/` 下现共 **11** 个 `*.py`
+    # （6 个顶层模块 + routes/ 下 5 个），其中 **4** 个是非 `__init__` 的路由模块。
     # 取 6 与 4 是留了余量、又足够说明「确实扫到了东西」的下界。
     assert len(files) >= 6, (
-        f"`backend/api/` 下只扫到 {len(files)} 个 .py（本仓当前 10 个）—— "
+        f"`backend/api/` 下只扫到 {len(files)} 个 .py（本仓当前 11 个）—— "
         "目录结构变了，这条守卫已经扫不到东西，成了空过"
     )
     route_mods = [
@@ -204,7 +210,7 @@ def test_api_层从_deps_只许取_get_dataset():
     )
 
 
-def test_白名单只有那五个出口():
+def test_白名单只有那六个出口():
     """白名单是一份**写死的声明**。它悄悄变长，是这道守卫失效的第一种方式。
 
     第三、第四、第五个（`get_train_dataset` / `get_live_frames` / `_build_pipeline`）
@@ -212,8 +218,12 @@ def test_白名单只有那五个出口():
     实时源必须拿得到留出段与一份**自己独有**的管线。加它们要改这一行 ——
     这正是这条测试存在的意义：让白名单的每一次生长都落在 diff 里，
     而不是悄悄发生。
+
+    第六个（`current_dataset_path`，2026-10-06 加）也是有意加的，理由见上面
+    常量旁边。**它属于「纯读入口」那一族** —— 加读入口的门槛比加写入口低，
+    因为读入口掩盖不了「两次读之间状态被改」那类错。
     """
     assert ALLOWED_FROM_DEPS == frozenset({
         "get_dataset", "get_pipeline", "get_train_dataset", "get_live_frames",
-        "_build_pipeline",
+        "_build_pipeline", "current_dataset_path",
     })
