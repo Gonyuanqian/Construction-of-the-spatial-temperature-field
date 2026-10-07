@@ -69,6 +69,37 @@ export interface DatasetPayload {
   checks_note: string
 }
 
+/** 预览表的一列（`GET /api/dataset/preview`）。 */
+export interface PreviewColumn {
+  /** **宽表里的列名**（`p1_x0.15_z0.4_temp_C`）。所以表里每一格都追得回文件那一列。 */
+  key: string
+  /** 屏上印的名字（`p1·B1`、`背景温度`）。后端拼好送来的 —— 前端不拼显示字符串。 */
+  label: string
+}
+
+/**
+ * 页① 的数据预览：**一张宽表的头部切片**，不是全量。
+ *
+ * `n_times` 与 `n_rows` 一起给，页面才写得出「前 500 行（共 1308 行）」。
+ * 只回一个 `values` 数组的话，屏幕上看不出看到的是全部还是一段 ——
+ * 那种沉默比截断本身更坏，所以这两格是契约的一部分，不是附赠。
+ *
+ * 时间**单列一个字段**，不混进 `values`：它是行标、在表里粘在左边，
+ * 与那些数值列不是一类东西。
+ */
+export interface PreviewPayload {
+  /** 这份数据集一共多少行。 */
+  n_times: number
+  /** 实际生效的上限（后端已夹到 `[0, n_times]`）。 */
+  limit: number
+  /** 本次真给了多少行。`values.length` 与 `time.length` 都等于它。 */
+  n_rows: number
+  columns: PreviewColumn[]
+  time: string[]
+  /** `n_rows × columns.length`。缺失格子是 `null`（见 `_finite`），不是 0。 */
+  values: (number | null)[][]
+}
+
 export interface ShedInfo {
   id: string
   y: number
@@ -149,6 +180,43 @@ export interface FeaturesPayload {
  * 标定当时算好、写在包里；页面只负责原样摆出来，不重算。
  * ------------------------------------------------------------------ */
 
+/** 待优选的参数清单里的一行（`GET /api/calibration` 的 `space`）。 */
+export interface SpaceRow {
+  /** `metric.power` / `cross_shed` / `trend.max_depth` —— 与 `tunedKeys` 同一套键。 */
+  key: string
+  /** 候选值，**已经格式化成屏上的写法**（布尔是「开」「关」）。后端给的，前端不转。 */
+  values: string[]
+}
+
+/**
+ * 待优选的参数清单（规格书 §三）。**与盘上有没有包无关** ——
+ * `present: false` 那条路上也给，否则「先列出要搜什么」这个「先」字就没了。
+ *
+ * ⚠️ `idw` 里**没有** `metric.ly`：它恒为 1.0、从未进过搜索空间。它仍然在
+ * `params`（最优参数表）里，note 写着为什么 —— 两张表说的不是一件事。
+ */
+export interface CalibrationSpace {
+  /** XGBoost 的八个，含 `objective`。 */
+  trend: SpaceRow[]
+  /** IDW 的四个。 */
+  idw: SpaceRow[]
+}
+
+/**
+ * 一次标定任务的摘要。**没有结果** —— 图上那些数走
+ * `GET /api/calibration/diagnostics`，轮询只回答「跑到哪一句了」。
+ */
+export interface JobSummary {
+  id: string
+  state: 'running' | 'done' | 'failed' | 'cancelled'
+  /** 库里 `progress` 回调吐出来的**最近一行**人话。不给百分比（规格书 §4.3）。 */
+  progress: string
+  elapsed_s: number
+  /** `failed` 时是异常的**原话**；其余三态是 null。 */
+  error: string | null
+  created_at: string
+}
+
 export interface TunedKeyRow { key: string; value: string; space: string }
 export interface ParamRow { param: string; value: string; note: string }
 export interface PlateauRow { dim: string; lo: string; hi: string }
@@ -197,6 +265,11 @@ export interface CalibrationPayload {
   dataset_sig: string
   feature_groups: string[]
   trend_kind: string
+  /**
+   * 待优选的参数清单。⚠️ **两条分支都给这一格** —— 它是模块常量，
+   * 不依赖盘上有没有包。只在有包时给，就是把「要搜什么」藏到跑完之后。
+   */
+  space: CalibrationSpace
   tuned_keys: TunedKeyRow[]
   params: ParamRow[]
   plateau: PlateauRow[]
@@ -223,6 +296,17 @@ export interface CalibrationPayload {
    */
   worst_fold: { fold: string; mae: number } | null
   ab_note: string
+  /**
+   * 当前 / 最近一次标定任务，没有就是 `null`。
+   *
+   * ⚠️ **两个分支都给这一格**（与 `mismatch` 同一条房规）：它不是「有时有、
+   * 有时没有」的键 —— 那种键会让手写的夹具静默渲染成 `undefined`，
+   * 而冒烟测试照样绿。
+   *
+   * 它存在的理由是**刷新之后还接得上**（规格书 §4.7）：标定要几分钟，
+   * 而切页与刷新都会把组件连同它手上的 job id 一起丢掉。
+   */
+  job: JobSummary | null
   note: string
 }
 
@@ -446,4 +530,89 @@ export interface UploadResult {
   n_columns: number
   time_start: string
   time_end: string
+}
+
+/* ------------------------------------------------------------------ *
+ * 页② 第三段的精度面：`GET /api/calibration/diagnostics`
+ *
+ * ⚠️ 这一整块**不在标定包里**（裁定 C）：诊断是「包的函数」。
+ * 所以它的出处图章是「算」（现场重算），不是「包」。
+ * ------------------------------------------------------------------ */
+
+/** 一个分箱。`at` 是横轴上的位置（小时 / 高度 / 棚长）。 */
+export interface BinRow {
+  /** ⚠️ 可以是 null。横轴值本身也是浮点，同样过 `_finite`。 */
+  at: number | null
+  /** 平均残差。整箱缺值时是 null —— 那一箱**留在表里**，不是被藏掉。 */
+  mean: number | null
+  /** 箱内**有限**样本数（NaN 不算样本）。 */
+  n: number
+  /** 平均残差的标准误，`n <= 1` 时是 null（一个点算不出标准误，报 0 是假装精确）。 */
+  se: number | null
+}
+
+export interface ResidualPanel {
+  key: 'diurnal' | 'height' | 'length'
+  /** 后端拼好的标题，前端不拼显示字符串。 */
+  label: string
+  /** 纵轴永远是残差；这是横轴的名字（含单位）。 */
+  axis: string
+  /** ⚠️ 箱数由**这份数据的测点**决定：昼夜 24、高度 3、棚长 7。
+   *  后两张不是曲线，是 3 根和 7 根柱子（规格书 §7.2）。 */
+  bins: BinRow[]
+}
+
+export interface AccuracyBlock {
+  /** 后端给的显示名。 */
+  label: string
+  /** ⚠️ 三个都是 `number | null`（`_finite` 把非有限浮点翻成 null）。 */
+  mae: number | null
+  rmse: number | null
+  r2: number | null
+  n: number
+}
+
+/**
+ * 折外预测 vs 实测的二维直方图（规格书 §7.1）。
+ *
+ * **为什么不是散点**：两万七千对点画成散点是一团墨。计数矩阵让 y = x
+ * 那条对角线看得见 —— 而那条线是这张图唯一要回答的东西。
+ * 两个轴**共用 `[lo, hi]`**：它是 45 度对角线图，轴范围不同就不是了。
+ */
+export interface DensityPayload {
+  bins: number
+  /** ⚠️ 全为 null 表示**一对有限点都没有**（整段缺值）。 */
+  lo: number | null
+  hi: number | null
+  n: number
+  /** `counts[it][ip]`：实测落在第 it 格、预测落在第 ip 格的点数。行主序。 */
+  counts: number[][]
+}
+
+export interface DiagnosticsPayload {
+  present: boolean
+  created_at: string
+  groups_sig: string
+  dataset_sig: string
+  n_points: number
+  n_sensors: number
+  n_times: number
+  density: DensityPayload
+  /**
+   * 基线与模型**永远并排**（规格书 §6.3）：单独一个 0.999 会被读成
+   * 「几乎完美」，而它旁边那个基线才说明这把尺子有多粗。
+   *
+   * `folds` 是**基线算在哪几折上**，也就是模型 `metrics` 里 B 组那几折 ——
+   * 两头必须同折、同数据段，否则两个数不可比。
+   */
+  accuracy: {
+    folds: string[]
+    baseline: AccuracyBlock
+    model: AccuracyBlock
+    /** `基线 MAE / 模型 MAE`。**算出来的，不是写死的**。 */
+    ratio: number | null
+  }
+  /** 三项，次序即屏上的次序。 */
+  residual: ResidualPanel[]
+  note: string
 }

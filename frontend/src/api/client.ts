@@ -87,3 +87,21 @@ export async function uploadDataset(file: File): Promise<UploadResult> {
   if (!res.ok) throw await asError(res)
   return (await res.json()) as UploadResult
 }
+
+/**
+ * `getJson` 的动作那一半里，取消用的那个。
+ *
+ * 与 `postJson` 分开而不是加一个 `method` 参数：本仓只有这两个动词，
+ * 而 `delete` 是保留字，写成 `deleteJson` 一眼知道它是干什么的。
+ * **没有请求体** —— 取消谁由路径上的 id 说了。
+ */
+export async function deleteJson<T>(path: string): Promise<T> {
+  let res: Response
+  try {
+    res = await fetch(path, { method: 'DELETE' })
+  } catch {
+    throw new ApiError(OFFLINE, 0)
+  }
+  if (!res.ok) throw await asError(res)
+  return (await res.json()) as T
+}
