@@ -321,9 +321,77 @@ def test_上屏文案干净_没有被禁的连接符与_markdown_标记(client):
     rendered = [b["note"], b["reason"] or "", b["ab_note"], b["lz_note"] or ""]
     rendered += [p["note"] for p in b["params"]]
     rendered += [p["note"] for p in _fallback_params(PipelineConfig.fallback())]
+    # 待优选清单的候选值也是上屏的纯文本：`cross_shed` 那两个「开 / 关」
+    # 就是从这儿来的，它们同样不许夹带被禁的字形。
+    rendered += [v for r in b["space"]["trend"] + b["space"]["idw"] for v in r["values"]]
     for s in rendered:
         for bad in ("——", "**", "`", " · ", "→", "↳"):
             assert bad not in s, f"上屏文案里出现了被禁的 {bad!r}：{s!r}"
+
+
+# ── 待优选参数清单（规格书 §三）──
+
+def test_待优选清单在没有包时也在(monkeypatch, tmp_path):
+    """T1：清单是**模块常量**（两个搜索空间），与盘上有没有包无关。
+
+    只在有包时才给 = 逼用户先跑一次才知道要搜什么，而 §三 那个「先」字
+    说的正是「点之前就在屏上」。空态是唯一能验这一条的地方。
+    """
+    monkeypatch.setattr(routes.calibration, "CONFIGS_ROOT", tmp_path)
+    c = TestClient(create_app())
+    b = c.get("/api/calibration").json()
+    assert b["present"] is False
+    assert len(b["space"]["trend"]) == 8
+    assert len(b["space"]["idw"]) == 4
+
+
+def test_待优选清单与库的搜索空间一一对应(client):
+    """T1 的另一半：清单**从 `TUNED_KEYS` 与两个空间生成**，不是另抄一份。
+
+    ⚠️ 写死 8 与 4 是有意的：只断言 `len(space["trend"]) == len(TREND_SPACE)`
+    是拿同一个来源比自己，等于没测。8 与 4 是规格书 §3.1 明写的数，
+    XGBoost 八个（含 objective）、IDW 四个。
+    """
+    from api import ported
+    from tfield.calibration import IDW_SPACE, TREND_SPACE, TUNED_KEYS
+
+    b = client.get("/api/calibration").json()
+    rows = b["space"]["trend"] + b["space"]["idw"]
+    keys = [r["key"] for r in rows]
+    assert sorted(keys) == sorted(TUNED_KEYS), "清单的键集必须正好是 TUNED_KEYS 那十二项"
+    assert len(b["space"]["trend"]) == 8 and len(b["space"]["idw"]) == 4
+
+    by = {r["key"]: r["values"] for r in rows}
+    for k, vals in TREND_SPACE.items():
+        assert by[f"trend.{k}"] == [ported.fmt_value(v) for v in vals]
+    for k in ("power", "lx", "lz"):
+        assert by[f"metric.{k}"] == [ported.fmt_value(v) for v in IDW_SPACE[k]]
+
+    # 显示口径**硬写**两条：上面两个循环两边都过 `fmt_value`，光靠它们看不出
+    # 口径被换成 `str()` —— 而 `1.0` 上屏必须是 `1`（`%g`），不是 `1.0`。
+    # 同一页相邻那一列（`tuned_keys` 的「挑出来是多少」）印的也是 `%g`。
+    assert by["trend.subsample"] == ["0.7", "0.85", "1"]
+    assert by["metric.power"] == ["0.5", "1", "1.5", "2", "2.5", "3", "4"]
+
+    # cross_shed 在调参侧光秃秃一个词、在搜索侧挂 idw. 前缀（见 _SPACE_KEY），
+    # 而布尔值必须印成「开」「关」—— 印成 True/False 就是同一页两个口径。
+    assert by["cross_shed"] == ["开", "关"]
+
+
+def test_清单里没有_metric_ly(client):
+    """T2：ly 恒为 1.0、从未进过搜索空间（`calibration.py` 的 `_IDW_KEYS`
+    只有 power/lx/lz）。把它列进「待优选」是谎报调参范围。
+
+    另一面同时断言：它**仍然**在最优参数表里，note 写着为什么 ——
+    「搜了什么」与「用的是多少」是两张表，不是一张。
+    """
+    b = client.get("/api/calibration").json()
+    keys = [r["key"] for r in b["space"]["trend"]] + [r["key"] for r in b["space"]["idw"]]
+    assert "metric.ly" not in keys
+
+    notes = {p["param"]: p["note"] for p in b["params"]}
+    assert "metric.ly" in notes
+    assert "从未进过搜索空间" in notes["metric.ly"]
 
 
 # ── 两个出口：页① 认文件，模型认训练段 ──

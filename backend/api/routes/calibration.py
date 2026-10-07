@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from tfield import config as C
-from tfield.calibration import load_bundle, load_for
+from tfield.calibration import IDW_SPACE, TREND_SPACE, TUNED_KEYS, load_bundle, load_for
 from tfield.pipeline import PipelineConfig
 
 from .. import deps, paths, ported
@@ -60,6 +60,7 @@ def get_calibration() -> dict[str, Any]:
             "groups_sig": None, "dataset_sig": ds.signature,
             "feature_groups": list(C.DEFAULT_FEATURE_GROUPS),
             "trend_kind": cfg.trend_kind,
+            "space": _space(),
             "tuned_keys": [], "plateau": [], "lz_note": None,
             "params": _fallback_params(cfg),
             "metrics": [], "per_point": [], "ab": None,
@@ -94,6 +95,7 @@ def get_calibration() -> dict[str, Any]:
         "dataset_sig": bundle.dataset_sig,
         "feature_groups": list(bundle.feature_groups),
         "trend_kind": bundle.trend_kind,
+        "space": _space(),
         "tuned_keys": _tuned_keys(bundle),
         "params": _params(bundle),
         "plateau": [{"dim": k, "lo": ported.fmt_value(lo), "hi": ported.fmt_value(hi)}
@@ -240,6 +242,43 @@ _SPACE_KEY = {
     "cross_shed": "idw.cross_shed",
 }
 #: `trend.*` 两边同名，直接透传。
+
+
+def _space_values(key: str) -> list[str]:
+    """一个 `tuned_keys` 键 → 它在搜索空间里的候选值。
+
+    走的是 `_SPACE_KEY` **同一张映射** —— 清单与最优参数表必须用同一套键，
+    否则两张上下相邻的表对不上号（`metric.power` vs `idw.power`）。
+
+    值一律过 `ported.fmt_value`：`cross_shed` 的 `True` 会印成「开」，
+    而 `_tuned_keys` 那一列印的也是「开」—— 同一个页面上两个口径
+    比少一个口径更坏。
+    """
+    space_key = _SPACE_KEY.get(key, key)
+    head, _, tail = space_key.partition(".")
+    if head == "idw":
+        return [ported.fmt_value(v) for v in IDW_SPACE[tail]]
+    if head == "trend":
+        return [ported.fmt_value(v) for v in TREND_SPACE[tail]]
+    return []
+
+
+def _space() -> dict[str, list[dict[str, Any]]]:
+    """待优选的参数清单（规格书 §三）：**先列出从哪些值里挑**。
+
+    ⚠️ 由 `TUNED_KEYS` 与两个搜索空间**生成**，不是第二份常量 ——
+    库里加一个参数而界面不跟，是这份清单最可能的坏法。
+
+    ⚠️ **没有 `metric.ly`**：它恒为 1.0、从未进过搜索空间。列进来是在谎报
+    调参范围（`calibration.py:70-73` 的同一条）。
+
+    它不依赖盘上有没有包，所以 `present` 的两条路上都给。
+    """
+    rows = [{"key": k, "values": _space_values(k)} for k in TUNED_KEYS]
+    return {
+        "trend": [r for r in rows if r["key"].startswith("trend.")],
+        "idw": [r for r in rows if not r["key"].startswith("trend.")],
+    }
 
 
 def _tuned_keys(bundle) -> list[dict[str, Any]]:
