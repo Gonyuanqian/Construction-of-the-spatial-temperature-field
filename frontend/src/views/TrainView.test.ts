@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
 import TrainView from './TrainView.vue'
+import ParamPanel from '../components/ParamPanel.vue'
 import { NAV_ITEMS } from '../design/copy'
 
 /**
@@ -76,21 +77,53 @@ const CAL = {
   dataset_sig: '6145fa9261e89f1b',
   feature_groups: ['coord', 'zbasis', 'meteo', 'interaction'],
   trend_kind: 'xgboost',
-  space: {
+  // 面板：**一套值，两条来路**。十二维 = 8 + 4 一维都不能少 ——
+  // `:455-477` 那条用例名字里的「十二个」、`:212-218` 改写后的「十二个键
+  // 都在屏上」、以及 T5 那条「发出去的正是屏上这十二个」，都要靠这份夹具摆全。
+  // 自洽的三条（mock 别自相矛盾）：`values` 与 `raw` 同长且同下标、
+  // `current` 一定在 `raw` 里、布尔印成「开 / 关」而不是 `true`。
+  // 次序照后端给的（`TUNED_KEYS`，也就是 `_params` 里那个次序）。
+  //
+  // ⚠️ XGBoost 那八维的候选值**不是** `IDW_SPACE` / `TREND_SPACE` 的逐字复刻
+  // （那是后端 `test_api_train.py` 的事），这里是一份自洽的示意值。
+  // 但对得上号的那几个必须对：`reg:absoluteerror`（`:475` 逐字引用）、
+  // `开`（`:476`）、以及十二个 key（`:470-473` 抽查其中四个）。
+  panel: {
     trend: [
-      { key: 'trend.max_depth', values: ['3', '4', '5', '6'] },
-      { key: 'trend.objective', values: ['reg:squarederror', 'reg:absoluteerror'] },
+      { key: 'trend.objective', label: '目标函数',
+        values: ['reg:squarederror', 'reg:absoluteerror'],
+        raw: ['reg:squarederror', 'reg:absoluteerror'], current: 'reg:squarederror' },
+      { key: 'trend.max_depth', label: '每棵树最深几层',
+        values: ['3', '4', '5', '6'], raw: [3, 4, 5, 6], current: 4 },
+      { key: 'trend.learning_rate', label: '学习率',
+        values: ['0.03', '0.05', '0.08', '0.12'], raw: [0.03, 0.05, 0.08, 0.12],
+        current: 0.08 },
+      { key: 'trend.n_estimators', label: '树的数量',
+        values: ['100', '200', '400'], raw: [100, 200, 400], current: 200 },
+      { key: 'trend.min_child_weight', label: '叶子最小样本权重和',
+        values: ['1', '3', '5', '10'], raw: [1, 3, 5, 10], current: 3 },
+      { key: 'trend.subsample', label: '行采样比例',
+        values: ['0.7', '0.85', '1'], raw: [0.7, 0.85, 1], current: 0.85 },
+      { key: 'trend.colsample_bytree', label: '列采样比例',
+        values: ['0.6', '0.8', '1'], raw: [0.6, 0.8, 1], current: 0.8 },
+      { key: 'trend.reg_lambda', label: 'L2 正则系数',
+        values: ['0.1', '1', '3', '10'], raw: [0.1, 1, 3, 10], current: 1 },
     ],
     idw: [
-      { key: 'metric.power', values: ['0.5', '1', '2'] },
-      { key: 'cross_shed', values: ['开', '关'] },
+      { key: 'metric.power', label: 'IDW 距离幂',
+        values: ['0.5', '1', '1.5', '2', '2.5', '3', '4'],
+        raw: [0.5, 1, 1.5, 2, 2.5, 3, 4], current: 0.5 },
+      { key: 'metric.lx', label: 'IDW 棚长方向尺度 / m',
+        values: ['0.5', '1', '2', '3'], raw: [0.5, 1, 2, 3], current: 2 },
+      { key: 'metric.lz', label: 'IDW 竖直方向尺度 / m',
+        values: ['0.005', '0.01', '0.03', '0.12'], raw: [0.005, 0.01, 0.03, 0.12],
+        current: 0.005 },
+      { key: 'cross_shed', label: '跨棚邻居是否参与',
+        values: ['开', '关'], raw: [true, false], current: true },
     ],
+    fixed: [{ key: 'metric.ly', label: 'IDW y 方向尺度 / m', value: '1',
+              note: '固定 1.0，从未进过搜索空间' }],
   },
-  tuned_keys: [{ key: 'metric.power', value: '0.5', space: '0.5、1、2' }],
-  params: [
-    { param: 'metric.power', value: '0.5', note: 'IDW 距离幂' },
-    { param: 'metric.ly', value: '1', note: '固定 1.0，从未进过搜索空间' },
-  ],
   plateau: [{ dim: 'power', lo: '0.5', hi: '2' }],
   lz_note: '⚠️ lz = 0.005 落在搜索下界（0.005），这不是已收敛。',
   metrics: [
@@ -136,6 +169,17 @@ const DIAG = {
   n_points: 27936,
   n_sensors: 24,
   n_times: 1164,
+  // 屏上那份诊断是拿**哪一套**参数算的。后端把请求体里那十二个值原样回在
+  // 这里。与 `CAL.panel` 的十二个 `current` 逐位一致 —— 不一致的那一种由
+  // 「参数改过之后，屏上那份精度不作数」自己覆盖，别在这里调。
+  params_used: {
+    'trend.objective': 'reg:squarederror', 'trend.max_depth': 4,
+    'trend.learning_rate': 0.08, 'trend.n_estimators': 200,
+    'trend.min_child_weight': 3, 'trend.subsample': 0.85,
+    'trend.colsample_bytree': 0.8, 'trend.reg_lambda': 1,
+    'metric.power': 0.5, 'metric.lx': 2, 'metric.lz': 0.005,
+    'cross_shed': true,
+  },
   density: {
     bins: 60, lo: 5, hi: 45, n: 27936,
     counts: Array.from({ length: 60 }, () => Array.from({ length: 60 }, () => 0)),
@@ -179,6 +223,13 @@ async function mountWithDiag(diag: unknown = DIAG) {
   return w
 }
 
+/** 面板里某一维那一行。**按 key 找，不按次序找** —— 十二行里屏上第一个
+    `.now` 是 `trend.objective`，不是 `trend.max_depth`：`w.find('.now')`
+    拿到的是**目标函数**那一格。 */
+function rowOf(w: ReturnType<typeof mount>, key: string) {
+  return w.findAll('.panel .row').find((r) => r.text().includes(key))!
+}
+
 describe('页② 模型训练', () => {
   beforeEach(() => {
     installEnvironment()
@@ -209,12 +260,48 @@ describe('页② 模型训练', () => {
     }
   })
 
-  it('最优参数表把「当前值」和「从哪些值里挑的」并排放', async () => {
+  it('面板上十二个键、各自的候选值、当前那一档，都在屏上', async () => {
+    // 这条原来叫「最优参数表把『当前值』和『从哪些值里挑的』并排放」，盯的是
+    // 那张连接表里 `metric.power` 与 `0.5、1、2` 同屏。它防的是**清单与最优
+    // 参数表对不上号**（两个键空间不一样，见后端 `_SPACE_KEY`）。
+    // 判据换成同屏的四样（规格书 §六 给的新判据）：十二个键、每个键的中文名、
+    // 它的**全部**候选值、它当前那一档。
     stub({ '/api/features': FEATURES, '/api/calibration': CAL })
     const w = mount(TrainView)
     await flushPromises()
-    expect(w.text()).toContain('metric.power')
-    expect(w.text()).toContain('0.5、1、2')
+    const text = w.text()
+    for (const r of [...CAL.panel.trend, ...CAL.panel.idw]) {
+      expect(text, `${r.key} 没在屏上`).toContain(r.key)
+      expect(text, `${r.key} 的中文名没在屏上`).toContain(r.label)
+      // ⚠️ 候选值那一列**逐条比这个面板自己的元素**，不比整页文本：
+      // 页面上到处都是数字，`expect(text).toContain('1')` 那种断言等于没断。
+      const row = rowOf(w, r.key)
+      const opts = row.findAll('option')
+      const printed = opts.length
+        ? opts.map((o) => o.text())
+        : row.findAll('.ticks span').map((s) => s.text())
+      expect(printed, `${r.key} 的候选值印错了`).toEqual(r.values)
+    }
+  })
+
+  it('参数只住在一个地方：面板，不再是几张并排的表', async () => {
+    // 这条原来盯「最优参数的选择」这张卡里的 h4 恰好是两个 ——
+    // 它防的是**同一件事在屏上说了两遍**（那次删掉的是「这些参数真的进过
+    // 搜索空间」那张连接表）。判据换成：这一段里**一张表都没有**，
+    // 参数全部住在面板里。
+    // 直接扫「这一段里还有没有 table」，比扫 h4 的字面更贴近它防的事 ——
+    // h4 的名字以后还会变（比如两个区块改名），而「参数不该是表格」不会。
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    // 按「哪一段装着面板」找那一段，不按小标题的字面找 —— 标题以后会改，
+    // 而「参数住在这一段」不会。找不到时断言自己会说话，不要留一个 `!`。
+    const card = w.findAll('.block').find((b) => b.findComponent(ParamPanel).exists())
+    expect(card, '找不到装着参数面板的那一段').toBeTruthy()
+    const tables = card!.findAll('table').map((t) =>
+      t.findAll('th').map((th) => th.text()))
+    // 这一段里只剩平台区间那一张（维度 / 下界 / 上界）：十二个参数一张表都没有。
+    expect(tables).toEqual([['维度', '下界', '上界']])
   })
 
   it('口径说明原样显示 —— 这一页最大的谎就在这句话缺位的时候', async () => {
@@ -257,7 +344,6 @@ describe('页② 模型训练', () => {
         ...CAL, present: false,
         reason: '这一份数据集还没有标定包。',
         metrics: [], per_point: [], ab: null, worst_fold: null, lz_note: null,
-        params: [{ param: 'metric.lx', value: '2', note: '' }],
       },
     })
     const w = mount(TrainView)
@@ -382,7 +468,7 @@ describe('页② 模型训练', () => {
       '/api/features': FEATURES,
       '/api/calibration': {
         ...CAL, present: false, reason: '还没有标定包',
-        metrics: [], params: [], plateau: [], tuned_keys: [],
+        metrics: [], plateau: [],
         worst_fold: null, ab: null, n_folds: 0,
       },
     })
@@ -412,7 +498,7 @@ describe('页② 模型训练', () => {
         reason: '这一份数据集还没有标定包。',
         mismatch: { dataset_sig: '别的签名', created_at: '2026-07-27T20:00:00',
                     file: 'bundle_x-h20260727T1200_abc.json' },
-        metrics: [], params: [], plateau: [], tuned_keys: [],
+        metrics: [], plateau: [],
         worst_fold: null, ab: null, n_folds: 0,
       },
     })
@@ -428,7 +514,7 @@ describe('页② 模型训练', () => {
       '/api/features': FEATURES,
       '/api/calibration': {
         ...CAL, present: false, reason: '这一份数据集还没有标定包。', mismatch: null,
-        metrics: [], params: [], plateau: [], tuned_keys: [],
+        metrics: [], plateau: [],
         worst_fold: null, ab: null, n_folds: 0,
       },
     })
@@ -445,7 +531,7 @@ describe('页② 模型训练', () => {
       '/api/features': FEATURES,
       '/api/calibration': {
         ...CAL, present: false, reason: '还没有标定包',
-        metrics: [], params: [], plateau: [], tuned_keys: [],
+        metrics: [], plateau: [],
         worst_fold: null, ab: null, n_folds: 0,
       },
     })
@@ -508,7 +594,7 @@ describe('页② 模型训练', () => {
       '/api/features': FEATURES,
       '/api/calibration': {
         ...CAL, present: false, reason: '还没有标定包',
-        metrics: [], params: [], plateau: [], tuned_keys: [],
+        metrics: [], plateau: [],
         worst_fold: null, ab: null, n_folds: 0,
       },
     })
@@ -681,5 +767,166 @@ describe('页② 模型训练', () => {
       '上一份包的「基线 MAE」还挂在指标卡里').not.toContain('基线 MAE')
     // 不能静默：数字一转眼没了，用户得知道它们为什么没了、怎么弄回来。
     expect(w.text()).toContain('已经不作数')
+  })
+
+  it('拖动不发任何请求 —— 值只活在前端', async () => {
+    // 规格书 §4.1：滑块会连续产生几十个中间值，每个都发一次请求既没意义、
+    // 又会让后端缓存塞满废键。
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    const calls = (fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length
+    // 拿面板里那一行，不用 `findAll('input[type="range"]')[0]` —— 那是全页第一个
+    // 滑块，页面上多一个滑块它就换人了。
+    const slider = rowOf(w, 'trend.max_depth').find('input[type="range"]')
+    ;(slider.element as HTMLInputElement).value = '1'
+    await slider.trigger('input')
+    ;(slider.element as HTMLInputElement).value = '2'
+    await slider.trigger('input')
+    await flushPromises()
+    expect((fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length)
+      .toBe(calls)
+  })
+
+  it('开始训练发出去的是屏上那十二个值', async () => {
+    // T5：面板与请求不许分家。读的是**请求体**，而且断言「body 里那个数
+    // 就是屏上那一格」—— 比断言「body 里是我以为的那个数」硬：
+    // 后者在夹具改了之后会跟着一起改，前者不会。
+    const bodies: Record<string, unknown>[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url)
+      let body: unknown = FEATURES
+      if (u.includes('/api/calibration/diagnostics')) {
+        const sent = JSON.parse(String(init?.body)) as { params: Record<string, unknown> }
+        bodies.push(sent.params)
+        // 回声：后端算的就是这一套值，于是这条回包也是**真实形状**
+        // （`params_used` 必与请求体一致），`diagForBundle` 那条判据不会误挡。
+        body = { ...DIAG, params_used: sent.params }
+      } else if (u.includes('/api/calibration')) {
+        body = CAL
+      }
+      return new Response(JSON.stringify(body), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+    const w = mount(TrainView)
+    await flushPromises()
+
+    // 手调一维，再从**屏上**读它现在那一档（读 DOM，不读夹具）。
+    const depth = rowOf(w, 'trend.max_depth')
+    const guide = depth.find('input[type="range"]')
+    ;(guide.element as HTMLInputElement).value = '3'      // 第 4 档 → 6
+    await guide.trigger('input')
+    const shown = depth.find('.now').text()
+
+    await w.findAll('button').find((b) => b.text() === '开始训练')!.trigger('click')
+    await flushPromises()
+
+    expect(bodies.length).toBe(1)
+    const expected: Record<string, unknown> = Object.fromEntries(
+      [...CAL.panel.trend, ...CAL.panel.idw].map((r) => [r.key, r.current]))
+    expected['trend.max_depth'] = 6                       // 上面拖过的那一格
+    expect(bodies[0], '发出去的不是那十二个').toEqual(expected)
+    expect(Number(shown), '屏上那一格与发出去的那个数对不上').toBe(6)
+    expect(bodies[0]['cross_shed']).toBe(true)            // 布尔原样过去，没被字符串化
+  })
+
+  it('参数改过之后，屏上那份精度不作数', async () => {
+    // T6 / 规格书 §四.3。**这一条与下一条是一对** —— 只写这一条的话，
+    // 一个「永远不显示」的实现也能过，而那是这条规则最坏的坏法：
+    // 精度静默地再也不出现，还不报错。
+    const w = await mountWithDiag()
+    // 先证明它本来是在的。用 `:574` 与 `:695` 那两条用例认过的字串，
+    // 不另编一个（编出来的那个万一不在屏上，这两条断言就成了摆设）。
+    expect(w.text()).toContain('拿背景温度当棚温')
+    expect(w.findAll('.stat').map((c) => c.find('.label').text())).toContain('基线 MAE')
+
+    const depth = rowOf(w, 'trend.max_depth')
+    ;(depth.find('input[type="range"]').element as HTMLInputElement).value = '0'
+    await depth.find('input[type="range"]').trigger('input')
+
+    expect(w.text(), '上一套参数的基线还在屏上').not.toContain('拿背景温度当棚温')
+    expect(w.findAll('.stat').map((c) => c.find('.label').text()),
+      '上一套参数的「基线 MAE」还挂在指标卡里').not.toContain('基线 MAE')
+    // 不能静默：数字一转眼没了，用户得知道它们为什么没了、怎么弄回来。
+    expect(w.text()).toContain('参数换过了')
+  })
+
+  it('参数没改时，精度照常显示', async () => {
+    // 上面那条的反面。两条合起来才钉住「改过才不作数」——
+    // 少了这一条，一个把 `diagForBundle` 写成恒返回 null 的实现照样全绿。
+    const w = await mountWithDiag()
+    expect(w.text()).toContain('拿背景温度当棚温')
+    expect(w.text()).not.toContain('参数换过了')
+  })
+
+  it('参数优选跑完之后，面板的值被刷成包里的那套', async () => {
+    // T8：用户的「优选完的参数自动调整参数值」（规格书 §4.2）。
+    // 前端**不加任何新逻辑** —— 它只是「不覆盖从后端取来的值」而已。
+    // 骨架照 `:640` 那条「任务跑完之后重取一次标定包」：提交 → 立刻轮询一次 →
+    // 推进 1 秒 → 轮询回 `done` → 重取 `/api/calibration`。
+    // 这里只是让**第二趟**取回来的 `panel` 与第一趟不同（max_depth 4 → 6）。
+    vi.useFakeTimers()
+    let polls = 0
+    let cals = 0
+    const RUN = { id: 'j9', state: 'running', progress: '阶段 2 试验之间',
+                  elapsed_s: 3.2, error: null, created_at: '2026-10-07T10:00:00+00:00' }
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const u = String(url)
+      let body: unknown = FEATURES
+      if (u.includes('/api/calibration/jobs/')) {           // 轮询（带 id）
+        polls += 1
+        body = polls >= 2 ? { ...RUN, state: 'done', progress: '', elapsed_s: 41.7 } : RUN
+      } else if (u.includes('/api/calibration/jobs')) {     // 提交（POST，不带 id）
+        body = RUN
+      } else if (u.endsWith('/api/calibration')) {
+        cals += 1
+        // 第二趟 = 包已经写回盘上了：优选把 max_depth 从 4 调到了 6。
+        // ⚠️ 只改那一格的 `current`，`raw` 与 `values` 一个都不动 ——
+        // 6 本来就在候选 `['3','4','5','6']` 里，这正是后端真优选之后发的形状。
+        body = cals === 1 ? CAL : {
+          ...CAL,
+          panel: {
+            ...CAL.panel,
+            trend: CAL.panel.trend.map((r) =>
+              r.key === 'trend.max_depth' ? { ...r, current: 6 } : r),
+          },
+        }
+      }
+      return new Response(JSON.stringify(body), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(rowOf(w, 'trend.max_depth').find('.now').text(), '第一趟不是包里那套')
+      .toBe('4')
+
+    await w.findAll('button').find((b) => b.text() === '参数优选')!.trigger('click')
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+
+    expect(cals, '任务跑完之后没有重取标定包').toBe(2)
+    expect(rowOf(w, 'trend.max_depth').find('.now').text(), '重取回来的值没有落到面板上')
+      .toBe('6')
+    w.unmount()
+    vi.useRealTimers()
+  })
+
+  it('手改过值之后，B 组那句口径才出现', async () => {
+    // T9 / 规格书 §5.1。手动调参是**拿眼睛在屏上搜**：拖滑块时屏上正摆着
+    // B 组那几折的 MAE，而那几折的标签写着「B 组，未参与选参」。照着它调，
+    // B 组就不再是没被看过的样本了。不藏数（藏不住，他也能拿 A 组的数调），
+    // 加一句话。判据用最终定稿的那半句，见 4d。
+    const w = await mountWithDiag()
+    expect(w.text(), '还没动手就已经在认错了').not.toContain('不是没被看过的样本')
+
+    const depth = rowOf(w, 'trend.max_depth')
+    ;(depth.find('input[type="range"]').element as HTMLInputElement).value = '0'
+    await depth.find('input[type="range"]').trigger('input')
+
+    expect(w.text(), '改过值了，那句话没上来').toContain('不是没被看过的样本')
+    expect(w.text()).toContain('参数优选')          // 下一步给出路
   })
 })

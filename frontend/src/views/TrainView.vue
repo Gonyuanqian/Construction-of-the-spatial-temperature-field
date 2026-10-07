@@ -19,16 +19,17 @@
  * 2026-10-06（spec §6.2 页②）：页顶加一排指标卡，散文折进页尾「口径与出处」。
  * 指标卡**不许带 `h2`/`h3`** —— 三段小标题的条数与次序有测试钉着（§十三.1）。
  */
-import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import type {
-  CalibrationPayload, DiagnosticsPayload, FeaturesPayload, JobSummary,
+  CalibrationPayload, DiagnosticsPayload, FeaturesPayload, JobSummary, ParamValue,
 } from '../api/types'
-import { getJson } from '../api/client'
+import { getJson, postJson } from '../api/client'
 import EChart from '../charts/EChart.vue'
 import { buildOofDensityOption } from '../charts/options/oofDensity'
 import { buildResidualOption } from '../charts/options/residualBins'
 import Card from '../components/Card.vue'
+import ParamPanel from '../components/ParamPanel.vue'
 import Provenance from '../components/Provenance.vue'
 import StatCard from '../components/StatCard.vue'
 import StatRow from '../components/StatRow.vue'
@@ -45,34 +46,40 @@ const cal = useAsync(() => getJson<CalibrationPayload>('/api/calibration'))
  * 而用户可能只想看参数。由下面那个按钮触发，`useAsync` 只在 `run()` 被调
  * 时才发请求。
  *
- * 它走的是 `GET /api/calibration/diagnostics` 而**不是**一次标定 job：
- * 用户说的是「更新精度」，不是「重搜参数」。后端按包缓存，第二次秒回。
+ * **POST 而不是 GET**：参数第一次进了这条链的输入（规格书 §3.2）。
+ * 请求体读的是**调用那一刻**的 `panelValues` —— 用户在按之前拖过滑块，
+ * 发出去的就必须是他拖过之后的那一套。
  */
-const diag = useAsync(() => getJson<DiagnosticsPayload>('/api/calibration/diagnostics'))
+const diag = useAsync(() =>
+  postJson<DiagnosticsPayload>('/api/calibration/diagnostics',
+                               { params: panelValues.value }))
 const job = useJob()
 
 /**
- * 屏上这份诊断**是不是屏上这份包算出来的**。
+ * 屏上这份诊断**是不是屏上这套值与这份包算出来的**。
  *
- * 后端的两个接口各回一个 `created_at`，取值都是**同一份标定包的**
- * `bundle.created_at`（`routes/calibration.py:93` 与 `:322` 读的是同一个
- * 字段）。所以两个值不相等 ⟺ 这一屏上的精度属于**上一份包**。
+ * 两道比对合成一道「该不该显示」：
+ * ① `created_at` —— 后端的两个接口各回一个，取值都是**同一份标定包**的
+ *    （`routes/calibration.py` 读的是同一个字段）。不相等 ⟺ 精度属于上一份包。
+ * ② `params_used` —— 后端**实际用的那套值**。与屏上这套不相等
+ *    ⟺ 用户改过参数，而图还是改之前那张。
  *
- * **为什么是一道不变式，不是一个事件处理**：点完「参数优选」之后包换了新的，
- * 而诊断是**按包缓存**的 —— 原来这里直接读 `diag.data.value`，于是新的
- * 参数表与新的指标卡旁边，挂着上一份包的基线行、倍数行与两张图，而它们
- * 全都盖着「算」这张图章。一屏两套数，且从屏上看不出哪一个是哪一份包的。
- * 写成比较而不是「任务 done 时清一次」，是因为要挡的不止那一条路：
- * 换一份数据集、以后任何一条把包换掉的路径，都不必记得来这里清一次。
+ * **为什么是两道不变式，不是一个事件处理**：点完「参数优选」包换了新的、
+ * 拖一次滑块值变了 —— 两条路都要挡，而「记得在某处清一次」正是会漏的那种写法。
  *
- * ⚠️ 代价写在明面上：重标一次即使**挑出了逐位相同的参数**，包也会以新的
- * `created_at` 落盘，于是这份诊断被挡下来、要按一次「开始训练」重算
- * （诊断缓存也是按 `created_at` 键入的，本来就会重算）。
+ * ⚠️ 两边都来自 JSON，所以 `===` 是对的：JS 里 `1` 与 `1.0` 是同一个值，
+ * `true` 只有 `true` 与之相等。**别把它写成 `String(a) === String(b)`** ——
+ * 那会把「相等」变成永不成立（一条永远显示不出来的精度，而不报错）。
  */
 const diagForBundle = computed<DiagnosticsPayload | null>(() => {
   const d = diag.data.value
   if (!d) return null
-  return d.created_at === cal.data.value?.created_at ? d : null
+  if (d.created_at !== cal.data.value?.created_at) return null
+  const p = cal.data.value?.panel
+  if (!p) return null
+  const same = [...p.trend, ...p.idw]
+    .every((r) => d.params_used[r.key] === panelValues.value[r.key])
+  return same ? d : null
 })
 
 onMounted(async () => {
@@ -144,17 +151,36 @@ const mismatchLine = computed(() => {
 })
 
 /**
- * 待优选清单，两段拼成一排表。**后端给的次序即为屏上的次序**，
- * 前端不排 —— 排序是数值行为，而这一页一个数都不算（硬约束 1）。
+ * 屏上那一套值：**唯一的**一份状态（规格书 §1.1）。
+ *
+ * 手调与优选是它的两条来路，不是两个模式 —— 所以没有「手动 / 自动」开关。
+ * 刚打开 / 刚换数据集时是包里的那套；用户拖了就是手上这套；
+ * 「参数优选」跑完又被刷成优选结果。而「开始训练」永远用屏上这套。
+ *
+ * ⚠️ **重新播种的时机就是「载荷换了」**：`cal.run()` 之后 `data` 是新对象，
+ * 于是面板跟着变成新的那套（这正是用户那句「优选完的参数自动调整参数值」——
+ * 前端不加任何新逻辑，它只是**不覆盖**从后端取来的值而已）。
+ * 用 watch 而不是「任务 done 时手动清一次」：换数据集也一样要重播，
+ * 而那条路不必记得来这里清（与 `diagForBundle` 是同一条理由）。
  */
-const spaceRows = computed(() => {
-  const s = cal.data.value?.space
-  if (!s) return [] as { model: string; key: string; values: string[] }[]
-  return [
-    ...s.trend.map((r) => ({ model: 'XGBoost', key: r.key, values: r.values })),
-    ...s.idw.map((r) => ({ model: 'IDW', key: r.key, values: r.values })),
-  ]
+const panelValues = ref<Record<string, ParamValue>>({})
+
+watch(() => cal.data.value?.panel, (p) => {
+  if (!p) return
+  panelValues.value = Object.fromEntries(
+    [...p.trend, ...p.idw].map((r) => [r.key, r.current]))
+}, { immediate: true })
+
+/** 用户手上这套与包里那套不一致。**口径那一句靠它**（规格书 §5.1）。 */
+const handTuned = computed(() => {
+  const p = cal.data.value?.panel
+  if (!p) return false
+  return [...p.trend, ...p.idw].some((r) => panelValues.value[r.key] !== r.current)
 })
+
+function onPick(key: string, value: ParamValue): void {
+  panelValues.value = { ...panelValues.value, [key]: value }
+}
 
 /** 提交中 / 正在跑。两者都禁用按钮 —— 点第二次不会更快。 */
 const busy = computed(() =>
@@ -184,6 +210,13 @@ async function onCancel(): Promise<void> {
 }
 
 const acc = computed(() => diagForBundle.value?.accuracy ?? null)
+
+/** 屏上那份诊断是**哪一种**不作数。空串 = 作数。 */
+const staleReason = computed(() => {
+  const d = diag.data.value
+  if (!d || diagForBundle.value) return ''
+  return d.created_at === cal.data.value?.created_at ? 'params' : 'bundle'
+})
 
 /**
  * 倍数那一行。文案是「基线误差是模型的 N 倍」而不是「误差降到 1/N」：
@@ -276,23 +309,34 @@ const residualOptions = computed(() => {
     <Card class="block">
       <h3>最优参数的选择</h3>
 
-      <!-- 待优选参数清单：**点之前就在屏上**（规格书 §三 的「先」字）。
-           它由后端从两个搜索空间生成，与盘上有没有包无关，所以空态下也在。
-           ⚠️ 这张表**不配引子散文**：`design/prose.test.ts` 把「四页里所有
+      <!-- 参数面板：**一套值，两条来路**（规格书 §一）。手调与优选改的是
+           同一套值，所以没有「手动 / 自动」模式开关。
+           ⚠️ 面板**不配引子散文**：`design/prose.test.ts` 把「四页里所有
            `p.note` 要么折进 `details.why`、要么是状态/读数/分级」当作判据
-           （spec §十二.11），而「这两个模型搜过什么」属于口径 —— 它现在
-           住在页尾那处「口径与出处」里。 -->
-      <h4>待优选的参数</h4>
-      <table v-if="spaceRows.length">
-        <thead><tr><th>模型</th><th>参数</th><th>候选值</th></tr></thead>
-        <tbody>
-          <tr v-for="r in spaceRows" :key="r.key">
-            <td>{{ r.model }}</td>
-            <td class="num">{{ r.key }}</td>
-            <td class="num">{{ r.values.join('、') }}</td>
-          </tr>
-        </tbody>
-      </table>
+           （spec §十二.11），而「这两个模型能调什么」属于口径 ——
+           它现在住在页尾那处「口径与出处」里。 -->
+      <ParamPanel
+        v-if="cal.data.value?.panel"
+        :panel="cal.data.value.panel"
+        :values="panelValues"
+        @pick="onPick"
+      />
+
+      <!-- 手调会把 B 组污染掉（规格书 §5.1）：这次唯一新增的诚实义务。
+           拖滑块的时候，屏上正摆着 B 组那几折的 MAE，而那几折的标签里
+           写着「B 组，未参与选参」。照着它调，B 组就不再是没被看过的样本了。
+           不藏数：藏不住（他也能拿 A 组的数调），而把 B 组从屏上拿掉，
+           这一屏就失去了它最重要的那个数：那把尺子。
+           ⚠️ 判据是 `handTuned` **一个**，不要写成 `handTuned && acc`。
+           `acc` 的来路是 `diagForBundle`，而它恰好**在这套值变了的时候**
+           返回 null —— 也就是在这句话最该出现的时候。挂上去就等于写了一
+           句永远不会显示的话，而「改值前没有」那半条断言照样绿。
+           `state` 是 `prose.test.ts` 放行的类之一。 -->
+      <p v-if="handTuned" class="note state">
+        这套参数是你手调的，而你调的时候上面那几个 B 组的数就在屏上。
+        拿它挑出来的模型，B 组已经不是没被看过的样本了，那个数会偏乐观。
+        要一把干净的尺子，跑一次参数优选。
+      </p>
 
       <p v-if="cal.data.value && !cal.data.value.present" class="unset">
         <strong>未标定</strong>：{{ cal.data.value.reason }}
@@ -304,34 +348,10 @@ const residualOptions = computed(() => {
            已有的数**，属于最该被读到的那些话。 -->
       <p v-if="mismatchLine" role="alert" class="alert">{{ mismatchLine }}</p>
 
-      <table v-if="cal.data.value?.params.length">
-        <thead>
-          <tr><th>参数</th><th>值</th><th>说明</th></tr>
-        </thead>
-        <tbody>
-          <tr v-for="p in cal.data.value.params" :key="p.param">
-            <td class="num">{{ p.param }}</td>
-            <td class="num">{{ p.value }}</td>
-            <td class="note">{{ p.note }}</td>
-          </tr>
-        </tbody>
-      </table>
-
-      <template v-if="cal.data.value?.tuned_keys.length">
-        <h4>这些参数真的进过搜索空间</h4>
-        <table>
-          <thead>
-            <tr><th>键</th><th>当前值</th><th>本次搜索空间</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="t in cal.data.value.tuned_keys" :key="t.key">
-              <td class="num">{{ t.key }}</td>
-              <td class="num">{{ t.value }}</td>
-              <td class="num">{{ t.space }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </template>
+      <!-- 参数的值不再是一张表：它住在上面那个面板里（规格书 §2.1）。
+           原「键 / 当前值 / 本次搜索空间」那张连接表已于同日删除 ——
+           它是清单与最优参数表按同一个键连起来的结果，屏上多一张表，
+           一个数都没多。 -->
 
       <template v-if="cal.data.value?.plateau.length">
         <h4>平台区间（最优 +1% 以内的范围）</h4>
@@ -390,13 +410,17 @@ const residualOptions = computed(() => {
       <p v-if="diag.error.value" role="alert" class="alert">
         精度没算出来：{{ diag.error.value }}
       </p>
-      <!-- 包换过之后，屏上那一份诊断属于**上一份包**（见 `diagForBundle`）——
+      <!-- 包换过之后、或参数改过之后，屏上那一份诊断不作数 ——
            整块不显示。不写这一句就是静默：数字一转眼没了，用户既不知道
-           为什么没了，也不知道怎么把它们弄回来。`role="alert"` 是因为这一句
-           讲的是「你刚才看的那些数已经不作数了」，属于最该被读到的那些话。 -->
-      <p v-if="diag.data.value && !diagForBundle" role="alert" class="alert">
-        参数换过了：屏上那份精度是拿上一份标定包算的，已经不作数，所以不显示。
+           为什么没了，也不知道怎么把它们弄回来。`role="alert"` 是因为
+           这一句讲的是「你刚才看的那些数已经不作数了」，属于最该被读到的。 -->
+      <p v-if="staleReason === 'bundle'" role="alert" class="alert">
+        包换过了：屏上那份精度是拿上一份标定包算的，已经不作数，所以不显示。
         点一次「开始训练」按当前这份包重算。
+      </p>
+      <p v-else-if="staleReason === 'params'" role="alert" class="alert">
+        参数换过了：屏上那份精度是拿上一套参数算的，已经不作数，所以不显示。
+        点一次「开始训练」按当前这套参数重算。
       </p>
 
       <template v-if="cal.data.value">

@@ -141,7 +141,11 @@ export const PAGE_PAYLOADS: Record<string, unknown> = {
     // 缺了它页② 会静默渲染 `undefined`，而冒烟测试照样绿。
     mismatch: null,
     groups_sig: null, dataset_sig: 's', feature_groups: [], trend_kind: 'xgboost',
-    tuned_keys: [], params: [], plateau: [], lz_note: null,
+    // 真实后端在空态下也发 8 + 4 行（`_panel` 与盘上有没有包无关）；
+    // 这里给空数组，是为了让冒烟测试不依赖那十二个值 —— 面板的行怎么渲染
+    // 由 `ParamPanel.test.ts` 与 `TrainView.test.ts` 兜着，不是这里。
+    panel: { trend: [], idw: [], fixed: [] },
+    plateau: [], lz_note: null,
     metrics: [], per_point: [], ab: null, fold_kind: null, n_folds: 0,
     worst_fold: null, ab_note: '', note: '兜底参数不是最优',
   },
