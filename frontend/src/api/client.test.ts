@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { ApiError, getJson, uploadDataset } from './client'
+import { ApiError, getJson, postJson, uploadDataset } from './client'
 
 describe('getJson', () => {
   beforeEach(() => vi.restoreAllMocks())
@@ -42,6 +42,53 @@ describe('getJson', () => {
     for (const bad of ['——', '**', '`', ' · ', '→', '↳']) {
       expect(msg, `${bad} 是禁用字形`).not.toContain(bad)
     }
+  })
+})
+
+describe('postJson', () => {
+  beforeEach(() => vi.restoreAllMocks())
+
+  it('带请求体时用 JSON 发出去，并写明 Content-Type', async () => {
+    const calls: [string, RequestInit | undefined][] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push([String(url), init])
+      return new Response('{"ok":true}', {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+    await postJson('/api/calibration/diagnostics', { params: { 'metric.power': 2 } })
+    expect(calls.length).toBe(1)
+    expect(calls[0][1]?.method).toBe('POST')
+    expect(calls[0][1]?.body).toBe('{"params":{"metric.power":2}}')
+    const h = calls[0][1]?.headers as Record<string, string>
+    expect(h['Content-Type']).toBe('application/json')
+  })
+
+  it('不带请求体时与实时那三个动作接口一模一样：没有 body，没有 Content-Type', async () => {
+    // ⚠️ 这一条防的是「为了加参数顺手给所有 POST 都挂上 JSON 头」——
+    // 实时那三个接口`/live/prepare`、`/live/start`、`/live/pause`
+    // 收的是**空请求体**，而它们现在一个字都没改。
+    const calls: [string, RequestInit | undefined][] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push([String(url), init])
+      return new Response('{"ok":true}', {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+    await postJson('/api/live/start')
+    expect(calls[0][1]?.body).toBeUndefined()
+    expect(calls[0][1]?.headers).toBeUndefined()
+  })
+
+  it('422 时把后端的 detail 原样抛出来', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify({ detail: 'metric.power 只能取这些值：0.5、1' }), {
+        status: 422, headers: { 'Content-Type': 'application/json' },
+      })))
+    const err = await postJson('/api/calibration/diagnostics', {}).catch((e) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(422)
+    expect((err as ApiError).message).toContain('只能取这些值')
   })
 })
 

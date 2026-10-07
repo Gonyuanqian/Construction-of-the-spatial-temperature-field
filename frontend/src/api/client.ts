@@ -50,11 +50,28 @@ export async function getJson<T>(path: string): Promise<T> {
   return (await res.json()) as T
 }
 
-/** `getJson` 的写那一半。实时模式那三个动作接口是 `POST`，**没有请求体**。 */
-export async function postJson<T>(path: string): Promise<T> {
+/**
+ * `getJson` 的写那一半。
+ *
+ * `body` 给了就按 JSON 发（带 `Content-Type`），不给就与实时那三个动作接口
+ * 一模一样：**没有请求体、没有头**。两条分支写成三目而不是「永远挂 JSON 头，
+ * body 为空串」—— 后者会把那三个接口从「无请求体」悄悄变成「空 JSON 体」，
+ * 而它们现在一个字都没改。
+ *
+ * `JSON.stringify` 的返回值可能是 `undefined`（传进来 `undefined` 时），
+ * 所以判的是 `body === undefined` 而不是 `JSON.stringify(body)` 的真假 ——
+ * 一个合法的 `null` 体不该被当成「没给」。
+ */
+export async function postJson<T>(path: string, body?: unknown): Promise<T> {
   let res: Response
   try {
-    res = await fetch(path, { method: 'POST' })
+    res = await fetch(path, body === undefined
+      ? { method: 'POST' }
+      : {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
   } catch {
     throw new ApiError(OFFLINE, 0)
   }

@@ -180,26 +180,44 @@ export interface FeaturesPayload {
  * 标定当时算好、写在包里；页面只负责原样摆出来，不重算。
  * ------------------------------------------------------------------ */
 
-/** 待优选的参数清单里的一行（`GET /api/calibration` 的 `space`）。 */
-export interface SpaceRow {
-  /** `metric.power` / `cross_shed` / `trend.max_depth` —— 与 `tunedKeys` 同一套键。 */
-  key: string
-  /** 候选值，**已经格式化成屏上的写法**（布尔是「开」「关」）。后端给的，前端不转。 */
-  values: string[]
-}
+/** 参数值。JSON 只认这三种 —— 布尔是 `cross_shed`，字符串是 `objective`。 */
+export type ParamValue = string | number | boolean
 
 /**
- * 待优选的参数清单（规格书 §三）。**与盘上有没有包无关** ——
- * `present: false` 那条路上也给，否则「先列出要搜什么」这个「先」字就没了。
+ * 面板上的一维（`GET /api/calibration` 的 `panel.trend` / `panel.idw`）。
  *
- * ⚠️ `idw` 里**没有** `metric.ly`：它恒为 1.0、从未进过搜索空间。它仍然在
- * `params`（最优参数表）里，note 写着为什么 —— 两张表说的不是一件事。
+ * **`values` 与 `raw` 同下标**：前者是印在屏上的那一串（后端走 `fmt_value`），
+ * 后者是**要发回去的那个值**。前端只做一件事：下标 → `raw[index]`。
+ * 不插值、不取整、不做单位换算（规格书 硬约束 1）。
+ *
+ * ⚠️ 分成两列而不是只发 `values`：否则前端要把「开」解析回 `true`、
+ * 把 `"0.5"` 解析回 `0.5` —— 那是把**印法**当协议。
  */
-export interface CalibrationSpace {
+export interface PanelRow {
+  /** `metric.power` / `cross_shed` / `trend.max_depth`。 */
+  key: string
+  /** 中文名。**从后端来** —— 它现在是控件的标签，前端不另写一份。 */
+  label: string
+  values: string[]
+  raw: ParamValue[]
+  /** 现在这一维取的是哪个。**后端保证它一定在 `raw` 里**（包若拿旧空间训的，
+   *  后端会把当前值并进候选）—— 所以前端的 `indexOf` 一定找得到。 */
+  current: ParamValue
+}
+
+/** 不进搜索域、但仍要在面板上露一行说明的参数（当前只有 `metric.ly`）。 */
+export interface FixedRow { key: string; label: string; value: string; note: string }
+
+/**
+ * 参数面板。**一套值，两条来路**（规格书 §一）：手调与优选改的是同一套值。
+ */
+export interface CalibrationPanel {
   /** XGBoost 的八个，含 `objective`。 */
-  trend: SpaceRow[]
-  /** IDW 的四个。 */
-  idw: SpaceRow[]
+  trend: PanelRow[]
+  /** IDW 的四个：`metric.power` / `metric.lx` / `metric.lz` / `cross_shed`。 */
+  idw: PanelRow[]
+  /** 只给说明、不给控件的那几个。 */
+  fixed: FixedRow[]
 }
 
 /**
@@ -217,8 +235,6 @@ export interface JobSummary {
   created_at: string
 }
 
-export interface TunedKeyRow { key: string; value: string; space: string }
-export interface ParamRow { param: string; value: string; note: string }
 export interface PlateauRow { dim: string; lo: string; hi: string }
 export interface MetricRow {
   /**
@@ -266,12 +282,13 @@ export interface CalibrationPayload {
   feature_groups: string[]
   trend_kind: string
   /**
-   * 待优选的参数清单。⚠️ **两条分支都给这一格** —— 它是模块常量，
-   * 不依赖盘上有没有包。只在有包时给，就是把「要搜什么」藏到跑完之后。
+   * 参数面板。⚠️ **两条分支都给这一格** —— 它是模块常量加兜底值，
+   * 不依赖盘上有没有包。只在有包时给，就是把「能调什么」藏到跑完之后。
+   *
+   * 它取代了原来的 `space`（待优选清单）与 `params`（最优参数表）：
+   * 那两张表说的是同一件事的两面，接缝就是这里的 `values` 与 `current`。
    */
-  space: CalibrationSpace
-  tuned_keys: TunedKeyRow[]
-  params: ParamRow[]
+  panel: CalibrationPanel
   plateau: PlateauRow[]
   /**
    * ⚠️ 可以是 null。只有 lz 贴着搜索下界时后端才给这句警告；没有触发就是 null ——
@@ -614,5 +631,10 @@ export interface DiagnosticsPayload {
   }
   /** 三项，次序即屏上的次序。 */
   residual: ResidualPanel[]
+  /**
+   * 后端**实际用的那套原始值**。不是给用户看的 —— 它是那条失效规则的凭据：
+   * 屏上这套值与它不一致时，这一整块精度不作数（规格书 §四.3）。
+   */
+  params_used: Record<string, ParamValue>
   note: string
 }
