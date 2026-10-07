@@ -515,6 +515,32 @@ def test_没有包时诊断出口报_409_并说清下一步(monkeypatch, tmp_pat
     assert "参数优选" in r.json()["detail"]
 
 
+def test_请求体不合法时报_422_而不是被没有包的_409_盖住(monkeypatch, tmp_path):
+    """⚠️ 次序：**结构检查排在 409 之前**（与上一条互为对照）。
+
+    上一条送的是**合法**请求体，于是 422 与 409 谁也分不出先后（两种实现都绿）；
+    这一条把「没有包」与「请求体不合法」两个条件**同时**摆上桌，只认 422 ——
+    若把结构检查挪到 409 之后，「先去做参数优选」那个 409 就会盖住客户端
+    自己的 bug（键写漏了），而这一屏最不能出的错就是「把哪一处错说成哪一处」。
+
+    请求体故意漏键：`{"metric.power": 2}` 少另外十一维，`_validated_shape`
+    必拒（缺键那条分支），且**与盘上有没有包无关**。
+    """
+    from fastapi.testclient import TestClient
+    from api import deps, paths
+    from api.main import create_app
+    from api.routes import calibration as cal_routes
+    deps.set_current_dataset(paths.dataset_path())
+    monkeypatch.setattr(cal_routes, "CONFIGS_ROOT", tmp_path)
+    c = TestClient(create_app())
+    r = c.post("/api/calibration/diagnostics",
+               json={"params": {"metric.power": 2}})
+    assert r.status_code == 422, (
+        f"结构检查应当排在 409 之前：拿到 {r.status_code} "
+        f"{r.json().get('detail')!r}")
+    assert "缺了这些参数" in r.json()["detail"]
+
+
 def test_诊断的上屏文案过了字形守卫(client):
     """随响应体上屏的纯文本不许夹带被禁的连接符与 markdown 标记（硬约束 4）。"""
     b = _post(client).json()

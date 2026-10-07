@@ -44,6 +44,11 @@ NO_BUNDLE_REASON = (
 _AB_NOTE = ("gap = A 组 MAE − B 组 MAE。负数是好消息：A 组是挑参数用的那一组，"
             "它比 B 组好是必然的；这个差有多大，才说明「调参调出来的是不是只对 A 组有效」。")
 
+#: 请求体结构不对时给的形状提示。**两处报的是同一件事**（`post_diagnostics` 里
+#: 「body 不是对象」那一层，与 `_validated_shape` 里「params 不是对象」那一层），
+#: 文案只留一份 —— 免得改一处漏改另一处。
+_BODY_SHAPE_HINT = '请求体要长成 {"params": {"metric.power": 2}} 这样。'
+
 
 @router.get("/calibration")
 def get_calibration() -> dict[str, Any]:
@@ -408,7 +413,7 @@ def _validated_shape(params: Any) -> dict[str, Any]:
     """
     if not isinstance(params, dict):
         raise HTTPException(status_code=422,
-                            detail='请求体要长成 {"params": {"metric.power": 2}} 这样。')
+                            detail=_BODY_SHAPE_HINT)
     unknown = sorted(set(params) - set(TUNED_KEYS))
     if unknown:
         hint = "（metric.ly 恒为 1.0，不在搜索域内）" if "metric.ly" in unknown else ""
@@ -515,7 +520,7 @@ async def post_diagnostics(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail="请求体不是 JSON。")
     if not isinstance(body, dict):
         raise HTTPException(status_code=422,
-                            detail='请求体要长成 {"params": {"metric.power": 2}} 这样。')
+                            detail=_BODY_SHAPE_HINT)
     params = _validated_shape(body.get("params"))
 
     ds = deps.get_train_dataset()

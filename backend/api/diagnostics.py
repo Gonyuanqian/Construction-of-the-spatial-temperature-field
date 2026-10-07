@@ -274,7 +274,7 @@ def compute(ds: Dataset, groups, bundle, cfg=None) -> dict[str, Any]:
 _CACHE = DiagnosticsCache()
 
 
-def get_or_compute(ds, groups, bundle, params_sig: str, cfg=None) -> dict[str, Any]:
+def get_or_compute(ds: Dataset, groups, bundle, params_sig: str, cfg=None) -> dict[str, Any]:
     """出口用这一个。"""
     return _CACHE.get(ds, groups, bundle, params_sig, cfg)
 
