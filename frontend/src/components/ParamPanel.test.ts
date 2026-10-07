@@ -124,6 +124,23 @@ describe('ParamPanel', () => {
     expect(idw.text()).toContain('从未进过搜索空间')
   })
 
+  it('固定值那行的键不与中文名粘成一句', () => {
+    // 上一行那一句钉的是「键在屏上」，这一句钉的是**它在屏上还认得出是键**：
+    // 固定值那行是 `<p class="note">`（正文），没有控件行那种 flex 把键推到边上，
+    // 中间再不留东西，屏上读到的就是「IDW y 方向尺度 / mmetric.ly」——
+    // 键被读成中文名的尾巴（规格书 §2.1：标签 = 中文名 + 键，是两样东西）。
+    //
+    // jsdom 不做排版，所以这里钉**文本**：两个字段之间得有个字符把它们分开。
+    // 融合串由**夹具自己的** label 与 key 拼出来，不写死 `'mmetric.ly'` ——
+    // 写死的话，夹具一改这条就变成一句永远绿的谎话（本仓最烦的那种）。
+    const w = show()
+    const f = PANEL.fixed[0]
+    const line = w.findAll('section')[1].find('.note')
+    expect(line.text()).not.toContain(`${f.label}${f.key}`)
+    expect(line.text()).toContain(f.key)      // 键还在屏上（上一句那条事实不松动）
+    expect(line.text()).toContain(f.note)     // 别的部分照常渲染
+  })
+
   it('标签的 for 与控件的 id 对得上（读屏与点标签都要靠它）', () => {
     const w = show()
     for (const el of w.findAll('label')) {

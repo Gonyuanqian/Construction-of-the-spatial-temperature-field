@@ -50,10 +50,13 @@ const groups = computed(() => [
 /**
  * 控件与 `<label for>` 共用的 DOM id。
  *
- * ⚠️ **键里的 `.` 要换掉**：`metric.power` 这样的键直接拼进 `id` 之后，
- * `#metric.power` 在 CSS 里读成「id = metric 且 class = power」——
- * 值仍在 DOM 上，但任何按 id 找它的东西（`label[for]` 的关联、读屏软件的
- * 跳转、测试里的 `find('#…')`）都指不到那个控件。
+ * ⚠️ **键里的 `.` 要换掉**。别把坏处说大：`for` 的关联、读屏软件找目标、
+ * `getElementById`，用的都是 **id 字符串逐字匹配**，带点的 id 一样对得上，
+ * 这几样**没有**塌。塌的是**走选择器的取法**：`#param-metric.power` 在 CSS 里
+ * 读成「id = param-metric 且 class = power」，于是 `querySelector` / `matches`
+ * 这一路（也就是 `@vue/test-utils` 的 `find('#…')`）指不到那个控件。
+ * 本仓就有这种取法：`ParamPanel.test.ts` 那条「`for` 与 `id` 对得上」
+ * 正是按 `find('#' + id)` 走的，所以 id 得能当选择子用。
  * 屏上印的仍是**原样的键**（`.key` 那个 span）：键是数据，id 是选择子。
  */
 function domId(row: PanelRow): string {
@@ -113,9 +116,16 @@ function onSelect(row: PanelRow, e: Event): void {
       <!-- `state` 是 `design/prose.test.ts` 放行的那几个类之一（规格书 §7.1）。 -->
       <!-- ⚠️ 这一行**没有控件**，但**键照印**：与上面每一行是同一条规矩
            （规格书 §2.1：标签 = 中文名 + 键），而且 `metric.ly` 在屏上是
-           「固定值那句说明还在」的凭据（上一份 spec 的 T2）。 -->
+           「固定值那句说明还在」的凭据（上一份 spec 的 T2）。
+           键前面那个 `&nbsp;` 不是排版手滑：这一行是 `<p class="note">`（正文），
+           没有控件行那种 flex 把两者推到两头上，中间不留东西就会读成
+           「IDW y 方向尺度 / mmetric.ly」一串 —— 键成了中文名的尾巴。
+           用实体而不是敲一个普通空格，是因为**编译器会把模板里的纯空格折掉**
+           （试过：空格还在模板里，渲染出来就没了），实体才是稳的那一个；
+           顺带也不让键在折行时被甩到下一行去。
+           `.note .key` 那条间距管观感，这个实体管**文本**里它们是不是两段。 -->
       <p v-for="f in g.fixed" :key="f.key" class="note state">
-        {{ f.label }}<span class="key num">{{ f.key }}</span>：{{ f.value }}，{{ f.note }}
+        {{ f.label }}<span class="key num">&nbsp;{{ f.key }}</span>：{{ f.value }}，{{ f.note }}
       </p>
     </section>
   </div>
@@ -153,6 +163,11 @@ function onSelect(row: PanelRow, e: Event): void {
 .now { grid-column: 2; }
 
 select { font: inherit; color: inherit; }
+
+/* 固定值那一行（`<p class="note">`）是正文，没有控件行那种 flex 把中文名与键
+   推在两头，所以靠间距分开 —— 不留这点空，键就贴着中文名的尾巴。
+   键本身吃 `.num`（base.css）的等宽体，字体与正文不同，一眼认得出那是键。 */
+.note .key { margin-left: var(--gap-s); }
 
 /* 滑块的档位色。**只给一条主色**，不写 `::-webkit-slider-thumb` 之类 ——
    那要按住浏览器的实现细节、三份前缀各写一遍，而本仓的规矩是不做装饰
