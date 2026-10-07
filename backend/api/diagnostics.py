@@ -80,8 +80,12 @@ def _row(truth: np.ndarray, pred: np.ndarray) -> dict[str, Any]:
             "r2": _finite(_r2(truth, pred)), "n": int(truth.size)}
 
 
-def oof_table(ds: Dataset, bundle) -> pd.DataFrame:
+def oof_table(ds: Dataset, bundle, cfg=None) -> pd.DataFrame:
     """跑一次折外预测（全 8 个 position 折），再补上诊断要用的五列。
+
+    `cfg` 是**要跑的那套参数**；不给就用包自己那套（`bundle.config()`）。
+    页② 的参数面板把用户手调的一套送进来，所以它必须是个参数而不是
+    写死在函数体里 —— 那是这次改动唯一的作用点。
 
     补的列**不来自** `out_of_fold_predictions`（那九列是库的契约）：
 
@@ -94,7 +98,11 @@ def oof_table(ds: Dataset, bundle) -> pd.DataFrame:
     - `z` / `x` —— 点位几何。分箱要用，而库那九列里没有它们。
     """
     folds = position_folds(ds)
-    oof = out_of_fold_predictions(lambda: FieldPipeline(bundle.config(), ds),
+    # ⚠️ `cfg or bundle.config()` 让 `config()` 每折被调一次。**这是认下的**：
+    # 把它提到 lambda 外面做不到（lambda 每折调一次），而它换来的是「闭包捕获的
+    # 那个 `cfg` 与传进来的那个是同一个对象」这件事不必推理。重复构造的代价是
+    # 一次纯 dataclass 构造，可以忽略。
+    oof = out_of_fold_predictions(lambda: FieldPipeline(cfg or bundle.config(), ds),
                                   ds, folds, groups=tuple(bundle.feature_groups))
     t_index = oof["t_index"].to_numpy(int)
     oof["baseline"] = ds.wide[C.BG_TEMP].to_numpy(float)[t_index]
@@ -205,15 +213,23 @@ class DiagnosticsCache:
     def __init__(self, *, builder=None, capacity: int = 4) -> None:
         self._builder = builder or compute
         self._capacity = int(capacity)
-        self._items: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self._items: dict[tuple[str, str, str, str], dict[str, Any]] = {}
         self._lock = threading.Lock()
         self.n_builds = 0            # 测试用它证明「真的只算了一次」
 
     @staticmethod
-    def key_of(ds: Dataset, groups, bundle) -> tuple[str, str, str]:
-        """(数据集签名, 特征组签名, 包的 created_at)。
+    def key_of(ds: Dataset, groups, bundle, params_sig: str) -> tuple[str, str, str, str]:
+        """(数据集签名, 特征组签名, 包的 created_at, 这套参数的签名)。
 
-        **与 `deps.PipelineCache.key_of` 同形，有测试钉着两者相等。**
+        **前三格与 `deps.PipelineCache.key_of` 逐位相等；第四格是这里特有的。**
+
+        ⚠️ 第四格为什么在：参数第一次进了诊断那条链（`oof_table` 的 `cfg`）。
+        没有它，拖完滑块点「开始训练」会拿回**上一套参数**的图，而图上没有
+        任何一个字会说这件事。
+
+        ⚠️ 第三格为什么**不能**换成参数签名：`accuracy()` 读的是
+        `bundle.metrics` 里哪几折属于 B 组 —— 那是包的数据，不是参数的函数。
+        换掉它，两份 A/B 分组不同、参数相同的包会共用一份图。
 
         ⚠️ 这里不能写 `deps.PipelineCache.key_of`：`tests/test_routes_use_cache.py`
         规定 `api/**` 从 `deps` 取名字只许白名单里那几个，而 `PipelineCache`
@@ -221,10 +237,11 @@ class DiagnosticsCache:
         两份实现 + 一条守卫，比开一个口子好。
         """
         return (ds.signature, groups_signature(groups),
-                getattr(bundle, "created_at", None) or "")
+                getattr(bundle, "created_at", None) or "", params_sig)
 
-    def get(self, ds: Dataset, groups, bundle) -> dict[str, Any]:
-        key = self.key_of(ds, groups, bundle)
+    def get(self, ds: Dataset, groups, bundle, params_sig: str,
+            cfg=None) -> dict[str, Any]:
+        key = self.key_of(ds, groups, bundle, params_sig)
         with self._lock:
             hit = self._items.get(key)
             if hit is not None:
@@ -232,7 +249,7 @@ class DiagnosticsCache:
                 return hit
             # 构建放在锁里：并发时第二个线程等在这里，醒来就命中。
             # 这一次构建要十几秒，但**别的路由不受影响** —— 它们不碰这把锁。
-            out = self._builder(ds, groups, bundle)
+            out = self._builder(ds, groups, bundle, cfg)
             self._items[key] = out
             while len(self._items) > self._capacity:
                 self._items.pop(next(iter(self._items)))
@@ -240,9 +257,9 @@ class DiagnosticsCache:
             return out
 
 
-def compute(ds: Dataset, groups, bundle) -> dict[str, Any]:
+def compute(ds: Dataset, groups, bundle, cfg=None) -> dict[str, Any]:
     """跑一遍全部四块。**没有缓存层的那一半**，测试可以单独调它。"""
-    oof = oof_table(ds, bundle)
+    oof = oof_table(ds, bundle, cfg)
     return {
         "n_points": int(len(oof)),
         "n_sensors": int(oof["sensor_id"].nunique()),
@@ -257,9 +274,9 @@ def compute(ds: Dataset, groups, bundle) -> dict[str, Any]:
 _CACHE = DiagnosticsCache()
 
 
-def get_or_compute(ds: Dataset, groups, bundle) -> dict[str, Any]:
+def get_or_compute(ds, groups, bundle, params_sig: str, cfg=None) -> dict[str, Any]:
     """出口用这一个。"""
-    return _CACHE.get(ds, groups, bundle)
+    return _CACHE.get(ds, groups, bundle, params_sig, cfg)
 
 
 def _reset() -> None:

@@ -270,6 +270,22 @@ def client():
     return TestClient(create_app())
 
 
+def _post(client, **over):
+    """打一次诊断：值**从面板载荷来**（不另抄一份常量），可以覆盖几维。
+
+    `over` 的键是 `metric_power` 这种下划线写法（Python 形参名放不下点号），
+    这里换成点号再合并。
+
+    ⚠️ `k.replace("_", ".", 1)`：`metric_power` → `metric.power` ✓，
+    `cross_shed` → `cross.shed` ✗。所以 `cross_shed` 走不到这条路 ——
+    覆盖 `cross_shed` 的用例直接手写完整请求体（见 `test_布尔不许拿_1_顶`）。
+    """
+    panel = client.get("/api/calibration").json()["panel"]
+    params = {r["key"]: r["current"] for r in panel["trend"] + panel["idw"]}
+    params.update({k.replace("_", ".", 1): v for k, v in over.items()})
+    return client.post("/api/calibration/diagnostics", json={"params": params})
+
+
 @pytest.fixture(autouse=True)
 def _reset_diagnostics():
     """每个用例从空缓存开始。缓存是**模块级**的，不清就让「算了几遍」数不准。"""
@@ -279,7 +295,7 @@ def _reset_diagnostics():
 
 
 def test_诊断出口给出基线密度与残差(client):
-    b = client.get("/api/calibration/diagnostics").json()
+    b = _post(client).json()
     assert b["present"] is True
     assert b["created_at"] and b["groups_sig"] and b["dataset_sig"]
     assert b["n_sensors"] == 24 and b["n_times"] == 1164
@@ -295,11 +311,141 @@ def test_诊断出口给出基线密度与残差(client):
 def test_诊断按包缓存_连调两次只拟合一遍(client):
     """T12：不缓存的话，每开一次页② 都白跑一遍八折（十几秒）。"""
     from api import diagnostics
-    client.get("/api/calibration/diagnostics").json()
+    _post(client)
     first = diagnostics._CACHE.n_builds
-    client.get("/api/calibration/diagnostics").json()
+    _post(client)
     assert first == 1, "第一次就应当算了一遍"
     assert diagnostics._CACHE.n_builds == 1, "第二次没命中缓存，又跑了一遍八折"
+
+
+def test_换一套参数会重算_同一套参数是秒回的(client):
+    """T11：参数进了缓存键。不进去的话，拖完滑块点训练会拿回**上一套参数**
+    的图 —— 而图上没有任何一个字会说这件事。
+
+    ⚠️ 这一条与上面那条**不是**同一件事：上面验的是「同一份包同一套值不会
+    白跑」，这一条验的是「换了一套值**必须**重跑」。只写前者的话，
+    一个把参数签名丢掉的键也能过。
+    """
+    from api import diagnostics
+    _post(client)
+    assert diagnostics._CACHE.n_builds == 1
+    _post(client)
+    assert diagnostics._CACHE.n_builds == 1, "同一套参数又算了一遍"
+    _post(client, metric_power=3)
+    assert diagnostics._CACHE.n_builds == 2, "换了一套参数却命中了旧键"
+
+
+def test_换一套参数真的算出了不一样的东西(client):
+    """光验「缓存没命中」不够：得验参数**真的**走到了 `FieldPipeline`
+    （规格书 §3.4 那条唯一的作用点）。一个「签了名但没用上」的实现
+    能让上面那条全绿，而屏上永远是同一套数的图。
+    """
+    from tfield.calibration import IDW_SPACE
+
+    base = client.get("/api/calibration").json()["panel"]
+    cur = {r["key"]: r["current"] for r in base["trend"] + base["idw"]}
+    other = next(v for v in IDW_SPACE["power"] if v != cur["metric.power"])
+
+    a = _post(client).json()["accuracy"]["model"]["mae"]
+    b = client.post("/api/calibration/diagnostics",
+                    json={"params": {**cur, "metric.power": other}}).json()
+    assert b["accuracy"]["model"]["mae"] != a, "换了距离幂，精度逐位相同"
+
+
+@pytest.mark.parametrize("over, hint", [
+    ({"metric.ly": 1.0}, "不在搜索域内"),
+    ({"metric.power": 99}, "只能取"),
+    ({"trend.nope": 1}, "不认识的参数"),
+    ({"metric.power": None}, "只能取"),
+])
+def test_值必须在搜索空间里(client, over, hint):
+    """值域**只有一个定义处**：库的搜索空间。客户端造不出一个空间里没有的值。"""
+    panel = client.get("/api/calibration").json()["panel"]
+    params = {r["key"]: r["current"] for r in panel["trend"] + panel["idw"]}
+    r = client.post("/api/calibration/diagnostics", json={"params": {**params, **over}})
+    assert r.status_code == 422
+    assert hint in r.json()["detail"]
+
+
+def test_布尔不许拿_1_顶(client):
+    """`True == 1` 是 Python 的语言事实，不是我们的设计。
+
+    `cross_shed` 的候选是 `[True, False]` —— 只写 `v in cand` 的话，
+    一个 `1` 会被当成「开」收下，而 1 从来不是一个档位。
+    """
+    panel = client.get("/api/calibration").json()["panel"]
+    params = {r["key"]: r["current"] for r in panel["trend"] + panel["idw"]}
+    params["cross_shed"] = 1
+    r = client.post("/api/calibration/diagnostics", json={"params": params})
+    assert r.status_code == 422
+    assert "cross_shed" in r.json()["detail"]
+
+
+def test_整数维收得下_json_的整数(client):
+    """JSON 不区分 `1` 与 `1.0`，而 `IDW_SPACE["power"]` 里 `1` 是 int、`1.5` 是 float。
+
+    拿 `type(v) is type(c)` 去比，一个前端从 JSON 读回来的 `2`（整数）
+    会被判成非法值 —— 而那正是浏览器**唯一**能发出来的东西。
+    """
+    panel = client.get("/api/calibration").json()["panel"]
+    params = {r["key"]: r["current"] for r in panel["trend"] + panel["idw"]}
+    params["metric.power"] = 2          # 候选里是 `2`（int）与 `2.5`（float）
+    assert client.post("/api/calibration/diagnostics",
+                       json={"params": params}).status_code == 200
+
+
+def test_十二个要一起给(client):
+    """少一个不许猜默认值：这一条最不能出的错就是「这个数是拿哪套参数算的」
+    说不清，而补一个默认值正是那样。"""
+    panel = client.get("/api/calibration").json()["panel"]
+    params = {r["key"]: r["current"] for r in panel["trend"] + panel["idw"]}
+    params.pop("metric.power")
+    r = client.post("/api/calibration/diagnostics", json={"params": params})
+    assert r.status_code == 422
+    assert "metric.power" in r.json()["detail"]
+
+
+def test_响应里带回实际用的那套值(client):
+    """§四.3 的凭据：前端拿 `params_used` 比对屏上那套值，对不上就整块不显示。"""
+    panel = client.get("/api/calibration").json()["panel"]
+    params = {r["key"]: r["current"] for r in panel["trend"] + panel["idw"]}
+    b = client.post("/api/calibration/diagnostics", json={"params": params}).json()
+    assert b["params_used"] == params
+
+
+def test_旧包给出的当前值也收得下():
+    """F1（预检裁定）：`_panel` 会把旧包的当前值并进那一维的档位（T12 的后半）。
+
+    于是**面板给出的默认值**就可能是今天搜索空间里没有的值，而前端把屏上这套
+    原样发回来 —— 这一条必须收下。收不下的话，页② 在「拿旧版搜索空间训出来的
+    包」上第一次点「开始训练」就是 422，而屏上那个值是面板自己摆上去的，
+    用户没有任何办法把它调对。
+
+    与 `test_当前值不在候选里时并进候选`（Task 1）是一对：那条钉面板给出什么，
+    这条钉后端收不收。喂假包的理由与那条相同：真包与今天的空间同版，走不到这一支。
+    """
+    from types import SimpleNamespace
+
+    from api.routes import calibration as cal_routes
+
+    fake = SimpleNamespace(
+        metric=SimpleNamespace(power=9.9, lx=1.0, ly=1.0, lz=0.03),
+        trend_params={k.partition(".")[2]: 0
+                      for k in cal_routes.TUNED_KEYS if k.startswith("trend.")},
+        cross_shed=True,
+    )
+    panel = cal_routes._panel(fake, None)
+    values = {r["key"]: r["current"] for r in panel["trend"] + panel["idw"]}
+
+    # 面板摆上屏的这套值（含 9.9 与那一堆 0）必须一个不落地收下。
+    assert cal_routes._validated_domain(values, fake) == values
+
+    # 反面：一个既不在今天的空间里、也不是当前值的数，照旧要拒 ——
+    # 上一条不许把「值域」这扇门整个拆掉。
+    bad = dict(values, **{"metric.power": 8.8})
+    with pytest.raises(cal_routes.HTTPException) as e:
+        cal_routes._validated_domain(bad, fake)
+    assert e.value.status_code == 422 and "metric.power" in e.value.detail
 
 
 def test_换数据集之后诊断缓存被清掉(client, tmp_path, monkeypatch):
@@ -308,7 +454,7 @@ def test_换数据集之后诊断缓存被清掉(client, tmp_path, monkeypatch):
     不清的后果是**新人拿到旧数据集的图** —— 而图上没有任何一个字会说这件事。
     """
     from api import deps, diagnostics, paths
-    client.get("/api/calibration/diagnostics").json()
+    _post(client)
     assert diagnostics._CACHE.n_builds == 1
     deps.reset_cache()
     assert diagnostics._CACHE.n_builds == 0, "换数据集没有清诊断缓存"
@@ -316,45 +462,62 @@ def test_换数据集之后诊断缓存被清掉(client, tmp_path, monkeypatch):
     deps.install_dataset(paths.dataset_path())
 
 
-def test_诊断的缓存键与管线缓存同一个形状():
-    """键里三个东西一个都不能少。
+def test_诊断的缓存键比管线缓存多一格_因为参数只进诊断那条链():
+    """键里四个东西一个都不能少。
 
-    少了 `created_at`：重标一次之后界面还在给你上一次的图。
+    少了 `created_at`：A/B 分组换过的另一份包会共用同一份图 ——
+      `accuracy()` 读的是 `bundle.metrics` 里哪几折属于 B 组，
+      那是**包的数据**，参数签名抓不住它。
     少了 `groups_sig`：换了特征组还在用旧图。
     少了数据集签名：换了数据还在用旧图。
+    少了参数签名：拖完滑块还在看上一套参数的图。
 
-    ⚠️ 这里不能直接调 `deps.PipelineCache.key_of`（`tests/test_routes_use_cache.py`
-    规定 `api/**` 从 `deps` 取名字只许白名单里那几个），所以两个实现各写一份 ——
-    这条测试就是钉住它们**相等**的那根钉子。
+    ⚠️ **前三位与 `deps.PipelineCache.key_of` 逐位相等**，第四位是诊断特有的。
+    这条守卫以前钉的是「两个键一模一样」；判据改成「前三格相等」，
+    理由是：管线缓存只装包**自己**那套参数（`deps.get_pipeline()` 走的是
+    `bundle.config()`，从不接受外部参数），它不需要参数签名。
+    改的是判据，防的东西没变 —— 少一格仍然会红。
     """
     from api import deps, diagnostics
     from dataclasses import replace
     deps.set_current_dataset(paths.dataset_path())
     ds = deps.get_train_dataset()
     b = load_for(ds, C.DEFAULT_FEATURE_GROUPS, root=BACKEND / "configs")
-    assert diagnostics.DiagnosticsCache.key_of(ds, C.DEFAULT_FEATURE_GROUPS, b) == \
-        deps.PipelineCache.key_of(ds, C.DEFAULT_FEATURE_GROUPS, b)
+
+    dk = diagnostics.DiagnosticsCache.key_of(ds, C.DEFAULT_FEATURE_GROUPS, b, "sig")
+    pk = deps.PipelineCache.key_of(ds, C.DEFAULT_FEATURE_GROUPS, b)
+    assert dk[:3] == pk, "前三格必须逐位相等"
+    assert len(dk) == 4 and dk[3] == "sig"
+
     # 少任何一位都会变
     assert diagnostics.DiagnosticsCache.key_of(
-        ds, C.DEFAULT_FEATURE_GROUPS, replace(b, created_at="别的时刻")) != \
-        deps.PipelineCache.key_of(ds, C.DEFAULT_FEATURE_GROUPS, b)
+        ds, C.DEFAULT_FEATURE_GROUPS, replace(b, created_at="别的时刻"), "sig") != dk
+    assert diagnostics.DiagnosticsCache.key_of(
+        ds, C.DEFAULT_FEATURE_GROUPS, b, "别的签名") != dk
 
 
 def test_没有包时诊断出口报_409_并说清下一步(monkeypatch, tmp_path):
+    """⚠️ 请求体是**合法的** —— 面板与包无关（Task 1 的空态用例钉着）。
+
+    这样 409 就只可能是「没有包」这一个原因，而不是「请求体不合法」。
+    """
     from fastapi.testclient import TestClient
     from api import deps, paths
     from api.main import create_app
     from api.routes import calibration as cal_routes
     deps.set_current_dataset(paths.dataset_path())
     monkeypatch.setattr(cal_routes, "CONFIGS_ROOT", tmp_path)
-    r = TestClient(create_app()).get("/api/calibration/diagnostics")
+    c = TestClient(create_app())
+    panel = c.get("/api/calibration").json()["panel"]
+    params = {r["key"]: r["current"] for r in panel["trend"] + panel["idw"]}
+    r = c.post("/api/calibration/diagnostics", json={"params": params})
     assert r.status_code == 409
     assert "参数优选" in r.json()["detail"]
 
 
 def test_诊断的上屏文案过了字形守卫(client):
     """随响应体上屏的纯文本不许夹带被禁的连接符与 markdown 标记（硬约束 4）。"""
-    b = client.get("/api/calibration/diagnostics").json()
+    b = _post(client).json()
     rendered = [b["note"], b["accuracy"]["baseline"]["label"],
                 b["accuracy"]["model"]["label"]]
     rendered += [p["label"] for p in b["residual"]] + [p["axis"] for p in b["residual"]]

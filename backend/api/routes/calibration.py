@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from tfield import config as C
 from tfield.calibration import IDW_SPACE, TREND_SPACE, TUNED_KEYS, load_bundle, load_for
@@ -401,6 +401,81 @@ def _panel(bundle, cfg) -> dict[str, list[dict[str, Any]]]:
     }
 
 
+def _validated_shape(params: Any) -> dict[str, Any]:
+    """请求体的**结构**：是个对象、键一个不多一个不少。**不需要包。**
+
+    排在 409 之前（排序的两半理由见 `post_diagnostics` 那条 ⚠️）。
+    """
+    if not isinstance(params, dict):
+        raise HTTPException(status_code=422,
+                            detail='请求体要长成 {"params": {"metric.power": 2}} 这样。')
+    unknown = sorted(set(params) - set(TUNED_KEYS))
+    if unknown:
+        hint = "（metric.ly 恒为 1.0，不在搜索域内）" if "metric.ly" in unknown else ""
+        raise HTTPException(
+            status_code=422,
+            detail=f"不认识的参数：{'、'.join(unknown)}。"
+                   f"这一页只认搜索域里那十二个。{hint}")
+    missing = [k for k in TUNED_KEYS if k not in params]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=f"缺了这些参数：{'、'.join(missing)}。十二个要一起给，不补默认值。")
+    return {key: params[key] for key in TUNED_KEYS}
+
+
+def _validated_domain(values: dict[str, Any], bundle) -> dict[str, Any]:
+    """请求体的**值域**：每一维都要落在**面板给的那一串档位**里。
+
+    档位取自 `_legal_values` —— 与 `_panel` 同一个函数。于是客户端造不出一个
+    「屏上拖不到」的值：「能拖到的」与「能收下的」是同一个域，这件事由**结构**
+    保证，不靠两处代码碰巧一致。
+
+    ⚠️ 它排在 409 **之后**，因为它要包：`_legal_values` 要把旧包的当前值也算进
+    档位里（`_panel` 摆上屏的就是那一串）。
+    """
+    for key in TUNED_KEYS:
+        v = values[key]
+        legal_values = _legal_values(bundle, None, key)
+        if not _is_candidate(v, legal_values):
+            legal = "、".join(ported.fmt_value(c) for c in legal_values)
+            raise HTTPException(
+                status_code=422,
+                detail=f"{key} 只能取这些值：{legal}。"
+                       f"收到的是 {ported.fmt_value(v) if v is not None else 'null'}。")
+    return values
+
+
+def _signature(values: dict[str, Any]) -> str:
+    """一套值的签名。**次序固定**（`TUNED_KEYS` 的次序），同一个值同一个串。
+
+    不走 `repr` / `str(dict)`：那两样都跟着 Python 版本与插入次序变，
+    而这一串是缓存键的一部分 —— 它一变，全部缓存白清。
+    """
+    return ";".join(f"{k}={ported.fmt_value(values[k])}" for k in TUNED_KEYS)
+
+
+def _config_from(bundle, values: dict[str, Any]) -> PipelineConfig:
+    """一套值 → 一份 `PipelineConfig`（规格书 §3.4：作用点只有这一处）。
+
+    `metric.ly` **不在 `values` 里**，所以它照旧取包里的那个（恒为 1.0）；
+    `feature_groups` 与 `trend_kind` 同样从包来 —— 它们不是调参的对象。
+    """
+    from dataclasses import replace
+
+    base = bundle.config()
+    metric = replace(base.metric,
+                     power=values["metric.power"],
+                     lx=values["metric.lx"],
+                     lz=values["metric.lz"])
+    trend = dict(base.trend_params)
+    for k in TUNED_KEYS:
+        if k.startswith("trend."):
+            trend[k.partition(".")[2]] = values[k]
+    return replace(base, metric=metric, trend_params=trend,
+                   cross_shed=values["cross_shed"])
+
+
 def _job_summary() -> dict[str, Any] | None:
     """当前 / 最近一次标定任务。**读它是为了刷新之后还接得上**（规格书 §4.7）。
 
@@ -415,31 +490,51 @@ def _job_summary() -> dict[str, Any] | None:
     return None if job is None else job.to_dict()
 
 
-@router.get("/calibration/diagnostics")
-def get_diagnostics() -> dict[str, Any]:
+@router.post("/calibration/diagnostics")
+async def post_diagnostics(request: Request) -> dict[str, Any]:
     """页② 第三段那个「开始训练」按钮打的就是这一条（规格书 §二、§8.4）。
 
-    它是一次**真实的训练**：八折各拟合一遍，只是不搜参数。有包就行 ——
-    进程重启之后照样拿得到精度，不必重搜一次（验收 7）。
+    它是一次**真实的训练**：八折各拟合一遍，只是不搜参数。
 
-    诊断是**包的函数**（包 → 图），不是包的一部分：写进包会让老包没有图、
+    **为什么是 POST 而不是 GET**：参数第一次进了这条链的输入。留着 GET
+    就有两条入口、两种「用哪套值」的含义，而这一屏最不能出的错就是
+    「这个数是拿哪套参数算的」说不清。一条入口一种含义 ——
+    与同日删掉那张「连接表」是同一条理由。
+
+    诊断是**参数的函数**（值 → 图），不是包的一部分：写进包会让老包没有图、
     要看图就得重标一次（裁定 C）。
 
     没包时报 409 而**不是** 200 + `present: false`：这一条没有「兜底精度」
     可以报 —— 兜底参数配上一堆图，只会让人以为那是一个可以用的模型。
+    空态下**面板仍然有值**（`_panel` 与包无关），所以这一步的 409
+    只可能是「没有包」，不会是「请求体不合法」。
     """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=422, detail="请求体不是 JSON。")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422,
+                            detail='请求体要长成 {"params": {"metric.power": 2}} 这样。')
+    params = _validated_shape(body.get("params"))
+
     ds = deps.get_train_dataset()
     groups = tuple(C.DEFAULT_FEATURE_GROUPS)
     bundle = load_for(ds, groups, root=CONFIGS_ROOT)
     if bundle is None:
         raise HTTPException(status_code=409,
                             detail="这一份数据集还没有标定包，先做一次参数优选")
-    out = diagnostics.get_or_compute(ds, groups, bundle)
+    values = _validated_domain(params, bundle)
+    out = diagnostics.get_or_compute(
+        ds, groups, bundle, _signature(values), _config_from(bundle, values))
     return {
         "present": True,
         "created_at": bundle.created_at,
         "groups_sig": bundle.groups_sig,
         "dataset_sig": bundle.dataset_sig,
+        # 后端**实际用的那套值**。不是给用户看的，是前端那条失效规则的凭据
+        # （屏上这套值与它不一致时，整块精度不作数）。
+        "params_used": values,
         **out,
     }
 

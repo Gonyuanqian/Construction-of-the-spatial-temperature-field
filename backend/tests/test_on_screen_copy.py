@@ -52,6 +52,14 @@ _EXTRACTORS = {
         + [c for g in b["groups"] for c in g["columns"]]
         + list(b["notes"])
     ),
+    # 参数面板的一族上屏文本（Task 2 补进清单）：每一维的中文名与那一条
+    # 「不进搜索域」的固定说明。**不论它红不红都加** —— 这个端点以前根本
+    # 不在这张表里，所以它不会红，新面板文案会一直只被
+    # `test_api_train.py::test_上屏文案干净*` 守着一份。加进去，不是绕开。
+    "/api/calibration": lambda b: (
+        [r["label"] for r in b["panel"]["trend"] + b["panel"]["idw"]]
+        + [f["note"] for f in b["panel"]["fixed"]]
+    ),
 }
 
 #: 每个端点必须确实出现的一段已知文案。它证明上面的提取口径还咬得住真数据。
@@ -60,6 +68,7 @@ _REQUIRED_FRAGMENTS = {
     "/api/dataset/timeseries": ("棚温减背景", "后端"),
     "/api/dataset/layer-timeheight": ("实测棚温", "时刻"),
     "/api/features": ("场的基本骨架", "滞后", "湿度"),
+    "/api/calibration": ("IDW 距离幂", "目标函数", "从未进过搜索空间"),
 }
 
 
