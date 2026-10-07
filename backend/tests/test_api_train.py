@@ -341,6 +341,11 @@ def test_上屏文案干净_没有被禁的连接符与_markdown_标记(client):
     rendered = [b["note"], b["reason"] or "", b["ab_note"], b["lz_note"] or ""]
     rendered += [f["note"] for f in b["panel"]["fixed"]]
     rendered += [r["label"] for r in b["panel"]["trend"] + b["panel"]["idw"]]
+    # ⚠️ `values` 也要扫：它是**新出现的一族上屏文字**（旧测试扫的 `space.*.values`
+    # 正是它）。`fmt_value` 现在吐的是 `%g` 数字与「开」「关」，今天一个都不会红 ——
+    # 但 `objective` 那一维吐的是库里的字符串（`reg:squarederror` 这种），
+    # 库要是换了印法，这里是唯一会当场说话的地方。
+    rendered += [v for r in b["panel"]["trend"] + b["panel"]["idw"] for v in r["values"]]
     for s in rendered:
         for bad in ("——", "**", "`", " · ", "→", "↳"):
             assert bad not in s, f"上屏文案里出现了被禁的 {bad!r}：{s!r}"
@@ -353,7 +358,8 @@ def test_空态的上屏文案也干净(monkeypatch, tmp_path):
     monkeypatch.setattr(cal_routes, "CONFIGS_ROOT", tmp_path)
     b = TestClient(create_app()).get("/api/calibration").json()
     rendered = [r["label"] for r in b["panel"]["trend"] + b["panel"]["idw"]]
-    rendered += [f["label"] + f["note"] for f in b["panel"]["fixed"]]
+    rendered += [v for r in b["panel"]["trend"] + b["panel"]["idw"] for v in r["values"]]
+    rendered += [f["label"] + f["value"] + f["note"] for f in b["panel"]["fixed"]]
     for s in rendered:
         for bad in ("——", "**", "`", " · ", "→", "↳"):
             assert bad not in s, f"空态的上屏文案里出现了被禁的 {bad!r}：{s!r}"
@@ -424,9 +430,13 @@ def test_面板的标签表与调参键一一对应(client):
     """
     b = client.get("/api/calibration").json()
     rows = b["panel"]["trend"] + b["panel"]["idw"]
+    # ⚠️ 右边**不能**写成 `list(TUNED_KEYS)`：`TUNED_KEYS` 是 IDW 四个在前，
+    # 而屏上（也是这里）是 trend 八个在前，两者恒不相等。按屏上的分组各取一遍
+    # 才是同一个意思，而且比 `sorted()` 更紧 —— 它还钉住了组内次序。
     assert [r["key"] for r in rows] == (
         [k for k in TUNED_KEYS if k.startswith("trend.")]
-        + [k for k in TUNED_KEYS if not k.startswith("trend.")])
+        + [k for k in TUNED_KEYS if not k.startswith("trend.")]
+    )
     assert all(r["label"].strip() for r in rows), "有一维没有标签"
 
 
@@ -439,6 +449,31 @@ def test_面板每一维的当前值都不是空的(client):
     rows = b["panel"]["trend"] + b["panel"]["idw"]
     empty = [r["key"] for r in rows if r["current"] is None]
     assert empty == [], f"这些维度读不出当前值：{empty}"
+
+
+def test_空态面板十二维的当前值都在候选里(monkeypatch, tmp_path):
+    """**没包那条路**也要十二维齐全，而且当前值都得是屏上的一档。
+
+    上面两条用的是有包的 `client` 夹具，于是空态整个漏在网外 —— 而空态正是
+    页② 打开时的样子（「点之前就在屏上」，规格书 §三）。兜底配置
+    `FALLBACK_TREND_PARAMS` 只带七维，剩下五维若没人补，`_current` 会返回
+    `None`：`fmt_value(None)` 印成 `"None"`（一个英文单词落在中文面板上），
+    又不落进 `raw`，前端那个按下标定位的滑块一格都不选中。
+    """
+    monkeypatch.setattr(routes.calibration, "CONFIGS_ROOT", tmp_path)
+    c = TestClient(create_app())
+    b = c.get("/api/calibration").json()
+    assert b["present"] is False
+    rows = b["panel"]["trend"] + b["panel"]["idw"]
+    assert len(rows) == 12
+    empty = [r["key"] for r in rows if r["current"] is None]
+    assert empty == [], f"空态下这些维度读不出当前值：{empty}"
+    stray = [r["key"] for r in rows if r["current"] not in r["raw"]]
+    assert stray == [], f"空态下这些维度的当前值不在候选里：{stray}"
+    assert routes.calibration._TREND_FALLBACK.keys() == (
+        {k.partition(".")[2] for k in TUNED_KEYS if k.startswith("trend.")}
+        - set(C.FALLBACK_TREND_PARAMS)
+    ), "兜底表与「兜底配置缺的那几维」对不上了"
 
 
 def test_面板的当前值都在候选里(client):
@@ -498,7 +533,9 @@ def test_当前值不在候选里时并进候选():
     assert depth["current"] == 0 and depth["raw"][-1] == 0
 
     # 已经在候选里的那些**一个都不许被动**：并进去是特例，不是常态。
-    assert by["metric.lx"]["raw"] == cal_routes._candidates("metric.lx")
+    # ⚠️ 右边写**字面量**而不是 `_candidates("metric.lx")`：拿被测函数与它自己
+    # 比，这条恒真，删掉那段合并逻辑它也照样绿。
+    assert by["metric.lx"]["raw"] == [0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0]
     assert by["metric.lx"]["current"] == 1.0
 
 

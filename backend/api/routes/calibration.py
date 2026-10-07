@@ -248,7 +248,7 @@ _SPACE_KEY = {
 #: 那是「要搜什么」的唯一定义处。
 #: 键表必须与 `TUNED_KEYS` 逐字相同，有测试钉着
 #: （`test_面板的标签表与调参键一一对应`）—— 库里加一个参数而这里没跟，
-#: 那个参数会带着空标签上屏，当场红。
+#: 接口当场 500，测试先红。
 _LABELS = {
     "metric.power": "IDW 距离幂",
     "metric.lx": "IDW 棚长方向尺度 / m",
@@ -298,11 +298,32 @@ def _is_candidate(v: Any, cand: list[Any]) -> bool:
     return any(v == c and isinstance(v, bool) == isinstance(c, bool) for c in cand)
 
 
+#: 兜底配置 `FALLBACK_TREND_PARAMS` 里没有、而搜索空间里有的那五维。
+#: 取 XGBoost 自己在**没给这个键**时的默认值 —— 也就是「没包时真去训练，
+#: 用的就是这个数」，面板因此说的是实话而不是一句「不知道」。
+#: **放在这里而不是 `tfield/config.py`**：`tfield` 这次一个字都不许改，
+#: 它还与兄弟项目共用同一份，改了就不再零差异。
+#: 每一个都必须是 `TREND_SPACE` 的成员，有测试钉着。
+_TREND_FALLBACK = {
+    "min_child_weight": 1,
+    "subsample": 1.0,
+    "colsample_bytree": 1.0,
+    "reg_lambda": 1,
+    "objective": "reg:squarederror",
+}
+
+
 def _current(bundle, cfg, key: str) -> Any:
     """这一维现在取的是哪个值。有包读包，没包读兜底配置。
 
     ⚠️ 与 `_tuned_value` 分成两个函数是有意的：`_tuned_value` 只认包
     （`metric.power` → `bundle.metric.power`），而空态下没有包可读。
+
+    ⚠️ **十二维一个都不许返回 `None`**。`fmt_value(None)` 会印成 `"None"`
+    （一个英文单词落在中文面板上），而 `None` 又不在 `raw` 里 —— 前端的滑块
+    是按下标定位的，那一格会一个档都不选中。兜底配置只带了七维，
+    剩下五维去 `_TREND_FALLBACK` 取；键对不上就当场炸（与上面 `_LABELS[key]`
+    同一套纪律：库动了而这里没跟，是测试该红，不是屏上该出现空白）。
     """
     if bundle is not None:
         return _tuned_value(bundle, key)
@@ -311,7 +332,9 @@ def _current(bundle, cfg, key: str) -> Any:
     head, _, tail = key.partition(".")
     if head == "metric":
         return getattr(cfg.metric, tail)
-    return cfg.trend_params.get(tail)
+    if tail in cfg.trend_params:
+        return cfg.trend_params[tail]
+    return _TREND_FALLBACK[tail]
 
 
 def _legal_values(bundle, cfg, key: str) -> list[Any]:
