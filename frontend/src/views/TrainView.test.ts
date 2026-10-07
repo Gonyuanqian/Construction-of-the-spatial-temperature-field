@@ -31,6 +31,16 @@ const CAL = {
   dataset_sig: '6145fa9261e89f1b',
   feature_groups: ['coord', 'zbasis', 'meteo', 'interaction'],
   trend_kind: 'xgboost',
+  space: {
+    trend: [
+      { key: 'trend.max_depth', values: ['3', '4', '5', '6'] },
+      { key: 'trend.objective', values: ['reg:squarederror', 'reg:absoluteerror'] },
+    ],
+    idw: [
+      { key: 'metric.power', values: ['0.5', '1', '2'] },
+      { key: 'cross_shed', values: ['开', '关'] },
+    ],
+  },
   tuned_keys: [{ key: 'metric.power', value: '0.5', space: '0.5、1、2' }],
   params: [
     { param: 'metric.power', value: '0.5', note: 'IDW 距离幂' },
@@ -53,6 +63,7 @@ const CAL = {
   n_folds: 2,
   worst_fold: { fold: 'position:x0.4_z0.7', mae: 0.1374 },
   ab_note: 'gap = A 组 MAE − B 组 MAE。负数是好消息。',
+  job: null,
   note: '「最优」最优的对象是这一份数据集 + 这一组特征组 + 留一测点这个准则，' +
         '而且参数只在 A 组上挑出来的。没有标定包时用的是兜底参数，那不是最优。',
 }
@@ -317,5 +328,66 @@ describe('页② 模型训练', () => {
     const w = mount(TrainView)
     await flushPromises()
     expect(w.text()).not.toContain('参数与当前数据集不匹配')
+  })
+
+  it('第二段在点之前就列出十二个待优选参数', async () => {
+    // T15：§三 的关键在「先」字。这份清单必须在点之前就在屏上，
+    // 否则它就是「跑完才知道要搜什么」。
+    // ⚠️ 用 present:false 的载荷 —— 空态是唯一能证明「清单与包无关」的地方。
+    stub({
+      '/api/features': FEATURES,
+      '/api/calibration': {
+        ...CAL, present: false, reason: '还没有标定包',
+        metrics: [], params: [], plateau: [], tuned_keys: [],
+        worst_fold: null, ab: null, n_folds: 0,
+      },
+    })
+    const w = mount(TrainView)
+    await flushPromises()
+    const text = w.text()
+    expect(text).toContain('trend.max_depth')
+    expect(text).toContain('trend.objective')
+    expect(text).toContain('metric.power')
+    expect(text).toContain('cross_shed')
+    // 候选值也上屏 —— 只列参数名是「要搜什么」缺了一半
+    expect(text).toContain('reg:absoluteerror')
+    expect(text).toContain('开')
+  })
+
+  it('刷新之后自发改去轮询载荷里那个正在跑的 job', async () => {
+    // T19 与 §4.7：切页与刷新都会把组件连同它手上的 job id 一起丢掉，
+    // 所以「还有没有一次在跑」只能从每次进页都要读的那张载荷上问。
+    const urls: string[] = []
+    const RUN = { id: 'j7', state: 'running', progress: '阶段 1 扫描',
+                  elapsed_s: 2.5, error: null, created_at: '2026-10-07T10:00:00+00:00' }
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      urls.push(String(url))
+      if (String(url).includes('/api/calibration/jobs/j7')) {
+        return new Response(JSON.stringify(RUN), { status: 200,
+          headers: { 'Content-Type': 'application/json' } })
+      }
+      if (String(url).includes('/api/calibration')) {
+        return new Response(JSON.stringify({ ...CAL, job: RUN }), { status: 200,
+          headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response(JSON.stringify(FEATURES), { status: 200,
+        headers: { 'Content-Type': 'application/json' } })
+    }))
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(urls.some((u) => u.includes('/api/calibration/jobs/j7')),
+      '刷新之后没有接上那个正在跑的 job').toBe(true)
+    expect(w.text()).toContain('阶段 1 扫描')
+    // 卸载时必须停表，否则离开这一页之后它还在每秒发请求
+    w.unmount()
+  })
+
+  it('三段标题一个字没变（T13）', async () => {
+    // 上面那两条已经在别的用例里钉着，这一条把「加了按钮之后」再说一遍。
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.findAll('h3').map((e) => e.text()))
+      .toEqual(['特征值的构造', '最优参数的选择', '模型训练'])
   })
 })

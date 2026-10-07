@@ -17,23 +17,43 @@
  * 2026-10-06（spec §6.2 页②）：页顶加一排指标卡，散文折进页尾「口径与出处」。
  * 指标卡**不许带 `h2`/`h3`** —— 三段小标题的条数与次序有测试钉着（§十三.1）。
  */
-import { computed, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 
-import type { CalibrationPayload, FeaturesPayload } from '../api/types'
+import type { CalibrationPayload, FeaturesPayload, JobSummary } from '../api/types'
 import { getJson } from '../api/client'
 import Card from '../components/Card.vue'
 import Provenance from '../components/Provenance.vue'
 import StatCard from '../components/StatCard.vue'
 import StatRow from '../components/StatRow.vue'
 import { useAsync } from '../composables/useAsync'
-import { fmtInt } from '../design/format'
+import { useJob } from '../composables/useJob'
+import { fmt1, fmtInt } from '../design/format'
 
 const features = useAsync(() => getJson<FeaturesPayload>('/api/features'))
 const cal = useAsync(() => getJson<CalibrationPayload>('/api/calibration'))
+const job = useJob()
 
-onMounted(() => {
+onMounted(async () => {
   void features.run()
-  void cal.run()
+  await cal.run()
+  // 刷新之后接上（规格书 §4.7）：载荷里那个 job 还在跑就接着轮询它。
+  // 用**刚刚取回来的那一份**，不再多发一次 `GET /api/calibration`。
+  job.attachFrom(cal.data.value?.job ?? null)
+})
+
+// 切页即卸载（本仓没有 KeepAlive），**必须停表** ——
+// 不停的话离开页② 之后它还在每秒发一条请求，而屏上什么也看不见。
+onBeforeUnmount(job.stop)
+
+/**
+ * 任务跑到 `done` 才重取 `GET /api/calibration`。
+ *
+ * `done` 是后端在包**写回之后**才置的（规格书 §5.1 第 4 步），所以这一刻
+ * 盘上已经是对的。`cancelled` 与 `failed` 都不重取 —— 那两次盘上的包没变，
+ * 重取只会拿到与屏上一样的东西，白跑一趟。
+ */
+watch(() => job.job.value?.state, (now, before) => {
+  if (now === 'done' && before === 'running') void cal.run()
 })
 
 const failure = computed(() =>
@@ -80,6 +100,46 @@ const mismatchLine = computed(() => {
     + '要拿到对当前数据集有效的参数，需离线跑一次标定：'
     + '在 backend/ 目录下跑 python scripts/calibrate.py'
 })
+
+/**
+ * 待优选清单，两段拼成一排表。**后端给的次序即为屏上的次序**，
+ * 前端不排 —— 排序是数值行为，而这一页一个数都不算（硬约束 1）。
+ */
+const spaceRows = computed(() => {
+  const s = cal.data.value?.space
+  if (!s) return [] as { model: string; key: string; values: string[] }[]
+  return [
+    ...s.trend.map((r) => ({ model: 'XGBoost', key: r.key, values: r.values })),
+    ...s.idw.map((r) => ({ model: 'IDW', key: r.key, values: r.values })),
+  ]
+})
+
+/** 提交中 / 正在跑。两者都禁用按钮 —— 点第二次不会更快。 */
+const busy = computed(() =>
+  job.polling.value || job.job.value?.state === 'running')
+
+/**
+ * 进度那一行。**不给百分比**（规格书 §4.3）：要给出百分比得让库的
+ * `progress` 协议从「一句话」变成「(阶段, 已完成, 总数)」，那是又一处库分叉；
+ * 而阶段 1 与阶段 3 的每一项是秒级、阶段 2 的每一项是十几秒的，
+ * 一个把两段糊在一起的百分比条会比不给更撒谎。
+ */
+const jobLine = computed(() => {
+  const j: JobSummary | null = job.job.value
+  if (!j) return ''
+  if (j.state === 'done') return `标定完成，用时 ${fmt1(j.elapsed_s)} 秒`
+  if (j.state === 'cancelled') return ''
+  if (j.state === 'failed') return ''
+  return `${j.progress || '正在启动'}（已用 ${fmt1(j.elapsed_s)} 秒）`
+})
+
+async function onOptimize(): Promise<void> {
+  await job.start()
+}
+
+async function onCancel(): Promise<void> {
+  await job.cancel()
+}
 </script>
 
 <template>
@@ -126,6 +186,24 @@ const mismatchLine = computed(() => {
     <!-- 2.2 最优参数的选择 -->
     <Card class="block">
       <h3>最优参数的选择</h3>
+
+      <!-- 待优选参数清单：**点之前就在屏上**（规格书 §三 的「先」字）。
+           它由后端从两个搜索空间生成，与盘上有没有包无关，所以空态下也在。
+           ⚠️ 这张表**不配引子散文**：`design/prose.test.ts` 把「四页里所有
+           `p.note` 要么折进 `details.why`、要么是状态/读数/分级」当作判据
+           （spec §十二.11），而「这两个模型搜过什么」属于口径 —— 它现在
+           住在页尾那处「口径与出处」里。 -->
+      <h4>待优选的参数</h4>
+      <table v-if="spaceRows.length">
+        <thead><tr><th>模型</th><th>参数</th><th>候选值</th></tr></thead>
+        <tbody>
+          <tr v-for="r in spaceRows" :key="r.key">
+            <td>{{ r.model }}</td>
+            <td class="num">{{ r.key }}</td>
+            <td class="num">{{ r.values.join('、') }}</td>
+          </tr>
+        </tbody>
+      </table>
 
       <p v-if="cal.data.value && !cal.data.value.present" class="unset">
         <strong>未标定</strong>：{{ cal.data.value.reason }}
@@ -179,6 +257,27 @@ const mismatchLine = computed(() => {
       </template>
 
       <p v-if="cal.data.value?.lz_note" class="warn">{{ cal.data.value.lz_note }}</p>
+
+      <!-- 参数优选：一个按钮，一次长任务（规格书 §四）。
+           有数据集时永远可点 —— 没包也能跑，就是从头跑一遍。 -->
+      <div class="act">
+        <button class="go" :disabled="busy" @click="onOptimize">
+          {{ busy ? '正在优选…' : '参数优选' }}
+        </button>
+        <!-- 取消只在跑着的时候给：不在跑的时候摆一个取消按钮，
+             点它只会得到一句「来不及取消了」。 -->
+        <button v-if="busy" class="cancel" @click="onCancel">取消</button>
+        <span v-if="jobLine" class="note reading">{{ jobLine }}</span>
+      </div>
+      <p v-if="job.error.value" role="alert" class="alert">{{ job.error.value }}</p>
+      <!-- 异常原话上屏。后端把 `failed` 的 `error` 原样给出来，
+           换一句通用文案就等于把现场（哪个阶段、哪个异常）丢了。 -->
+      <p v-if="job.job.value?.state === 'failed'" role="alert" class="alert">
+        标定失败：{{ job.job.value.error }}
+      </p>
+      <p v-if="job.job.value?.state === 'cancelled'" class="note state">
+        已取消，盘上的包没有变。
+      </p>
     </Card>
 
     <!-- 2.3 模型训练 -->
@@ -276,6 +375,11 @@ const mismatchLine = computed(() => {
         <li v-for="n in features.data.value.notes" :key="n">{{ n }}</li>
       </ul>
       <p class="note">平台区间：这些值不是碰巧挑中的；区间越宽，说明这个维度越不敏感。</p>
+      <p class="note">
+        待优选的参数由后端从两个搜索空间生成，与盘上有没有包无关；
+        所以空态下也列得出来。搜索是确定的：同一份数据集、同一组特征，
+        点多少次都得到同一份参数。
+      </p>
     </details>
   </section>
 </template>
@@ -286,6 +390,8 @@ const mismatchLine = computed(() => {
 .alert { color: var(--leaf); border-left: 3px solid var(--leaf); padding-left: var(--gap-s); }
 .unset { border-left: 3px solid var(--leaf); padding-left: var(--gap-s); }
 .warn { color: var(--net); font-weight: var(--w-strong); }
+.act { display: flex; align-items: center; gap: var(--gap-s); margin-top: var(--gap-m); }
+.act .go { font-weight: var(--w-strong); }
 tr.worst { background: var(--leaf-soft); }
 .tag { margin-left: var(--gap-s); color: var(--leaf); font-size: var(--size-note); }
 .why { margin-top: var(--gap-l); }
