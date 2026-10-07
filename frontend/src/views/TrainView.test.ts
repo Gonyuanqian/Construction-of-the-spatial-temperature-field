@@ -4,6 +4,51 @@ import { flushPromises, mount } from '@vue/test-utils'
 import TrainView from './TrainView.vue'
 import { NAV_ITEMS } from '../design/copy'
 
+/**
+ * jsdom 里没有 canvas，而 `EChart` 一挂上就 `echarts.init` + `setOption` ——
+ * zrender 拿到的 2d 上下文是 `null`（jsdom 只打一句「Not implemented」），
+ * 紧接着写 `ctx.dpr` 就抛，抛在挂载钩子里，整个 wrapper 跟着废掉。
+ * 这一组测的是取数、按钮、文案与表，**不是画图** —— 与 `LiveView.test.ts`、
+ * `routes.smoke.test.ts` 同一个处置。「画得对不对」由 `EChart.test.ts`
+ * 与页③ 那组测试兜着，不靠这里。
+ *
+ * ⚠️ 页② 到 Task 10 才第一次有图，所以这个 mock 也是那时才加的。
+ */
+vi.mock('../charts/EChart.vue', () => ({
+  default: {
+    name: 'EChart', props: ['option', 'height'], template: '<div class="chart-stub" />',
+  },
+}))
+
+/**
+ * 环境夹具，与页①③⑤ 同款（Ruling P5）：
+ * 一是**令牌**——`readPalette()` 读不到 `tokens.css` 的变量就抛错，
+ * jsdom 不会去加载那个样式表；二是 `ResizeObserver`——jsdom 里没有，
+ * 而 `EChart.vue` 挂载时要建一个。
+ *
+ * 页② 到本任务才第一次用到这两样（此前这一页一张图都没有）。
+ */
+function installEnvironment(): void {
+  const root = document.documentElement
+  root.style.setProperty('--paper', '#F7F6F2')
+  root.style.setProperty('--ink', '#211F1C')
+  root.style.setProperty('--ink-muted', '#5C5850')
+  root.style.setProperty('--steel', '#DEDCD6')
+  root.style.setProperty('--leaf', '#14532D')
+  root.style.setProperty('--leaf-soft', '#E7EFE9')
+  root.style.setProperty('--net', '#0B0F0D')
+  root.style.setProperty('--layer-top', '#C44E52')
+  root.style.setProperty('--layer-mid', '#4C72B0')
+  root.style.setProperty('--layer-low', '#55A868')
+  root.style.setProperty('--size-chart-axis', '12px')
+  root.style.setProperty('--size-chart-title', '14px')
+  vi.stubGlobal('ResizeObserver', class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  })
+}
+
 const FEATURES = {
   default_groups: ['coord', 'zbasis', 'meteo', 'interaction'],
   groups: [
@@ -130,7 +175,10 @@ async function mountWithDiag(diag: unknown = DIAG) {
 }
 
 describe('页② 模型训练', () => {
-  beforeEach(() => vi.restoreAllMocks())
+  beforeEach(() => {
+    installEnvironment()
+    vi.restoreAllMocks()
+  })
 
   it('三段的次序就是流水线的次序', async () => {
     stub({ '/api/features': FEATURES, '/api/calibration': CAL })
@@ -535,5 +583,34 @@ describe('页② 模型训练', () => {
     await flushPromises()
     expect(w.findAll('.stat').map((c) => c.find('.label').text()))
       .toEqual(['特征列', '折数', 'MAE', 'gap', '最差折'])
+  })
+
+  it('点完训练之后两张图都挂上去了', async () => {
+    // 图是**后端算好送上来的** —— 这一页没有一处计算（硬约束 1）。
+    // 这里断言的是「两张图各自的 option 都被构造出来了」，
+    // 画得对不对由 routes.smoke.test.ts 的路由冒烟兜底。
+    // 数的是**组件**不是 `.chart`：`EChart` 在本文件里是替身（见文件顶的
+    // mock），按名字找才不依赖替身那行模板长什么样。
+    const w = await mountWithDiag()
+    expect(w.findAllComponents({ name: 'EChart' })).toHaveLength(4)   // 1 密度 + 3 残差
+  })
+
+  it('残差三连是按后端给的项数与次序渲染的', async () => {
+    const w = await mountWithDiag()
+    const text = w.text()
+    expect(text).toContain('残差 vs 昼夜')
+    expect(text).toContain('残差 vs 高度')
+    expect(text).toContain('残差 vs 棚长')
+  })
+
+  it('上屏文案（含新增的口径）仍然没有禁用字形', async () => {
+    const w = await mountWithDiag()
+    const text = w.text()
+    expect(text).not.toContain('——')
+    expect(text).not.toContain('**')
+    expect(text).not.toContain('`')
+    expect(text).not.toContain(' · ')
+    expect(text).not.toContain('→')
+    expect(text).not.toContain('↳')
   })
 })

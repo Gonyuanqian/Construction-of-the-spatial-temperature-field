@@ -49,11 +49,11 @@ export function buildResidualOption(panel: ResidualPanel, p: Palette): EChartsOp
   return {
     backgroundColor: 'transparent',
     animation: false,
-    title: {
-      text: panel.label, left: 'center', top: 0,
-      textStyle: { color: p.ink, fontSize: p.chartTitle, fontWeight: 600 },
-    },
-    grid: { left: 56, right: 16, top: 44, bottom: 52, containLabel: false },
+    // ⚠️ **有数据的时候这里不写 `title`** —— 图的名字由页面在画布**上方**的
+    // `<h5>` 给出（`TrainView.vue`）。画布里的字是像素，读屏软件读不到，
+    // 测试也读不到；两处各写一遍则是同一个名字上下并排出现两次。
+    // 空态那支仍然要一个 `title` —— 那一句是**话**（为什么没有图），不是名字。
+    grid: { left: 56, right: 16, top: 16, bottom: 52, containLabel: false },
     tooltip: {
       trigger: 'axis',
       formatter: (params: unknown) => {

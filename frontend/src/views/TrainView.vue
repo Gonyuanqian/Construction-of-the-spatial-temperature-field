@@ -7,8 +7,10 @@
  * 最后才谈它有多准。倒过来读的人会先看指标，然后才发现指标是在
  * 另一组参数下测的。
  *
- * 本轮**只有表与数字，没有图**（用户 2026-10-04 的决定）。
- * 解释「最优参数怎么选出来的」与「训练效果如何」的图表另行商议。
+ * 2026-10-07（spec §7.1/§7.2）：第三段多了两张图 —— 折外预测 vs 实测的
+ * 密度矩阵，与残差 vs 昼夜/高度/棚长的三连。**两张图都是后端算好送上来的**
+ * （硬约束 1），这一页只把它们画出来；基线不进这两张图（§6.3），
+ * 它是数字层面的对照物。
  *
  * 这一页最大的风险是在口径上撒谎 —— 「最优参数」四个字背后的前提
  * （哪份数据集、哪组特征、哪个准则、在哪一组上挑的）必须与数一起出现，
@@ -23,6 +25,9 @@ import type {
   CalibrationPayload, DiagnosticsPayload, FeaturesPayload, JobSummary,
 } from '../api/types'
 import { getJson } from '../api/client'
+import EChart from '../charts/EChart.vue'
+import { buildOofDensityOption } from '../charts/options/oofDensity'
+import { buildResidualOption } from '../charts/options/residualBins'
 import Card from '../components/Card.vue'
 import Provenance from '../components/Provenance.vue'
 import StatCard from '../components/StatCard.vue'
@@ -30,6 +35,7 @@ import StatRow from '../components/StatRow.vue'
 import { useAsync } from '../composables/useAsync'
 import { useJob } from '../composables/useJob'
 import { fmt1, fmtInt } from '../design/format'
+import { readPalette } from '../design/palette'
 
 const features = useAsync(() => getJson<FeaturesPayload>('/api/features'))
 const cal = useAsync(() => getJson<CalibrationPayload>('/api/calibration'))
@@ -176,6 +182,23 @@ const ratioLine = computed(() => {
 async function onTrain(): Promise<void> {
   await diag.run()
 }
+
+/**
+ * 色板读一次。canvas 不认 `var()`，所以颜色与图表字号必须在这里读成 JS 值
+ * 再传进 option 构造器 —— `readPalette` 在四个视图里各调一次，是既有的做法。
+ */
+const palette = readPalette()
+
+/** 两张图的 option。**纯函数的返回值**，没有一处在这里算数（硬约束 1）。 */
+const densityOption = computed(() => {
+  const d = diag.data.value
+  return d ? buildOofDensityOption(d, palette) : null
+})
+
+const residualOptions = computed(() => {
+  const d = diag.data.value
+  return d ? d.residual.map((panel) => buildResidualOption(panel, palette)) : []
+})
 </script>
 
 <template>
@@ -379,6 +402,33 @@ async function onTrain(): Promise<void> {
           <p v-if="ratioLine" class="note reading">{{ ratioLine }}</p>
         </template>
 
+        <!-- 两张图都**由后端算好送上来**（硬约束 1）：密度矩阵是 60×60 的
+             计数，残差是分箱的均值与标准误。前端只把它们画出来。
+             ⚠️ 基线**不进这两张图**（规格书 §6.3）：它不是常数预测，
+             而是 `bg_temp(t)`，在「预测 vs 实测」平面上是一条带宽随时刻
+             变化的云，画上去只会把 y = x 那条线搅浑。基线是数字层面的对照物。
+             ⚠️ 图上怎么读，写在页尾「口径与出处」里 —— 正文里不铺散文
+             （`design/prose.test.ts` 是 spec §十二.11 的判据本身）。 -->
+        <template v-if="densityOption">
+          <h4>折外预测与实测</h4>
+          <EChart :option="densityOption" height="380px" />
+        </template>
+
+        <template v-if="residualOptions.length">
+          <h4>残差诊断</h4>
+          <div class="trio">
+            <div v-for="(panel, i) in diag.data.value!.residual" :key="panel.key">
+              <!-- ⚠️ 这一行不是装饰，是**这张图的名字**：图是 canvas 画的，
+                   画在画布里的标题对读屏软件、对 `w.text()` 都不存在。
+                   所以名字在 HTML 里有一份，画布里就**不再有一份**
+                   （`residualBins.ts` 的有数据那一支因此不带 `title`），
+                   免得同一个名字上下并排出现两次。 -->
+              <h5>{{ panel.label }}</h5>
+              <EChart :option="residualOptions[i]" height="240px" />
+            </div>
+          </div>
+        </template>
+
         <table v-if="cal.data.value.metrics.length">
           <thead>
             <tr>
@@ -474,6 +524,36 @@ async function onTrain(): Promise<void> {
         所以空态下也列得出来。搜索是确定的：同一份数据集、同一组特征，
         点多少次都得到同一份参数。
       </p>
+      <p v-if="diag.data.value" class="note">{{ diag.data.value.note }}</p>
+      <!-- ⚠️ 两段都包在 `v-if="diag.data.value"` 里：第二段要读
+           `diag.data.value.n_points`，而 Vue 的模板类型检查不追「`acc` 非空
+           蕴含 `diag.data.value` 非空」这层关系。再加一层 `v-if="acc"`，
+           是因为这两句讲的全是基线。
+           ⚠️ 下面是**上屏的话**，所以一个 markdown 星号都不许有
+           （`上屏的文字里没有被禁的连接符与 markdown 标记` 会当场抓住）。 -->
+      <template v-if="diag.data.value">
+        <p v-if="acc" class="note">
+          基线与本模型用的是同一批位置折、同一段训练数据，所以两个数可以并排比。
+          页① 与页③ 上的数不是这么来的，不要与这里交叉着读。
+          基线不进上面的两张图：它不是常数预测，而是背景温度随时刻变化的一条云。
+        </p>
+        <p v-if="acc" class="note">
+          这里的每一个数都是现场算的（{{ diag.data.value.n_points }} 对折外预测），
+          不在标定包里，所以它的图章是「算」而不是「包」。后端按包缓存，
+          同一份包第二次点「开始训练」是秒回的。
+        </p>
+        <!-- 下面两段是**图怎么读**。它们本来写在图底下，被归到了这里：
+             那是解释，不是此刻的状态、不是读数、不是分级，三样都不是，
+             所以按 §十二.11 只有「口径」这一个合法的去处。 -->
+        <p v-if="densityOption" class="note">
+          密度图上每一格是落在那个温度区间里的点对数，颜色越亮越密；
+          斜虚线是「报得刚好」，点落在它的上方就是报高了。
+        </p>
+        <p v-if="residualOptions.length" class="note">
+          残差 = 预测 − 实测，正数表示报高了。误差棒是箱内平均残差的标准误。
+          高度的取值只有三个、棚长只有七个，所以后两张是柱子不是曲线。
+        </p>
+      </template>
     </details>
   </section>
 </template>
@@ -488,6 +568,22 @@ async function onTrain(): Promise<void> {
 .act .go { font-weight: var(--w-strong); }
 tr.worst { background: var(--leaf-soft); }
 .tag { margin-left: var(--gap-s); color: var(--leaf); font-size: var(--size-note); }
+/* 三张残差图并排，窄的时候自己折行。**不写死三列**：1366px 下三张
+   各剩三百多像素，24 根柱子挤成一片 —— `minmax` 让它们在该折的时候折。 */
+.trio {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--gap-m);
+}
+/* 每张图的名字。h5 在 base.css 里没有字号（那一层只到 h3），所以在这里定，
+   用的是小标签那一档 —— 它是图的一部分，不是又一个小节标题。 */
+.trio h5 {
+  margin: 0 0 var(--gap-s);
+  font-size: var(--size-label);
+  font-weight: var(--w-strong);
+  color: var(--ink-muted);
+  letter-spacing: 0.02em;
+}
 .why { margin-top: var(--gap-l); }
 .why summary { font-size: var(--size-label); color: var(--ink-muted); cursor: pointer; }
 .why > p, .why > ul { margin-top: var(--gap-s); }
