@@ -257,3 +257,107 @@ def test_整列残差是_NaN_时那一箱是_null_而不是_500():
     assert zero["se"] is None
     import json
     json.dumps(panel, allow_nan=False)      # 不许有 NaN 混出去
+
+
+# ── 出口与缓存（T12）──
+
+@pytest.fixture(scope="module")
+def client():
+    from fastapi.testclient import TestClient
+    from api.main import create_app
+    from api import deps, paths
+    deps.set_current_dataset(paths.dataset_path())
+    return TestClient(create_app())
+
+
+@pytest.fixture(autouse=True)
+def _reset_diagnostics():
+    """每个用例从空缓存开始。缓存是**模块级**的，不清就让「算了几遍」数不准。"""
+    from api import diagnostics
+    diagnostics._CACHE = diagnostics.DiagnosticsCache()
+    yield
+
+
+def test_诊断出口给出基线密度与残差(client):
+    b = client.get("/api/calibration/diagnostics").json()
+    assert b["present"] is True
+    assert b["created_at"] and b["groups_sig"] and b["dataset_sig"]
+    assert b["n_sensors"] == 24 and b["n_times"] == 1164
+    assert b["n_points"] == 24 * 1164
+    assert len(b["density"]["counts"]) == 60
+    assert b["accuracy"]["baseline"]["label"]
+    assert [p["key"] for p in b["residual"]] == ["diurnal", "height", "length"]
+    # allow_nan=False 不吃 NaN：整份载荷必须能原样序列化出去
+    import json
+    json.dumps(b, allow_nan=False)
+
+
+def test_诊断按包缓存_连调两次只拟合一遍(client):
+    """T12：不缓存的话，每开一次页② 都白跑一遍八折（十几秒）。"""
+    from api import diagnostics
+    client.get("/api/calibration/diagnostics").json()
+    first = diagnostics._CACHE.n_builds
+    client.get("/api/calibration/diagnostics").json()
+    assert first == 1, "第一次就应当算了一遍"
+    assert diagnostics._CACHE.n_builds == 1, "第二次没命中缓存，又跑了一遍八折"
+
+
+def test_换数据集之后诊断缓存被清掉(client, tmp_path, monkeypatch):
+    """§8.4：诊断要登记进 `reset_cache()`。
+
+    不清的后果是**新人拿到旧数据集的图** —— 而图上没有任何一个字会说这件事。
+    """
+    from api import deps, diagnostics, paths
+    client.get("/api/calibration/diagnostics").json()
+    assert diagnostics._CACHE.n_builds == 1
+    deps.reset_cache()
+    assert diagnostics._CACHE.n_builds == 0, "换数据集没有清诊断缓存"
+    # 收尾：把交付数据集装回去，别留给后面的模块
+    deps.install_dataset(paths.dataset_path())
+
+
+def test_诊断的缓存键与管线缓存同一个形状():
+    """键里三个东西一个都不能少。
+
+    少了 `created_at`：重标一次之后界面还在给你上一次的图。
+    少了 `groups_sig`：换了特征组还在用旧图。
+    少了数据集签名：换了数据还在用旧图。
+
+    ⚠️ 这里不能直接调 `deps.PipelineCache.key_of`（`tests/test_routes_use_cache.py`
+    规定 `api/**` 从 `deps` 取名字只许白名单里那几个），所以两个实现各写一份 ——
+    这条测试就是钉住它们**相等**的那根钉子。
+    """
+    from api import deps, diagnostics
+    from dataclasses import replace
+    deps.set_current_dataset(paths.dataset_path())
+    ds = deps.get_train_dataset()
+    b = load_for(ds, C.DEFAULT_FEATURE_GROUPS, root=BACKEND / "configs")
+    assert diagnostics.DiagnosticsCache.key_of(ds, C.DEFAULT_FEATURE_GROUPS, b) == \
+        deps.PipelineCache.key_of(ds, C.DEFAULT_FEATURE_GROUPS, b)
+    # 少任何一位都会变
+    assert diagnostics.DiagnosticsCache.key_of(
+        ds, C.DEFAULT_FEATURE_GROUPS, replace(b, created_at="别的时刻")) != \
+        deps.PipelineCache.key_of(ds, C.DEFAULT_FEATURE_GROUPS, b)
+
+
+def test_没有包时诊断出口报_409_并说清下一步(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    from api import deps, paths
+    from api.main import create_app
+    from api.routes import calibration as cal_routes
+    deps.set_current_dataset(paths.dataset_path())
+    monkeypatch.setattr(cal_routes, "CONFIGS_ROOT", tmp_path)
+    r = TestClient(create_app()).get("/api/calibration/diagnostics")
+    assert r.status_code == 409
+    assert "参数优选" in r.json()["detail"]
+
+
+def test_诊断的上屏文案过了字形守卫(client):
+    """随响应体上屏的纯文本不许夹带被禁的连接符与 markdown 标记（硬约束 4）。"""
+    b = client.get("/api/calibration/diagnostics").json()
+    rendered = [b["note"], b["accuracy"]["baseline"]["label"],
+                b["accuracy"]["model"]["label"]]
+    rendered += [p["label"] for p in b["residual"]] + [p["axis"] for p in b["residual"]]
+    for s in rendered:
+        for bad in ("——", "**", "`", " · ", "→", "↳"):
+            assert bad not in s, f"上屏文案里出现了被禁的 {bad!r}：{s!r}"

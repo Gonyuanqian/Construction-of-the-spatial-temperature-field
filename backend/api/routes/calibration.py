@@ -13,13 +13,13 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from tfield import config as C
 from tfield.calibration import IDW_SPACE, TREND_SPACE, TUNED_KEYS, load_bundle, load_for
 from tfield.pipeline import PipelineConfig
 
-from .. import deps, jobs, paths, ported
+from .. import deps, diagnostics, jobs, paths, ported
 
 router = APIRouter(tags=["calibration"])
 
@@ -295,6 +295,35 @@ def _job_summary() -> dict[str, Any] | None:
     """
     job = jobs.current()
     return None if job is None else job.to_dict()
+
+
+@router.get("/calibration/diagnostics")
+def get_diagnostics() -> dict[str, Any]:
+    """页② 第三段那个「开始训练」按钮打的就是这一条（规格书 §二、§8.4）。
+
+    它是一次**真实的训练**：八折各拟合一遍，只是不搜参数。有包就行 ——
+    进程重启之后照样拿得到精度，不必重搜一次（验收 7）。
+
+    诊断是**包的函数**（包 → 图），不是包的一部分：写进包会让老包没有图、
+    要看图就得重标一次（裁定 C）。
+
+    没包时报 409 而**不是** 200 + `present: false`：这一条没有「兜底精度」
+    可以报 —— 兜底参数配上一堆图，只会让人以为那是一个可以用的模型。
+    """
+    ds = deps.get_train_dataset()
+    groups = tuple(C.DEFAULT_FEATURE_GROUPS)
+    bundle = load_for(ds, groups, root=CONFIGS_ROOT)
+    if bundle is None:
+        raise HTTPException(status_code=409,
+                            detail="这一份数据集还没有标定包，先做一次参数优选")
+    out = diagnostics.get_or_compute(ds, groups, bundle)
+    return {
+        "present": True,
+        "created_at": bundle.created_at,
+        "groups_sig": bundle.groups_sig,
+        "dataset_sig": bundle.dataset_sig,
+        **out,
+    }
 
 
 def _tuned_keys(bundle) -> list[dict[str, Any]]:

@@ -12,12 +12,14 @@
 from __future__ import annotations
 
 import math
+import threading
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from tfield import config as C
+from tfield.calibration import groups_signature
 from tfield.data.types import Dataset
 from tfield.pipeline import FieldPipeline
 from tfield.validation.folds import position_folds
@@ -25,6 +27,8 @@ from tfield.validation.metrics import mae as _mae
 from tfield.validation.metrics import r2 as _r2
 from tfield.validation.metrics import rmse as _rmse
 from tfield.validation.report import out_of_fold_predictions
+
+from . import deps
 
 #: 密度矩阵的边长。60×60 = 3600 格，画成热图还看得见对角线；再细就全白，
 #: 再粗就把对角线上那条带子糊成一块砖。
@@ -34,6 +38,16 @@ BINS = 60
 #: **全量数据集**上的，这里是训练段 —— 两个数不可直接比大小（规格书 §6.2）。
 BASELINE_LABEL = "拿背景温度当棚温（不作任何建模）"
 MODEL_LABEL = "本模型（B 组，未参与选参）"
+
+#: 这一整块的说明。**随数据一起从后端来** —— 让前端各自去写，迟早写成
+#: 「模型精度 99.9%」而把「没有基线时那个数说明不了什么」丢了。
+DIAGNOSTICS_NOTE = (
+    "折外预测：每一折都用不含该测点的数据重新训练，再预测被留出的那些测点。"
+    "密度图上每一点都是这样一对（预测，实测），对角线是「报得刚好」。"
+    "基线拿背景温度直接当棚温，不作任何建模；它与本模型用同一批折、同一段数据，"
+    "所以两个数可以并排比。倍数是算出来的，不是写死的。"
+    "残差 = 预测 − 实测，正数表示报高了，误差棒是箱内平均残差的标准误。"
+)
 
 #: 三张残差图的横轴。次序即屏上的次序。
 RESIDUAL_AXES = (
@@ -178,3 +192,87 @@ def residuals(oof: pd.DataFrame) -> list[dict[str, Any]]:
             })
         panels.append({"key": key, "label": label, "axis": axis_name, "bins": bins})
     return panels
+
+
+class DiagnosticsCache:
+    """按管线身份缓存诊断结果。
+
+    形状与 `deps.PipelineCache` / `deps.DatasetCache` **故意一致**：
+    三个缓存的失效规则必须读起来一样，否则「为什么这次没生效」会在三个
+    不同的心智模型之间来回甩。
+    """
+
+    def __init__(self, *, builder=None, capacity: int = 4) -> None:
+        self._builder = builder or compute
+        self._capacity = int(capacity)
+        self._items: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self._lock = threading.Lock()
+        self.n_builds = 0            # 测试用它证明「真的只算了一次」
+
+    @staticmethod
+    def key_of(ds: Dataset, groups, bundle) -> tuple[str, str, str]:
+        """(数据集签名, 特征组签名, 包的 created_at)。
+
+        **与 `deps.PipelineCache.key_of` 同形，有测试钉着两者相等。**
+
+        ⚠️ 这里不能写 `deps.PipelineCache.key_of`：`tests/test_routes_use_cache.py`
+        规定 `api/**` 从 `deps` 取名字只许白名单里那几个，而 `PipelineCache`
+        不在名单上（那条守卫防的正是「绕过 get_dataset 直接抓缓存设施」）。
+        两份实现 + 一条守卫，比开一个口子好。
+        """
+        return (ds.signature, groups_signature(groups),
+                getattr(bundle, "created_at", None) or "")
+
+    def get(self, ds: Dataset, groups, bundle) -> dict[str, Any]:
+        key = self.key_of(ds, groups, bundle)
+        with self._lock:
+            hit = self._items.get(key)
+            if hit is not None:
+                self._items[key] = self._items.pop(key)   # 命中即提到队尾
+                return hit
+            # 构建放在锁里：并发时第二个线程等在这里，醒来就命中。
+            # 这一次构建要十几秒，但**别的路由不受影响** —— 它们不碰这把锁。
+            out = self._builder(ds, groups, bundle)
+            self._items[key] = out
+            while len(self._items) > self._capacity:
+                self._items.pop(next(iter(self._items)))
+            self.n_builds += 1
+            return out
+
+
+def compute(ds: Dataset, groups, bundle) -> dict[str, Any]:
+    """跑一遍全部四块。**没有缓存层的那一半**，测试可以单独调它。"""
+    oof = oof_table(ds, bundle)
+    return {
+        "n_points": int(len(oof)),
+        "n_sensors": int(oof["sensor_id"].nunique()),
+        "n_times": int(len(ds.wide)),
+        "density": density(oof),
+        "accuracy": accuracy(oof, bundle),
+        "residual": residuals(oof),
+        "note": DIAGNOSTICS_NOTE,
+    }
+
+
+_CACHE = DiagnosticsCache()
+
+
+def get_or_compute(ds: Dataset, groups, bundle) -> dict[str, Any]:
+    """出口用这一个。"""
+    return _CACHE.get(ds, groups, bundle)
+
+
+def _reset() -> None:
+    """换数据集时**重建**缓存对象，不是 `clear()`。
+
+    `clear()` 会让 `n_builds` 留着上一个数据集的计数，而「换完之后又算了
+    几遍」正是那条缓存测试要数的东西。理由与 `deps.reset_cache` 里那句一字不差。
+    """
+    global _CACHE
+    _CACHE = DiagnosticsCache()
+
+
+#: 在**模块导入时**登记自己（与 `api/live.py` 的实时源同一个手法）：
+#: 显式调用要求每个未来的调用点都记得调，而那正是「换数据集忘了清」的成因。
+#: 在结构上不可能漏，比「记得调」可靠。
+deps.on_dataset_change(_reset)
