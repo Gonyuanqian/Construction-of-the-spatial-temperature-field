@@ -61,9 +61,8 @@ def get_calibration() -> dict[str, Any]:
             "feature_groups": list(C.DEFAULT_FEATURE_GROUPS),
             "job": _job_summary(),
             "trend_kind": cfg.trend_kind,
-            "space": _space(),
-            "tuned_keys": [], "plateau": [], "lz_note": None,
-            "params": _fallback_params(cfg),
+            "panel": _panel(None, cfg),
+            "plateau": [], "lz_note": None,
             "metrics": [], "per_point": [], "ab": None,
             "fold_kind": None, "n_folds": 0, "worst_fold": None,
             "ab_note": _AB_NOTE,
@@ -97,9 +96,7 @@ def get_calibration() -> dict[str, Any]:
         "feature_groups": list(bundle.feature_groups),
         "job": _job_summary(),
         "trend_kind": bundle.trend_kind,
-        "space": _space(),
-        "tuned_keys": _tuned_keys(bundle),
-        "params": _params(bundle),
+        "panel": _panel(bundle, None),
         "plateau": [{"dim": k, "lo": ported.fmt_value(lo), "hi": ported.fmt_value(hi)}
                     for k, (lo, hi) in bundle.search.plateau.items()],
         "lz_note": _lz_note(bundle),
@@ -246,40 +243,125 @@ _SPACE_KEY = {
 #: `trend.*` 两边同名，直接透传。
 
 
-def _space_values(key: str) -> list[str]:
-    """一个 `tuned_keys` 键 → 它在搜索空间里的候选值。
+#: 面板上每一维的中文名。**只放显示名，不放候选值** ——
+#: 候选值一律由 `IDW_SPACE` / `TREND_SPACE` 现取（见 `_candidates`），
+#: 那是「要搜什么」的唯一定义处。
+#: 键表必须与 `TUNED_KEYS` 逐字相同，有测试钉着
+#: （`test_面板的标签表与调参键一一对应`）—— 库里加一个参数而这里没跟，
+#: 那个参数会带着空标签上屏，当场红。
+_LABELS = {
+    "metric.power": "IDW 距离幂",
+    "metric.lx": "IDW 棚长方向尺度 / m",
+    "metric.lz": "IDW 竖直方向尺度 / m",
+    "cross_shed": "跨棚邻居是否参与",
+    "trend.objective": "目标函数",
+    "trend.max_depth": "每棵树最深几层",
+    "trend.learning_rate": "学习率",
+    "trend.n_estimators": "树的数量",
+    "trend.min_child_weight": "叶子最小样本权重和",
+    "trend.subsample": "行采样比例",
+    "trend.colsample_bytree": "列采样比例",
+    "trend.reg_lambda": "L2 正则系数",
+}
 
-    走的是 `_SPACE_KEY` **同一张映射** —— 清单与最优参数表必须用同一套键，
-    否则两张上下相邻的表对不上号（`metric.power` vs `idw.power`）。
+#: 不进搜索域、但面板上仍要有一行的参数（规格书 §2.3）。
+#: **只给一句说明，不给控件** —— 一个拖不动的滑块比一句话更容易让人
+#: 以为是自己没点对。这里是它唯一的定义处，两条路（有包 / 空态）共用。
+_FIXED = {
+    "metric.ly": ("IDW y 方向尺度 / m", "固定 1.0，从未进过搜索空间"),
+}
 
-    值一律过 `ported.fmt_value`：`cross_shed` 的 `True` 会印成「开」，
-    而 `_tuned_keys` 那一列印的也是「开」—— 同一个页面上两个口径
-    比少一个口径更坏。
+
+def _candidates(key: str) -> list[Any]:
+    """一个 `TUNED_KEYS` 键 → 它在搜索空间里的候选值。**原始类型，未印。**
+
+    走 `_SPACE_KEY` 同一张映射 —— 面板与校验（`_validated_domain`）必须问同一处，
+    否则「屏上能拖到的」与「发回去收得下的」会分成两个域。
     """
     space_key = _SPACE_KEY.get(key, key)
     head, _, tail = space_key.partition(".")
     if head == "idw":
-        return [ported.fmt_value(v) for v in IDW_SPACE[tail]]
+        return list(IDW_SPACE[tail])
     if head == "trend":
-        return [ported.fmt_value(v) for v in TREND_SPACE[tail]]
+        return list(TREND_SPACE[tail])
     return []
 
 
-def _space() -> dict[str, list[dict[str, Any]]]:
-    """待优选的参数清单（规格书 §三）：**先列出从哪些值里挑**。
+def _is_candidate(v: Any, cand: list[Any]) -> bool:
+    """`v` 是不是 `cand` 里的某一个。
 
-    ⚠️ 由 `TUNED_KEYS` 与两个搜索空间**生成**，不是第二份常量 ——
-    库里加一个参数而界面不跟，是这份清单最可能的坏法。
-
-    ⚠️ **没有 `metric.ly`**：它恒为 1.0、从未进过搜索空间。列进来是在谎报
-    调参范围（`calibration.py:70-73` 的同一条）。
-
-    它不依赖盘上有没有包，所以 `present` 的两条路上都给。
+    ⚠️ **布尔要单独比**：Python 里 `True == 1`，而 `cross_shed` 的候选是
+    `[True, False]` —— 光看 `==` 的话，客户端发来的 `1` 会被当成「开」收下，
+    一个没人打算支持的输入静默生效。这里与 `_validated_domain` 共用这一个函数，
+    免得只堵住一处。
     """
-    rows = [{"key": k, "values": _space_values(k)} for k in TUNED_KEYS]
+    return any(v == c and isinstance(v, bool) == isinstance(c, bool) for c in cand)
+
+
+def _current(bundle, cfg, key: str) -> Any:
+    """这一维现在取的是哪个值。有包读包，没包读兜底配置。
+
+    ⚠️ 与 `_tuned_value` 分成两个函数是有意的：`_tuned_value` 只认包
+    （`metric.power` → `bundle.metric.power`），而空态下没有包可读。
+    """
+    if bundle is not None:
+        return _tuned_value(bundle, key)
+    if key == "cross_shed":
+        return cfg.cross_shed
+    head, _, tail = key.partition(".")
+    if head == "metric":
+        return getattr(cfg.metric, tail)
+    return cfg.trend_params.get(tail)
+
+
+def _legal_values(bundle, cfg, key: str) -> list[Any]:
+    """这一维**屏上能拖到的全部档位**：搜索空间的候选，加上（只有旧包才会有的）当前值。
+
+    ⚠️ **面板与校验共用这一个函数**（`_panel` 与 `_validated_domain` 都调它）。
+    抽出来不是为了少写三行，是为了让「能拖到的」与「能收下的」是**同一个对象**，
+    而不是两份碰巧长得一样的代码 —— 后者只要有一处被改动，页② 就会在「拿旧版
+    搜索空间训出来的包」上**第一次点开始训练就 422**，而发出去的那个值正是面板
+    自己摆上去的，用户没有任何办法把它调对。
+    """
+    cand = _candidates(key)
+    cur = _current(bundle, cfg, key)
+    if cur is not None and not _is_candidate(cur, cand):
+        return [*cand, cur]
+    return cand
+
+
+def _panel(bundle, cfg) -> dict[str, list[dict[str, Any]]]:
+    """面板载荷（规格书 §3.1）：**一套值，两条来路**。
+
+    `values` 是印在屏上的那一串（`fmt_value`），`raw` 是**要发回来的那个值**，
+    两者同下标。分成两列而不是只发 `values`：否则前端要把「开」解析回 `True`、
+    把 `"0.5"` 解析回 `0.5` —— 那是把**印法**当协议，`fmt_value` 一变协议就悄悄变了。
+
+    ⚠️ 每一维的档位由 `_legal_values` 给：搜索空间的候选，加上（只有旧包才有的）
+    当前值。**它与 `_validated_domain` 是同一处**，所以「屏上能选的就是后端收得
+    下的」这条不变式成立，不靠两处代码碰巧一致。前端因此不必为这件事写任何分支
+    （它的滑块是按下标定位的，`current` 不在 `raw` 里就会印出一片空白）。
+    """
+    rows: list[dict[str, Any]] = []
+    for key in TUNED_KEYS:
+        cur = _current(bundle, cfg, key)
+        cand = _legal_values(bundle, cfg, key)
+        rows.append({
+            "key": key,
+            "label": _LABELS[key],
+            "values": [ported.fmt_value(v) for v in cand],
+            "raw": cand,
+            "current": cur,
+        })
+    fixed = [
+        {"key": k, "label": label,
+         "value": ported.fmt_value(_current(bundle, cfg, k)), "note": note}
+        for k, (label, note) in _FIXED.items()
+    ]
     return {
         "trend": [r for r in rows if r["key"].startswith("trend.")],
         "idw": [r for r in rows if not r["key"].startswith("trend.")],
+        "fixed": fixed,
     }
 
 
@@ -326,24 +408,6 @@ def get_diagnostics() -> dict[str, Any]:
     }
 
 
-def _tuned_keys(bundle) -> list[dict[str, Any]]:
-    """明写「以下参数真的进过搜索空间」—— 与 `bundle.tuned_keys` 一一对应。
-
-    值的一面是「挑出来是多少」，空间的一面是「是从哪些值里挑的」。
-    少了任何一面，「最优参数」就没法被质疑。
-    """
-    space = bundle.search.space
-    out = []
-    for k in bundle.tuned_keys:
-        cand = list(space.get(_SPACE_KEY.get(k, k), []))
-        out.append({
-            "key": k,
-            "value": ported.fmt_value(_tuned_value(bundle, k)),
-            "space": "、".join(ported.fmt_value(v) for v in cand) if cand else "—",
-        })
-    return out
-
-
 def _tuned_value(bundle, key):
     """把 `metric.power` / `cross_shed` / `trend.max_depth` 这样的键读回真值。"""
     if key == "cross_shed":
@@ -354,40 +418,6 @@ def _tuned_value(bundle, key):
     if head == "trend":
         return bundle.trend_params.get(tail)
     return None
-
-
-def _params(bundle) -> list[dict[str, str]]:
-    m = bundle.metric
-    tp = bundle.trend_params
-    rows = [
-        ("metric.power", m.power, "IDW 距离幂"),
-        ("metric.lx", m.lx, "IDW 棚长方向尺度 / m"),
-        ("metric.ly", m.ly, "固定 1.0，从未进过搜索空间"),
-        ("metric.lz", m.lz, "IDW 竖直方向尺度 / m"),
-        ("cross_shed", bundle.cross_shed, "跨棚邻居是否参与（独立开关，不是 metric 字段）"),
-    ]
-    for k in ("objective", "max_depth", "learning_rate", "n_estimators",
-              "min_child_weight", "subsample", "colsample_bytree", "reg_lambda"):
-        rows.append((f"trend.{k}", tp.get(k), ""))
-    return [{"param": p, "value": ported.fmt_value(v), "note": note}
-            for p, v, note in rows]
-
-
-def _fallback_params(cfg) -> list[dict[str, str]]:
-    m = cfg.metric
-    rows = [
-        ("metric.power", m.power, "IDW 距离幂"),
-        ("metric.lx", m.lx, "IDW 棚长方向尺度 / m"),
-        ("metric.ly", m.ly, "固定 1.0，从未进过搜索空间"),
-        ("metric.lz", m.lz, "IDW 竖直方向尺度 / m"),
-        ("cross_shed", cfg.cross_shed, "跨棚邻居是否参与"),
-    ]
-    for k, v in cfg.trend_params.items():
-        if k in ("n_jobs", "tree_method", "verbosity", "random_state"):
-            continue
-        rows.append((f"trend.{k}", v, ""))
-    return [{"param": p, "value": ported.fmt_value(v), "note": note}
-            for p, v, note in rows]
 
 
 def _lz_note(bundle) -> str | None:

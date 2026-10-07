@@ -21,6 +21,7 @@ sys.path.insert(0, str(BACKEND))
 from api import deps, paths, routes                      # noqa: E402
 from api.main import create_app                          # noqa: E402
 from tfield import config as C                           # noqa: E402
+from tfield.calibration import IDW_SPACE, TREND_SPACE, TUNED_KEYS   # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -109,31 +110,48 @@ def test_标定包在_且报得出参数与指标(client):
     assert b["n_folds"] == 8 and b["fold_kind"] == "position"
     assert len(b["metrics"]) == 8 and len(b["per_point"]) == 24
 
-    # 参数与搜索空间成对出现 —— 「这个值是从哪挑出来的」要答得出
-    keys = {t["key"] for t in b["tuned_keys"]}
-    assert "metric.power" in keys and "trend.n_estimators" in keys
-    assert all({"key", "value", "space"} == set(t) for t in b["tuned_keys"])
-    params = {p["param"]: p["value"] for p in b["params"]}
-    assert params["metric.power"] == "0.5"
-    assert params["metric.ly"] == "1"            # ly 固定 1.0，从未进过搜索空间
-    assert params["cross_shed"] == "关"
+    # 面板：**一套值，两条来路**（规格书 §3.1）—— 「从哪些值里挑」与
+    # 「挑出来是多少」现在是同一行的两列，不再是上下两张表。
+    panel = b["panel"]
+    rows = panel["trend"] + panel["idw"]
+    # 屏上次序 = XGBoost 八个在前、IDW 四个在后；两组之内各按 `TUNED_KEYS` 的
+    # 次序。⚠️ `TUNED_KEYS` 把 IDW 那四个排在前面，所以不能拿整个它直接比 ——
+    # 要按屏上那个「先 trend 后 idw」的分组各取一次。
+    assert [r["key"] for r in rows] == (
+        [k for k in TUNED_KEYS if k.startswith("trend.")]
+        + [k for k in TUNED_KEYS if not k.startswith("trend.")]), "次序即屏上次序，前端不排"
+    assert all(set(r) == {"key", "label", "values", "raw", "current"} for r in rows)
+    assert len(panel["trend"]) == 8 and len(panel["idw"]) == 4
+    by_key = {r["key"]: r for r in rows}
+    assert by_key["metric.power"]["current"] == 0.5
+    assert by_key["cross_shed"]["current"] is False       # 布尔必须仍是布尔
+    # 三列同下标：印出来的是 `values[i]`，要发回去的是 `raw[i]`
+    for r in rows:
+        assert len(r["values"]) == len(r["raw"])
+        assert r["current"] in r["raw"]
 
 
-def test_每个调过的参数都报得出它的搜索空间(client):
-    """**两个键空间不一样**：`tuned_keys` 里叫 `metric.power`，`search.space` 里叫 `idw.power`；
-    `cross_shed` 在搜索侧挂了 `idw.` 前缀。映射漏一条，那一维的空间就会显示成「—」，
-    看起来像「这一维没搜过」—— 而它其实搜过，只是没报出来。
+def test_面板每一维都报得出候选值(client):
+    """`_SPACE_KEY` 漏一条，那一维的候选就是空的 —— 屏上那个滑块没有档。
 
-    这条测试就是拿 `bundle.tuned_keys` 的**每一个**键去问「空间呢」。
+    ⚠️ 这条原来叫「每个调过的参数都报得出它的搜索空间」，盯的是
+    `tuned_keys` 里那个 `space` 字串。**它防的东西没变**（映射漏一条就露馅），
+    只是判据从「那一列不是『—』」换成了「`raw` 至少两档」——
+    后者更硬：一个空的候选数组连一个字符都印不出来。
     """
     b = client.get("/api/calibration").json()
-    empty = [t["key"] for t in b["tuned_keys"] if t["space"] == "—"]
-    assert empty == [], f"这些参数报了值却没报搜索空间：{empty}"
+    rows = b["panel"]["trend"] + b["panel"]["idw"]
+    thin = [r["key"] for r in rows if len(r["raw"]) < 2]
+    assert thin == [], f"这些参数没有可挑的候选值：{thin}"
 
-    by_key = {t["key"]: t for t in b["tuned_keys"]}
-    assert by_key["metric.power"]["space"]          # 0.5、0.7、1、1.5、2… 至少两个候选
-    assert "、" in by_key["metric.power"]["space"], "只有一个候选的话就不是搜出来的"
-    assert by_key["cross_shed"]["space"] in ("关、开", "开、关")
+    by_key = {r["key"]: r for r in rows}
+    # 印法硬写两条：两个循环两边都过 `fmt_value`，光靠它们看不出口径被换成
+    # `str()` —— 而 `1.0` 上屏必须是 `1`（`%g`），不是 `1.0`。
+    assert by_key["metric.power"]["values"] == ["0.5", "1", "1.5", "2", "2.5", "3", "4"]
+    assert by_key["trend.subsample"]["values"] == ["0.7", "0.85", "1"]
+    # 布尔印成「开」「关」，不是 True / False
+    assert by_key["cross_shed"]["values"] == ["开", "关"]
+    assert by_key["cross_shed"]["raw"] == [True, False]
 
 
 def test_逐折与逐点是标定包里的原数_不是现算的(client):
@@ -258,14 +276,14 @@ def test_口径说明必须随包一起来(client):
 
 
 def _lz_space(b: dict) -> list[float]:
-    """从**响应本身**读 lz 的搜索空间（`tuned_keys` 里 `metric.lz` 那一行的 space）。
+    """从**响应本身**读 lz 的搜索空间（`panel.idw` 里 `metric.lz` 那一行的 `values`）。
 
     不另去盘上加载标定包：这一条要验的是「响应里的值与响应里的空间对得上」，
     空间也必须从响应里来 —— 换成从包里读，测的就不是这一页了。
     """
-    row = next(t for t in b["tuned_keys"] if t["key"] == "metric.lz")
-    assert row["space"] != "—", "lz 报了值却没报搜索空间，_lz_space 无从取起"
-    return [float(v) for v in row["space"].split("、")]
+    row = next(r for r in b["panel"]["idw"] if r["key"] == "metric.lz")
+    assert row["values"], "lz 报了值却没报候选值，_lz_space 无从取起"
+    return [float(v) for v in row["values"]]
 
 
 def test_lz_落在搜索下界时要自己说出来(client):
@@ -278,14 +296,16 @@ def test_lz_落在搜索下界时要自己说出来(client):
     """
     b = client.get("/api/calibration").json()
     lo = min(_lz_space(b))
-    params = {p["param"]: p["value"] for p in b["params"]}
-    at_bound = float(params["metric.lz"]) == lo
+    # 当前值同样**从响应来**：`panel` 里 `metric.lz` 那一行的 `current`
+    # （原先是 `params` 里的 `value` 字串；两张表已并成一张）。
+    lz = next(r["current"] for r in b["panel"]["idw"] if r["key"] == "metric.lz")
+    at_bound = lz == lo
     if at_bound:
         assert b["lz_note"] is not None, "lz 贴着搜索下界时必须有提示，不许静默"
         assert "搜索下界" in b["lz_note"]
     else:
         assert b["lz_note"] is None, (
-            f"lz = {params['metric.lz']} 不在下界 {lo:g} 上，不该发「还没扫够」的警告")
+            f"lz = {lz:g} 不在下界 {lo:g} 上，不该发「还没扫够」的警告")
 
 
 def test_没有标定包时也要答得出来(monkeypatch, tmp_path):
@@ -302,7 +322,8 @@ def test_没有标定包时也要答得出来(monkeypatch, tmp_path):
     assert b["present"] is False
     assert b["reason"] and "标定" in b["reason"]
     assert b["metrics"] == [] and b["per_point"] == []
-    assert {p["param"] for p in b["params"]} >= {"metric.lx", "metric.lz", "metric.power"}
+    rows = b["panel"]["trend"] + b["panel"]["idw"]
+    assert {r["key"] for r in rows} >= {"metric.lx", "metric.lz", "metric.power"}
     assert "兜底" in b["note"]
 
 
@@ -311,55 +332,63 @@ def test_上屏文案干净_没有被禁的连接符与_markdown_标记(client):
     会漏成字面字符的 markdown 标记（`**` 星号、`` ` `` 反引号），只许出现在
     注释与 docstring 里；随响应体上屏的纯文本必须干净。
 
-    ⚠️ 这条同时盯 `_params` 与 `_fallback_params` 两份文案 —— 「固定 1.0…」那句
-    两边各有一份，只测一份会漏掉另一份。
+    ⚠️ 这条原来同时盯 `_params` 与 `_fallback_params` 两份文案 —— 这两个函数
+    已退役，`_LABELS` / `_FIXED` 成了**唯一**一份（有包与空态共用），所以两份
+    文案分家的坑消失了。但两条路仍要**各自**跑一遍：上面这条走 `bundle`，
+    下面那条走 `cfg`。
     """
-    from api.routes.calibration import _fallback_params
-    from tfield.pipeline import PipelineConfig
-
     b = client.get("/api/calibration").json()
     rendered = [b["note"], b["reason"] or "", b["ab_note"], b["lz_note"] or ""]
-    rendered += [p["note"] for p in b["params"]]
-    rendered += [p["note"] for p in _fallback_params(PipelineConfig.fallback())]
-    # 待优选清单的候选值也是上屏的纯文本：`cross_shed` 那两个「开 / 关」
-    # 就是从这儿来的，它们同样不许夹带被禁的字形。
-    rendered += [v for r in b["space"]["trend"] + b["space"]["idw"] for v in r["values"]]
+    rendered += [f["note"] for f in b["panel"]["fixed"]]
+    rendered += [r["label"] for r in b["panel"]["trend"] + b["panel"]["idw"]]
     for s in rendered:
         for bad in ("——", "**", "`", " · ", "→", "↳"):
             assert bad not in s, f"上屏文案里出现了被禁的 {bad!r}：{s!r}"
 
 
+# 空态那一份（没有包时走的是 `PipelineConfig.fallback()`，与上面的包**不是**
+# 同一个来源），标签与固定值必须与有包时逐字相同。
+def test_空态的上屏文案也干净(monkeypatch, tmp_path):
+    from api.routes import calibration as cal_routes
+    monkeypatch.setattr(cal_routes, "CONFIGS_ROOT", tmp_path)
+    b = TestClient(create_app()).get("/api/calibration").json()
+    rendered = [r["label"] for r in b["panel"]["trend"] + b["panel"]["idw"]]
+    rendered += [f["label"] + f["note"] for f in b["panel"]["fixed"]]
+    for s in rendered:
+        for bad in ("——", "**", "`", " · ", "→", "↳"):
+            assert bad not in s, f"空态的上屏文案里出现了被禁的 {bad!r}：{s!r}"
+
+
 # ── 待优选参数清单（规格书 §三）──
 
-def test_待优选清单在没有包时也在(monkeypatch, tmp_path):
-    """T1：清单是**模块常量**（两个搜索空间），与盘上有没有包无关。
+def test_面板在没有包时也在(monkeypatch, tmp_path):
+    """T1：面板是**模块常量加兜底值**，与盘上有没有包无关。
 
-    只在有包时才给 = 逼用户先跑一次才知道要搜什么，而 §三 那个「先」字
+    只在有包时才给 = 逼用户先跑一次才知道要调什么，而 §三 那个「先」字
     说的正是「点之前就在屏上」。空态是唯一能验这一条的地方。
     """
     monkeypatch.setattr(routes.calibration, "CONFIGS_ROOT", tmp_path)
     c = TestClient(create_app())
     b = c.get("/api/calibration").json()
     assert b["present"] is False
-    assert len(b["space"]["trend"]) == 8
-    assert len(b["space"]["idw"]) == 4
+    assert len(b["panel"]["trend"]) == 8 and len(b["panel"]["idw"]) == 4
+    assert {r["key"]: r["current"] for r in b["panel"]["trend"] + b["panel"]["idw"]}[
+        "metric.power"] == C.FALLBACK_POWER
 
 
-def test_待优选清单与库的搜索空间一一对应(client):
-    """T1 的另一半：清单**从 `TUNED_KEYS` 与两个空间生成**，不是另抄一份。
+def test_面板与库的搜索空间一一对应(client):
+    """T1：面板**从 `TUNED_KEYS` 与两个空间生成**，不是另抄一份。
 
-    ⚠️ 写死 8 与 4 是有意的：只断言 `len(space["trend"]) == len(TREND_SPACE)`
+    ⚠️ 写死 8 与 4 是有意的：只断言 `len(panel["trend"]) == len(TREND_SPACE)`
     是拿同一个来源比自己，等于没测。8 与 4 是规格书 §3.1 明写的数，
     XGBoost 八个（含 objective）、IDW 四个。
     """
     from api import ported
-    from tfield.calibration import IDW_SPACE, TREND_SPACE, TUNED_KEYS
 
     b = client.get("/api/calibration").json()
-    rows = b["space"]["trend"] + b["space"]["idw"]
-    keys = [r["key"] for r in rows]
-    assert sorted(keys) == sorted(TUNED_KEYS), "清单的键集必须正好是 TUNED_KEYS 那十二项"
-    assert len(b["space"]["trend"]) == 8 and len(b["space"]["idw"]) == 4
+    rows = b["panel"]["trend"] + b["panel"]["idw"]
+    assert sorted(r["key"] for r in rows) == sorted(TUNED_KEYS)
+    assert len(b["panel"]["trend"]) == 8 and len(b["panel"]["idw"]) == 4
 
     by = {r["key"]: r["values"] for r in rows}
     for k, vals in TREND_SPACE.items():
@@ -367,31 +396,110 @@ def test_待优选清单与库的搜索空间一一对应(client):
     for k in ("power", "lx", "lz"):
         assert by[f"metric.{k}"] == [ported.fmt_value(v) for v in IDW_SPACE[k]]
 
-    # 显示口径**硬写**两条：上面两个循环两边都过 `fmt_value`，光靠它们看不出
-    # 口径被换成 `str()` —— 而 `1.0` 上屏必须是 `1`（`%g`），不是 `1.0`。
-    # 同一页相邻那一列（`tuned_keys` 的「挑出来是多少」）印的也是 `%g`。
-    assert by["trend.subsample"] == ["0.7", "0.85", "1"]
-    assert by["metric.power"] == ["0.5", "1", "1.5", "2", "2.5", "3", "4"]
 
-    # cross_shed 在调参侧光秃秃一个词、在搜索侧挂 idw. 前缀（见 _SPACE_KEY），
-    # 而布尔值必须印成「开」「关」—— 印成 True/False 就是同一页两个口径。
-    assert by["cross_shed"] == ["开", "关"]
+def test_固定值不进面板但仍有它的那一行(client):
+    """T2：ly 恒为 1.0、从未进过搜索空间，所以它**不做成控件** ——
+    一个拖不动的滑块比一句话更容易让人以为是自己没点对（规格书 §2.3）。
 
-
-def test_清单里没有_metric_ly(client):
-    """T2：ly 恒为 1.0、从未进过搜索空间（`calibration.py` 的 `_IDW_KEYS`
-    只有 power/lx/lz）。把它列进「待优选」是谎报调参范围。
-
-    另一面同时断言：它**仍然**在最优参数表里，note 写着为什么 ——
-    「搜了什么」与「用的是多少」是两张表，不是一张。
+    ⚠️ 它防的还是原来那件事：把 ly 列进「待优选」是谎报调参范围。
+    判据从「不在 not keys 里」变成「不在 panel 里」，**更硬**：
+    panel 是唯一的来源，漏进去就是屏上多一个滑块。
     """
     b = client.get("/api/calibration").json()
-    keys = [r["key"] for r in b["space"]["trend"]] + [r["key"] for r in b["space"]["idw"]]
+    keys = [r["key"] for r in b["panel"]["trend"] + b["panel"]["idw"]]
     assert "metric.ly" not in keys
 
-    notes = {p["param"]: p["note"] for p in b["params"]}
-    assert "metric.ly" in notes
-    assert "从未进过搜索空间" in notes["metric.ly"]
+    fixed = {f["key"]: f for f in b["panel"]["fixed"]}
+    assert "metric.ly" in fixed
+    assert "从未进过搜索空间" in fixed["metric.ly"]["note"]
+    assert fixed["metric.ly"]["value"] == "1"
+
+
+def test_面板的标签表与调参键一一对应(client):
+    """面板上每一维都印着中文名 —— 它现在是控件的标签（规格书 §2.1）。
+
+    `_LABELS` 是一张**显示名**表，不是第二份「要搜什么」（候选值一律由
+    两个空间现取）。它唯一会错的方式是「库加了一个参数而它没跟」，
+    那时那个参数会带着空标签上屏 —— 这条就是钉那个。
+    """
+    b = client.get("/api/calibration").json()
+    rows = b["panel"]["trend"] + b["panel"]["idw"]
+    assert [r["key"] for r in rows] == (
+        [k for k in TUNED_KEYS if k.startswith("trend.")]
+        + [k for k in TUNED_KEYS if not k.startswith("trend.")])
+    assert all(r["label"].strip() for r in rows), "有一维没有标签"
+
+
+def test_面板每一维的当前值都不是空的(client):
+    """当前值读的是包的 `trend_params` / `metric`。**哪一维读不到，屏上就是
+    `None` 或 `undefined`** —— 而对 `fmt_value` 来说 `None` 是合法输入，
+    它会老老实实印出 `None` 三个字母，不抛错。
+    """
+    b = client.get("/api/calibration").json()
+    rows = b["panel"]["trend"] + b["panel"]["idw"]
+    empty = [r["key"] for r in rows if r["current"] is None]
+    assert empty == [], f"这些维度读不出当前值：{empty}"
+
+
+def test_面板的当前值都在候选里(client):
+    """T12 的前半：`current` 必在 `raw` 里 —— 屏上那个滑块**一定有**对应的档。
+
+    前端是按下标定位的（`row.raw.indexOf(values[key])`），所以这一条不是
+    前端的好习惯，是**前端的正确性前提**：不成立时滑块停错档、旁边那个数
+    印成空白，而屏上没有任何字会说这件事。
+
+    ⚠️ 真包那条路上这一条**必然**成立（`_panel` 里那段「不在就并进去」）——
+    所以它真正的价值是当那一段被谁删掉时当场变红。旧空间训练出来的包那一种
+    由下面那条单独钉。
+    """
+    b = client.get("/api/calibration").json()
+    rows = b["panel"]["trend"] + b["panel"]["idw"]
+    stray = [r["key"] for r in rows if r["current"] not in r["raw"]]
+    assert stray == [], f"这些维度的当前值不在候选里，屏上那个滑块没有对应的档：{stray}"
+
+    # 三列同下标（`values[i]` 是印法，`raw[i]` 是要发回去的值）——
+    # 这里再说一遍，因为它与上面那条是同一个不变式的两面。
+    for r in rows:
+        assert len(r["values"]) == len(r["raw"])
+
+
+def test_当前值不在候选里时并进候选():
+    """T12 的后半：包可能是拿**旧版**搜索空间训的，那时当前值不在今天的候选里。
+
+    并进来，是为了让「屏上能选的就是后端列的」这条不变式在**后端**成立 ——
+    前端因此不必为这件事写任何分支（见 `test_面板的当前值都在候选里` 那条的说明）。
+
+    ⚠️ 为什么要喂假包：真包与今天的空间同版，这段合并代码在真数据上**走不到**。
+    一条走不到的防线等于没有防线，所以这里用一个最小的假包把那一支逼出来。
+    `_panel` 对包的全部要求就是 `_tuned_value` 读的那三处
+    （`.cross_shed` / `.metric.<tail>` / `.trend_params`），`SimpleNamespace` 足够。
+    """
+    from types import SimpleNamespace
+
+    from api.routes import calibration as cal_routes
+
+    fake = SimpleNamespace(
+        # 9.9 不在 `IDW_SPACE["power"]` 里；0 不在任何一个 trend 空间里。
+        metric=SimpleNamespace(power=9.9, lx=1.0, ly=1.0, lz=0.03),
+        trend_params={k.partition(".")[2]: 0
+                      for k in TUNED_KEYS if k.startswith("trend.")},
+        cross_shed=True,
+    )
+    panel = cal_routes._panel(fake, None)
+    by = {r["key"]: r for r in panel["trend"] + panel["idw"]}
+
+    power = by["metric.power"]
+    assert power["current"] == 9.9
+    assert 9.9 in power["raw"], "旧空间的当前值没有并进候选，屏上那个滑块没有档"
+    assert power["raw"][-1] == 9.9, "并进来的当前值应当落在末尾（候选的次序不许被搅乱）"
+    assert len(power["values"]) == len(power["raw"])
+
+    depth = by["trend.max_depth"]
+    assert depth["current"] == 0 and depth["raw"][-1] == 0
+
+    # 已经在候选里的那些**一个都不许被动**：并进去是特例，不是常态。
+    assert by["metric.lx"]["raw"] == cal_routes._candidates("metric.lx")
+    assert by["metric.lx"]["current"] == 1.0
 
 
 # ── 两个出口：页① 认文件，模型认训练段 ──
