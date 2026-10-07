@@ -112,3 +112,72 @@ def test_在训练段上评估不会形状对不上():
                    groups=C.DEFAULT_FEATURE_GROUPS, tag="holdout")
     assert int(res.metrics["n"].iloc[0]) == len(train.wide) * len(folds[0].test_sensors)
     assert res.metrics["mae"].iloc[0] == res.metrics["mae"].iloc[0]  # 不是 NaN
+
+
+# ── 折外预测的长表出口（页② 的精度图表要的就是它）──
+
+def test_折外预测摊平成逐点逐时刻的长表(ds):
+    """T10 的另一半：行数、无重、时间下标齐全。
+
+    行数是**硬数**：24 个测点 × 1308 个时刻。少一折、或多留一折，
+    它都会变 —— 而「折外预测」这四个字全靠这张表说的是全部折。
+    """
+    from tfield.validation.report import OOF_COLUMNS, out_of_fold_predictions
+
+    oof = out_of_fold_predictions(_factory(ds), ds, position_folds(ds))
+    assert tuple(oof.columns) == OOF_COLUMNS
+    assert len(oof) == 24 * len(ds.wide)
+    # 同一个 (测点, 时刻) 只能出现一次 —— 出现两次就是某一折被数了两遍
+    assert int(oof[["sensor_id", "t_index"]].duplicated().sum()) == 0
+    assert sorted(oof["sensor_id"].unique()) == list(range(24))
+    assert int(oof["t_index"].min()) == 0
+    assert int(oof["t_index"].max()) == len(ds.wide) - 1
+
+
+def test_折外预测的对数与逐折的_n_对得上(ds):
+    """T10：两条路算出同一个「一共评估了多少对」。
+
+    `evaluate` 的 `n` 是它自己数出来的，`out_of_fold_predictions` 的行数是
+    另一种数法。两者相等，才说明长表没漏折也没重复。
+    """
+    from tfield.validation.report import out_of_fold_predictions
+
+    folds = position_folds(ds)
+    res = evaluate(_factory(ds), ds, folds)
+    oof = out_of_fold_predictions(_factory(ds), ds, folds)
+    assert len(oof) == int(res.metrics["n"].sum())
+
+
+def test_折外预测里_pred_真的来自模型而不是抄了一遍_truth(ds):
+    """防：循环里把 pred 写成 truth（或忘了赋值），表看起来齐全而图是一条直线。"""
+    import numpy as np
+
+    from tfield.validation.report import out_of_fold_predictions
+
+    oof = out_of_fold_predictions(_factory(ds), ds, position_folds(ds))
+    gap = np.abs(oof["pred"].to_numpy(float) - oof["truth"].to_numpy(float))
+    assert gap.mean() > 0, "预测与实测逐点相同，这不是一个模型"
+    assert np.isfinite(gap).all()
+
+
+def test_没有折时返回空表而不是抛(ds):
+    """Review Focus 5 的一半：零折不许崩。
+
+    空表必须有**齐全的列** —— 调用方接着会读写这些列，列不齐会在
+    离现场很远的地方炸（`oof["resid"]` 那种）。
+    """
+    from tfield.validation.report import OOF_COLUMNS, out_of_fold_predictions
+
+    oof = out_of_fold_predictions(_factory(ds), ds, [])
+    assert len(oof) == 0
+    assert tuple(oof.columns) == OOF_COLUMNS
+
+
+def test_折外预测收的也是工厂函数(ds):
+    """与 `evaluate` 同一条契约：每折必须用那一折的排除集重新训练，
+    给一个已经 fit 好的实例就是把折外变成折内。"""
+    from tfield.validation.report import out_of_fold_predictions
+
+    with pytest.raises(TypeError, match="工厂函数"):
+        out_of_fold_predictions(FieldPipeline(PipelineConfig.fallback(), ds), ds,
+                                position_folds(ds))

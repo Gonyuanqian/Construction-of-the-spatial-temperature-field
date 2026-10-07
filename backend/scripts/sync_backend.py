@@ -45,7 +45,9 @@ KNOWN_DIVERGENCES: dict[str, str] = {
         "副本多了 append_live_frame、时间轴访问器 n_times / timestamps / time_at"
         " 与 bg_light_at",
     "validation/report.py":
-        "副本的 ti 用 len(ds.wide) 而不是写死的 C.EXPECTED_ROWS（训练段只有 1164 行）",
+        "副本的 ti 用 len(ds.wide) 而不是写死的 C.EXPECTED_ROWS（训练段只有 1164 行）；"
+        "副本多了 out_of_fold_predictions 与 OOF_COLUMNS（页② 的精度图表要逐点逐时刻的"
+        "折外预测，而 evaluate 只留聚合）",
     "field/constraints.py":
         "副本的 light_at 走 pipe.bg_light_at 而不是 ds.wide.iloc（实时帧不在宽表里）",
     "data/types.py":

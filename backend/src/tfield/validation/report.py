@@ -56,10 +56,18 @@ def ab_from(rows: Sequence[dict]) -> ABResult | None:
     return ABResult(mae_a=ma, mae_b=mb, gap=ma - mb)
 
 
-def evaluate(make_pipe: Callable[[], FieldPipeline], ds: Dataset,
-             folds: Sequence[Fold], *,
-             groups=C.DEFAULT_FEATURE_GROUPS, tag: str = "") -> EvalResult:
-    """对每折重新训练并预测被留出的传感器。全部为折外结果。"""
+def _oof_folds(make_pipe: Callable[[], FieldPipeline], ds: Dataset,
+               folds: Sequence[Fold],
+               groups=C.DEFAULT_FEATURE_GROUPS,
+               ) -> list[tuple[Fold, np.ndarray, np.ndarray]]:
+    """逐折重新训练并预测被留出的传感器。**折外预测只有这一处循环。**
+
+    产出 `(fold, truth, pred)`，两个数组都是 `(n_test_sensors, n_times)`。
+
+    抽出来是因为本文件有两个消费者：`evaluate` 要它的**聚合**（逐折指标），
+    `out_of_fold_predictions` 要它的**原始行**（散点、残差）。写成两份循环
+    不会报错，只会让「折外预测」在这份代码里有两个定义，然后慢慢漂开。
+    """
     if isinstance(make_pipe, FieldPipeline):
         raise TypeError(
             "evaluate() 需要的是【工厂函数】（每折重新构造并训练），"
@@ -72,15 +80,25 @@ def evaluate(make_pipe: Callable[[], FieldPipeline], ds: Dataset,
     # 训练段只有 1164 行 —— 写死就会让预测要走的那 1308 个时刻
     # 落到只有 1164 个元素的气象列上：不是崩溃，是一条形状错位的静默错误。
     ti = np.arange(len(ds.wide))
-    rows: list[dict] = []
-    per_point: list[dict] = []
 
+    out: list[tuple[Fold, np.ndarray, np.ndarray]] = []
     for fold in folds:
         pipe = make_pipe().fit(fs, ds, exclude=fold.test_sensors)
         coords = fs.coords[list(fold.test_sensors)]
         pred = pipe.predict_points(coords, ti)
         truth = np.stack([fs.y[fs.sensor_id == s] for s in fold.test_sensors])
+        out.append((fold, truth, pred))
+    return out
 
+
+def evaluate(make_pipe: Callable[[], FieldPipeline], ds: Dataset,
+             folds: Sequence[Fold], *,
+             groups=C.DEFAULT_FEATURE_GROUPS, tag: str = "") -> EvalResult:
+    """对每折重新训练并预测被留出的传感器。全部为折外结果。"""
+    rows: list[dict] = []
+    per_point: list[dict] = []
+
+    for fold, truth, pred in _oof_folds(make_pipe, ds, folds, groups):
         row = metrics_row(truth.ravel(), pred.ravel())
         row.update({"fold_kind": fold_kind(fold.name), "fold": fold.name,
                     "region": region_of(fold.name), "group": fold.group or "",
@@ -99,3 +117,34 @@ def evaluate(make_pipe: Callable[[], FieldPipeline], ds: Dataset,
     return EvalResult(metrics=pd.DataFrame(rows),
                       per_point=pd.DataFrame(per_point),
                       ab=ab_from(rows))
+
+
+#: `out_of_fold_predictions` 的列。**顺序即契约** —— 加列要连测试一起改。
+OOF_COLUMNS = ("sensor_id", "shed", "position", "layer", "group",
+               "fold", "t_index", "truth", "pred")
+
+
+def out_of_fold_predictions(make_pipe: Callable[[], FieldPipeline], ds: Dataset,
+                            folds: Sequence[Fold], *,
+                            groups=C.DEFAULT_FEATURE_GROUPS) -> pd.DataFrame:
+    """逐折重新训练并预测被留出的传感器，返回**逐点逐时刻**的折外预测。
+
+    列见 `OOF_COLUMNS`；行数 = 参与评估的测点数 × 时刻数。
+
+    它只做一件事：把 `_oof_folds` 的两个数组摊平成长表，**不做任何聚合**
+    —— 聚合是消费者的事（`evaluate` 聚成指标，页② 的诊断聚成分箱）。
+    """
+    chunks: list[pd.DataFrame] = []
+    for fold, truth, pred in _oof_folds(make_pipe, ds, folds, groups):
+        for i, sensor in enumerate(fold.test_sensors):
+            shed, pos = ds.sensor_ids()[sensor][1], ds.sensor_ids()[sensor][2]
+            chunks.append(pd.DataFrame({
+                "sensor_id": sensor, "shed": shed, "position": pos,
+                "layer": ds.layout[pos].layer, "group": fold.group or "",
+                "fold": fold.name, "t_index": np.arange(truth[i].size),
+                "truth": truth[i], "pred": pred[i],
+            }))
+    if not chunks:
+        # 零折：给一张**列齐全**的空表。缺列会在调用方很远的地方炸。
+        return pd.DataFrame({c: pd.Series(dtype=float) for c in OOF_COLUMNS})
+    return pd.concat(chunks, ignore_index=True)
