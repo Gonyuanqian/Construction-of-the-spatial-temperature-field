@@ -79,6 +79,38 @@ describe('useJob 轮询', () => {
     expect(j.job.value?.state).toBe('done')
   })
 
+  it('轮询撞上 404 就停表，并说清该做什么', async () => {
+    // job 只活在进程内存里（规格书 §4.6），后端重启之后那个 id 永远回不来了。
+    // 接着问就是每秒一条 404，而 `job.state` 还留着 'running' —— 按钮永远
+    // 禁用、定时器永远不停，用户唯一的出路是刷新整页；而 §4.6 说这个时候
+    // 「那一次的操作就是再点一次」。所以停表、把 job 清掉（不清的话
+    // `busy` 读到的还是那个 running），并把该做什么写出来。
+    const calls: string[] = []
+    let n = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      calls.push(String(url))
+      n += 1
+      return n === 1
+        ? new Response(JSON.stringify(RUNNING), { status: 200 })
+        : new Response(JSON.stringify({ detail: '没有这个标定任务' }), { status: 404 })
+    }))
+    const j = useJob()
+    j.attach('j1')
+    await flushPromises()
+    expect(j.polling.value).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+    expect(j.polling.value, '404 之后还在轮询').toBe(false)
+    expect(j.job.value, 'job 还挂着，按钮就永远是禁用的').toBeNull()
+    expect(j.error.value).toContain('再点一次')
+
+    const seen = calls.length
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(calls.length, '停下来了还在发请求').toBe(seen)
+  })
+
   it('attach 会换 id，旧的轮询作废', async () => {
     const calls = stubSequence([RUNNING])
     const j = useJob()

@@ -67,6 +67,21 @@ describe('密度图', () => {
     expect(densityColor(3, 1, ['#a', '#b'])).toBe('#b')
   })
 
+  it('悬停读得出这一格的点数，报的是后端给的计数', () => {
+    // ① `silent: true` 的要素在 zrender 里**不参与命中测试**，
+    //    所以 `trigger: 'item'` 的提示框永远不会出现 —— 这一格的点数
+    //    是这张图上唯一读得到的数，它不能是死的。
+    // ② 印出来的**只能是后端给的数**：坐标是前端用 `lo + (i + 0.5) * width`
+    //    算出来的箱心，不是后端送来的任何一行，印上去还带两位小数 ——
+    //    而这个箱宽只有一个多摄氏度。硬约束 1 不许把那种数上屏。
+    const opt = buildOofDensityOption(payload([[1, 0], [0, 2]]), P)
+    const series = opt.series as { type: string; silent?: boolean }[]
+    expect(series[0].silent, '静默的要素不会有悬停提示').not.toBe(true)
+
+    const tip = opt.tooltip as { formatter: (p: unknown) => string }
+    expect(tip.formatter({ value: [12.34, 13.01, 3, '#a'] })).toBe('这一格 3 个点')
+  })
+
   it('色标只从 scale.ts 来 —— 实现文件里没有十六进制字面量', () => {
     // `design/guards.test.ts` 扫的是源码，它管不着测试文件；这条是给实现文件
     // 补的镜像守卫。比那条全仓守卫更严一点：它只认**六位**十六进制，

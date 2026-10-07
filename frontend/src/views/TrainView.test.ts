@@ -125,7 +125,12 @@ function stub(routes: Record<string, unknown>) {
 
 const DIAG = {
   present: true,
-  created_at: '2026-10-05T13:52:09+00:00',
+  // ⚠️ **与 `CAL.created_at` 逐字相同，这不是巧合。** 后端的两个接口各自回
+  // 这一格，取值都是**同一份标定包的** `bundle.created_at`
+  // （`routes/calibration.py:322`、`:93`）。这一页据此判断「屏上这份诊断
+  // 是不是屏上这份包算的」（见 `diagForBundle`），所以夹具里让它俩相等
+  // 才是真实的那一对回包 —— 原来这里是随手写的另一个时刻。
+  created_at: '2026-10-03T13:22:00+00:00',
   groups_sig: 'd6294c09',
   dataset_sig: '6145fa9261e89f1b',
   n_points: 27936,
@@ -178,6 +183,9 @@ describe('页② 模型训练', () => {
   beforeEach(() => {
     installEnvironment()
     vi.restoreAllMocks()
+    // 有一条用例要推进 1 秒的轮询间隔（见「任务跑完之后重取标定包」），
+    // 万一它红了，假表会留给后面的用例 —— 这里兜一道。
+    vi.useRealTimers()
   })
 
   it('三段的次序就是流水线的次序', async () => {
@@ -612,5 +620,66 @@ describe('页② 模型训练', () => {
     expect(text).not.toContain(' · ')
     expect(text).not.toContain('→')
     expect(text).not.toContain('↳')
+  })
+
+  it('任务跑完之后重取一次标定包（T18 的后半）', async () => {
+    // `done` 是后端在包**写回之后**才置的（规格书 §5.1 第 4 步），所以这一刻
+    // 盘上已经换成新的那一份了。不重取的话，屏上的参数表与指标卡还是
+    // 上一次那份，而轮询那一行已经写着「标定完成」。
+    vi.useFakeTimers()
+    const urls: string[] = []
+    let polls = 0
+    const RUN = { id: 'j9', state: 'running', progress: '阶段 2 试验之间',
+                  elapsed_s: 3.2, error: null, created_at: '2026-10-07T10:00:00+00:00' }
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const u = String(url)
+      urls.push(u)
+      let body: unknown = FEATURES
+      if (u.includes('/api/calibration/jobs/')) {          // 轮询（带 id）
+        polls += 1
+        body = polls >= 2 ? { ...RUN, state: 'done', progress: '', elapsed_s: 41.7 } : RUN
+      } else if (u.includes('/api/calibration/jobs')) {    // 提交（POST，不带 id）
+        body = RUN
+      } else if (u.includes('/api/calibration')) {
+        body = CAL
+      }
+      return new Response(JSON.stringify(body), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+    const w = mount(TrainView)
+    await flushPromises()
+    const cals = () => urls.filter((u) => u.endsWith('/api/calibration')).length
+    expect(cals(), '进页那一次标定包没取').toBe(1)
+
+    await w.findAll('button').find((b) => b.text() === '参数优选')!.trigger('click')
+    await flushPromises()
+    expect(polls, '提交之后没有立刻轮询一次').toBe(1)
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+    expect(cals(), '任务跑完之后没有重取标定包').toBe(2)
+    expect(w.findAll('span.note').map((s) => s.text()).join('')).toContain('标定完成')
+    w.unmount()
+  })
+
+  it('包换过之后，上一份包算出来的精度整块不显示，并说清为什么', async () => {
+    // 点过「开始训练」之后再去点「参数优选」，包就换了新的；而诊断是
+    // **按包缓存**的（`diagnostics.py`），屏上这一份还是上一份包算的。
+    // 不挡它的话：新的参数表、新的指标卡旁边挂着上一份包的基线行、
+    // 倍数行与两张图，而它们**全都盖着「算」这张图章**。一屏两套数，
+    // 且从屏上看不出哪一个是哪一份包的。
+    const stale = { ...DIAG, created_at: '2026-10-01T08:00:00+00:00' }
+    const w = await mountWithDiag(stale)
+    const rows = w.findAll('tbody tr').map((r) => r.text())
+    expect(rows.some((t) => t.includes('拿背景温度当棚温')),
+      '上一份包的基线行还在屏上').toBe(false)
+    expect(w.text()).not.toContain('基线误差是模型的')
+    expect(w.findAllComponents({ name: 'EChart' }),
+      '上一份包的两张图还在屏上').toHaveLength(0)
+    expect(w.findAll('.stat').map((c) => c.find('.label').text()),
+      '上一份包的「基线 MAE」还挂在指标卡里').not.toContain('基线 MAE')
+    // 不能静默：数字一转眼没了，用户得知道它们为什么没了、怎么弄回来。
+    expect(w.text()).toContain('已经不作数')
   })
 })

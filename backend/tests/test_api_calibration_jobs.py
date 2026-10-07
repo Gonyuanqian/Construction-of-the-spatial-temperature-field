@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import pathlib
+import shutil
 import sys
+import threading
 import time
 
 import pytest
@@ -314,30 +316,46 @@ def test_标定跑着时换了数据集_包写在旧签名下且不崩(client, t
     于是页② 的 `mismatch` 会说「上一次标定对的是另一份数据集」。
     **要防的是崩** —— 例如 `_work` 里现取一次当前数据集（拿到新的、与
     job 开局那份不是一回事），或者包路径按当前数据集重算（写进别人的签名里）。
+
+    ⚠️ **两处都必须真做到，否则这份用例什么也没验**（这一条原来两条都没做到）：
+    一是**真的换一份签名不同的数据集** —— 原地再装一遍同一份，两边签名相同，
+    包写在谁名下都看不出来；二是**真的走到 `done`** —— `_work` 在搜索跑完之后
+    还要再问一次 `should_stop`，所以「先撤走替身再按取消」会落到 `cancelled`
+    那条路上，而**那条路根本不写包**，`done` 那一支的断言就永远执行不到。
     """
     monkeypatch.setattr(cj, "CONFIGS_ROOT", tmp_path)
     real = _real_bundle()
 
+    entered = threading.Event()
+    release = threading.Event()
+
     def slow(ds, g, *, should_stop=None, **k):
-        while not (should_stop and should_stop()):
-            time.sleep(0.01)
-        return real
+        entered.set()
+        assert release.wait(5.0), "用例没有放行这一次搜索"
+        return real                      # **没有被取消**：包要真的写回去
 
     monkeypatch.setattr(cj, "run_calibration", slow)
     job = client.post("/api/calibration/jobs").json()
 
-    # 跑到一半，用户导了一份新的
-    _wait(lambda: jobs.current() is not None and jobs.current().state == "running")
-    deps.install_dataset(paths.dataset_path())
-    deps.reset_cache()
+    # 跑到一半，用户导了一份**别的**数据集。复制一份就够：
+    # 签名是 sha1(绝对路径 | mtime | 大小)[:16]，换个路径就是另一份。
+    assert entered.wait(5.0), "搜索没开始"
+    other = tmp_path / "另一份数据集.xlsx"
+    shutil.copy2(paths.dataset_path(), other)
+    deps.install_dataset(other)
 
-    # 放它跑完（替身会立刻返回那份真包）
-    jobs.current().cancel.set()
+    release.set()
     end = _wait(lambda: _settled(client, job["id"]))
-    assert end["state"] in {"done", "cancelled"}, f"换了数据集之后崩了：{end['error']}"
-    if end["state"] == "done":
-        # 包按 job 开局那份数据集的签名写 —— 那是它真的标过的那一份
-        assert (tmp_path / f"bundle_{real.dataset_sig}_{real.groups_sig}.json").exists()
+    assert end["state"] == "done", f"换了数据集之后崩了：{end['error']}"
+
+    # 包按 job 开局那份数据集的签名写 —— 那是它真的标过的那一份
+    assert (tmp_path / f"bundle_{real.dataset_sig}_{real.groups_sig}.json").exists()
+    # 新数据集名下**不该**有包：那正是「`_work` 半路重取当前数据集」会写出来的
+    # 东西（写进一份它没有标过的签名里）。`_work` 用的是开局那一份引用，
+    # 所以这里读到的旧签名就是它。
+    new_sig = deps.get_train_dataset().signature
+    assert new_sig != real.dataset_sig, "换的那一份与原来的是同一份，这条就白测了"
+    assert not list(tmp_path.glob(f"bundle_{new_sig}_*.json")), "包写进了新数据集的名下"
 
 
 # ── 刷新之后接得上（T3 的后半、§4.7）──

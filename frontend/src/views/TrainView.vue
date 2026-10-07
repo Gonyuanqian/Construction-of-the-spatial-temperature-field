@@ -51,6 +51,30 @@ const cal = useAsync(() => getJson<CalibrationPayload>('/api/calibration'))
 const diag = useAsync(() => getJson<DiagnosticsPayload>('/api/calibration/diagnostics'))
 const job = useJob()
 
+/**
+ * 屏上这份诊断**是不是屏上这份包算出来的**。
+ *
+ * 后端的两个接口各回一个 `created_at`，取值都是**同一份标定包的**
+ * `bundle.created_at`（`routes/calibration.py:93` 与 `:322` 读的是同一个
+ * 字段）。所以两个值不相等 ⟺ 这一屏上的精度属于**上一份包**。
+ *
+ * **为什么是一道不变式，不是一个事件处理**：点完「参数优选」之后包换了新的，
+ * 而诊断是**按包缓存**的 —— 原来这里直接读 `diag.data.value`，于是新的
+ * 参数表与新的指标卡旁边，挂着上一份包的基线行、倍数行与两张图，而它们
+ * 全都盖着「算」这张图章。一屏两套数，且从屏上看不出哪一个是哪一份包的。
+ * 写成比较而不是「任务 done 时清一次」，是因为要挡的不止那一条路：
+ * 换一份数据集、以后任何一条把包换掉的路径，都不必记得来这里清一次。
+ *
+ * ⚠️ 代价写在明面上：重标一次即使**挑出了逐位相同的参数**，包也会以新的
+ * `created_at` 落盘，于是这份诊断被挡下来、要按一次「开始训练」重算
+ * （诊断缓存也是按 `created_at` 键入的，本来就会重算）。
+ */
+const diagForBundle = computed<DiagnosticsPayload | null>(() => {
+  const d = diag.data.value
+  if (!d) return null
+  return d.created_at === cal.data.value?.created_at ? d : null
+})
+
 onMounted(async () => {
   void features.run()
   await cal.run()
@@ -159,7 +183,7 @@ async function onCancel(): Promise<void> {
   await job.cancel()
 }
 
-const acc = computed(() => diag.data.value?.accuracy ?? null)
+const acc = computed(() => diagForBundle.value?.accuracy ?? null)
 
 /**
  * 倍数那一行。文案是「基线误差是模型的 N 倍」而不是「误差降到 1/N」：
@@ -191,12 +215,12 @@ const palette = readPalette()
 
 /** 两张图的 option。**纯函数的返回值**，没有一处在这里算数（硬约束 1）。 */
 const densityOption = computed(() => {
-  const d = diag.data.value
+  const d = diagForBundle.value
   return d ? buildOofDensityOption(d, palette) : null
 })
 
 const residualOptions = computed(() => {
-  const d = diag.data.value
+  const d = diagForBundle.value
   return d ? d.residual.map((panel) => buildResidualOption(panel, palette)) : []
 })
 </script>
@@ -366,6 +390,14 @@ const residualOptions = computed(() => {
       <p v-if="diag.error.value" role="alert" class="alert">
         精度没算出来：{{ diag.error.value }}
       </p>
+      <!-- 包换过之后，屏上那一份诊断属于**上一份包**（见 `diagForBundle`）——
+           整块不显示。不写这一句就是静默：数字一转眼没了，用户既不知道
+           为什么没了，也不知道怎么把它们弄回来。`role="alert"` 是因为这一句
+           讲的是「你刚才看的那些数已经不作数了」，属于最该被读到的那些话。 -->
+      <p v-if="diag.data.value && !diagForBundle" role="alert" class="alert">
+        参数换过了：屏上那份精度是拿上一份标定包算的，已经不作数，所以不显示。
+        点一次「开始训练」按当前这份包重算。
+      </p>
 
       <template v-if="cal.data.value">
         <!-- 基线永远与模型并排（规格书 §6.3）。**不可拆开读**：
@@ -417,7 +449,7 @@ const residualOptions = computed(() => {
         <template v-if="residualOptions.length">
           <h4>残差诊断</h4>
           <div class="trio">
-            <div v-for="(panel, i) in diag.data.value!.residual" :key="panel.key">
+            <div v-for="(panel, i) in diagForBundle!.residual" :key="panel.key">
               <!-- ⚠️ 这一行不是装饰，是**这张图的名字**：图是 canvas 画的，
                    画在画布里的标题对读屏软件、对 `w.text()` 都不存在。
                    所以名字在 HTML 里有一份，画布里就**不再有一份**
@@ -524,21 +556,21 @@ const residualOptions = computed(() => {
         所以空态下也列得出来。搜索是确定的：同一份数据集、同一组特征，
         点多少次都得到同一份参数。
       </p>
-      <p v-if="diag.data.value" class="note">{{ diag.data.value.note }}</p>
-      <!-- ⚠️ 两段都包在 `v-if="diag.data.value"` 里：第二段要读
-           `diag.data.value.n_points`，而 Vue 的模板类型检查不追「`acc` 非空
-           蕴含 `diag.data.value` 非空」这层关系。再加一层 `v-if="acc"`，
+      <p v-if="diagForBundle" class="note">{{ diagForBundle.note }}</p>
+      <!-- ⚠️ 两段都包在 `v-if="diagForBundle"` 里：第二段要读
+           `diagForBundle.n_points`，而 Vue 的模板类型检查不追「`acc` 非空
+           蕴含 `diagForBundle` 非空」这层关系。再加一层 `v-if="acc"`，
            是因为这两句讲的全是基线。
            ⚠️ 下面是**上屏的话**，所以一个 markdown 星号都不许有
            （`上屏的文字里没有被禁的连接符与 markdown 标记` 会当场抓住）。 -->
-      <template v-if="diag.data.value">
+      <template v-if="diagForBundle">
         <p v-if="acc" class="note">
           基线与本模型用的是同一批位置折、同一段训练数据，所以两个数可以并排比。
           页① 与页③ 上的数不是这么来的，不要与这里交叉着读。
           基线不进上面的两张图：它不是常数预测，而是背景温度随时刻变化的一条云。
         </p>
         <p v-if="acc" class="note">
-          这里的每一个数都是现场算的（{{ diag.data.value.n_points }} 对折外预测），
+          这里的每一个数都是现场算的（{{ diagForBundle.n_points }} 对折外预测），
           不在标定包里，所以它的图章是「算」而不是「包」。后端按包缓存，
           同一份包第二次点「开始训练」是秒回的。
         </p>
@@ -552,6 +584,15 @@ const residualOptions = computed(() => {
         <p v-if="residualOptions.length" class="note">
           残差 = 预测 − 实测，正数表示报高了。误差棒是箱内平均残差的标准误。
           高度的取值只有三个、棚长只有七个，所以后两张是柱子不是曲线。
+        </p>
+        <!-- 三块的折族**不一样**（`diagnostics.py` 文件头那条）：
+            `oof_table` 跑全部八折，`accuracy` 再把 B 组挑出来。图上比表上
+            多出来的那些点，是拿挑参数时看过的 A 组算的 —— 不说明白，
+            读者会把图上那条带子当成「这个模型的精度」。 -->
+        <p v-if="acc" class="note">
+          上面两张图用的是全部八折，其中包含挑参数时看过的 A 组；
+          那张对照表只报 B 组那几折。图是拿来看错在哪一片的，
+          表才是这把尺子有多准：两个数不要交叉着读。
         </p>
       </template>
     </details>

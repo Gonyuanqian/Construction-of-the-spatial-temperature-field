@@ -78,12 +78,17 @@ export function buildOofDensityOption(
     backgroundColor: 'transparent',
     animation: false,
     grid: { left: 72, right: 24, top: 40, bottom: 56, containLabel: false },
+    // ⚠️ 提示框里**只报后端给的计数**。格子中心的坐标是这一页用
+    // `lo + (i + 0.5) * width` 现算的，不是后端送来的任何一行；箱宽是
+    // `(hi − lo) / 60`（大约一摄氏度），把它印成两位小数是报了一个
+    // 这个箱根本没有的精度，而且违反硬约束 1（前端不做数值计算）。
+    // 要说出「这一格在哪」，轴上的刻度已经说了。
     tooltip: {
       trigger: 'item',
       formatter: (params: unknown) => {
         const v = (params as { value: unknown[] }).value
         if (!Array.isArray(v)) return ''
-        return `实测 ${Number(v[0]).toFixed(2)} °C，预测 ${Number(v[1]).toFixed(2)} °C：${v[2]} 个点`
+        return `这一格 ${v[2]} 个点`
       },
     },
     xAxis: {
@@ -104,7 +109,11 @@ export function buildOofDensityOption(
     },
     series: [
       {
-        type: 'custom', silent: true, z: 2,
+        // ⚠️ **不能是 `silent: true`**：静默的要素在 zrender 里不参与命中
+        // 测试，上面那个 `trigger: 'item'` 的提示框就永远不会出现 ——
+        // 而这一格的点数是这张图上唯一读得到的数。下面那条参考线是装饰，
+        // 它 silent 掉没问题，格子不行。
+        type: 'custom', z: 2,
         renderItem: (_params: unknown, api: any) => {
           const c = api.coord([api.value(0), api.value(1)])
           const [w, h] = api.size([width, width])
