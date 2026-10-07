@@ -426,7 +426,7 @@ def test_面板的标签表与调参键一一对应(client):
 
     `_LABELS` 是一张**显示名**表，不是第二份「要搜什么」（候选值一律由
     两个空间现取）。它唯一会错的方式是「库加了一个参数而它没跟」，
-    那时那个参数会带着空标签上屏 —— 这条就是钉那个。
+    那时 `_LABELS[key]` 会抛 `KeyError`，接口当场 500 —— 这条就是钉那个。
     """
     b = client.get("/api/calibration").json()
     rows = b["panel"]["trend"] + b["panel"]["idw"]
@@ -470,10 +470,62 @@ def test_空态面板十二维的当前值都在候选里(monkeypatch, tmp_path)
     assert empty == [], f"空态下这些维度读不出当前值：{empty}"
     stray = [r["key"] for r in rows if r["current"] not in r["raw"]]
     assert stray == [], f"空态下这些维度的当前值不在候选里：{stray}"
+    # 兜底值必须是**真档位**，不是被 `_legal_values` 现并进去的 —— 并进去的
+    # 值同样满足 `current in raw`，所以上面那条抓不到它。这里对着库里的档位
+    # 单子逐个点一遍（**字面量**：拿 `_candidates` 与响应比会掉进「拿被测函数
+    # 跟自己比」的恒真陷阱）。一个非法值会让 `raw` 多出一格，当场红。
+    by = {r["key"]: r for r in rows}
+    assert by["trend.min_child_weight"]["raw"] == [1, 3, 5, 10]
+    assert by["trend.subsample"]["raw"] == [0.7, 0.85, 1.0]
+    assert by["trend.colsample_bytree"]["raw"] == [0.7, 0.85, 1.0]
+    assert by["trend.reg_lambda"]["raw"] == [0, 1, 5]
+    assert by["trend.objective"]["raw"] == [
+        "reg:squarederror", "reg:absoluteerror", "reg:pseudohubererror"]
     assert routes.calibration._TREND_FALLBACK.keys() == (
         {k.partition(".")[2] for k in TUNED_KEYS if k.startswith("trend.")}
         - set(C.FALLBACK_TREND_PARAMS)
     ), "兜底表与「兜底配置缺的那几维」对不上了"
+
+
+def test_包里缺了某一维也要落回默认值():
+    """上面那条只管**没包**那一半；这一条管有包那一半。
+
+    包是别的工具写的、或换过库版本时，`trend_params` 里可能少一维 ——
+    那时 `_tuned_value` 走 `bundle.trend_params.get(tail)` 返回 `None`，
+    屏上那个滑块没有对应的档；更糟的是 `_legal_values` 见到 `None` 就不并入，
+    面板摆上屏的那个值发回来会被 `_validated_domain` 判 422 ——
+    页② 第一次点「开始训练」就是死的，而那个值正是面板自己放上去的。
+
+    喂假包的理由与 `test_当前值不在候选里时并进候选` 相同：真包永远是齐的，
+    这一支走不到。
+    """
+    from types import SimpleNamespace
+
+    from api.routes import calibration as cal_routes
+
+    fake = SimpleNamespace(
+        metric=SimpleNamespace(power=2.0, lx=2.0, ly=1.0, lz=0.12),
+        trend_params={"max_depth": 4, "learning_rate": 0.08, "n_estimators": 300},
+        cross_shed=False,
+    )
+    panel = cal_routes._panel(fake, None)
+    rows = panel["trend"] + panel["idw"]
+    assert len(rows) == 12
+    empty = [r["key"] for r in rows if r["current"] is None]
+    assert empty == [], f"包里缺的维度没有落回默认值：{empty}"
+    stray = [r["key"] for r in rows if r["current"] not in r["raw"]]
+    assert stray == [], f"这些维度的当前值不在候选里：{stray}"
+    # 兜底值必须是**真档位**，不是被 `_legal_values` 现并进去的 —— 并进去的
+    # 值同样满足 `current in raw`，所以上面那条抓不到它。这里对着库里的档位
+    # 单子逐个点一遍（**字面量**：拿 `_candidates` 与响应比会掉进「拿被测函数
+    # 跟自己比」的恒真陷阱）。一个非法值会让 `raw` 多出一格，当场红。
+    by = {r["key"]: r for r in rows}
+    assert by["trend.min_child_weight"]["raw"] == [1, 3, 5, 10]
+    assert by["trend.subsample"]["raw"] == [0.7, 0.85, 1.0]
+    assert by["trend.colsample_bytree"]["raw"] == [0.7, 0.85, 1.0]
+    assert by["trend.reg_lambda"]["raw"] == [0, 1, 5]
+    assert by["trend.objective"]["raw"] == [
+        "reg:squarederror", "reg:absoluteerror", "reg:pseudohubererror"]
 
 
 def test_面板的当前值都在候选里(client):
