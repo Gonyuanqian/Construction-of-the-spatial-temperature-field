@@ -19,7 +19,9 @@
  */
 import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 
-import type { CalibrationPayload, FeaturesPayload, JobSummary } from '../api/types'
+import type {
+  CalibrationPayload, DiagnosticsPayload, FeaturesPayload, JobSummary,
+} from '../api/types'
 import { getJson } from '../api/client'
 import Card from '../components/Card.vue'
 import Provenance from '../components/Provenance.vue'
@@ -31,6 +33,16 @@ import { fmt1, fmtInt } from '../design/format'
 
 const features = useAsync(() => getJson<FeaturesPayload>('/api/features'))
 const cal = useAsync(() => getJson<CalibrationPayload>('/api/calibration'))
+
+/**
+ * 诊断（精度面）。**不在 mount 时取** —— 它是十几秒的一次真实训练，
+ * 而用户可能只想看参数。由下面那个按钮触发，`useAsync` 只在 `run()` 被调
+ * 时才发请求。
+ *
+ * 它走的是 `GET /api/calibration/diagnostics` 而**不是**一次标定 job：
+ * 用户说的是「更新精度」，不是「重搜参数」。后端按包缓存，第二次秒回。
+ */
+const diag = useAsync(() => getJson<DiagnosticsPayload>('/api/calibration/diagnostics'))
 const job = useJob()
 
 onMounted(async () => {
@@ -140,6 +152,30 @@ async function onOptimize(): Promise<void> {
 async function onCancel(): Promise<void> {
   await job.cancel()
 }
+
+const acc = computed(() => diag.data.value?.accuracy ?? null)
+
+/**
+ * 倍数那一行。文案是「基线误差是模型的 N 倍」而不是「误差降到 1/N」：
+ * 后者在 N < 1（模型不如基线）时会印成「误差降到 1/0.8」——
+ * 一句读不通的话，而那种情形恰恰是最该被读懂的时候。
+ */
+const ratioLine = computed(() => {
+  const r = acc.value?.ratio
+  return r === null || r === undefined ? '' : `基线误差是模型的 ${r.toFixed(1)} 倍`
+})
+
+/**
+ * 开始训练：**不是一个 job**（规格书 §二）。
+ *
+ * 它是一次十几秒的请求（八折各拟合一遍），屏上写一行「正在训练…」。
+ * 给它套一个 job 的状态机，是为一件事建一套提交 / 轮询 / 取消，
+ * 而那套机器的成本全在「重」上 —— 用户说的却是「更新一下精度」。
+ * 命中缓存时它秒回。
+ */
+async function onTrain(): Promise<void> {
+  await diag.run()
+}
 </script>
 
 <template>
@@ -160,6 +196,12 @@ async function onCancel(): Promise<void> {
       <template v-if="cal.data.value?.present">
         <StatCard label="折数" :value="fmtInt(cal.data.value.n_folds)" prov="pack" />
         <StatCard v-if="summary" label="MAE" :value="fmt(summary.mae_b, 3)" prov="pack" />
+        <!-- 基线 MAE 紧挨着 MAE（规格书 §6.3）：两个数必须能一眼并排读。
+             图章是「算」不是「包」—— 基线是**现场算的**，它不在标定包里
+             （裁定 C）。这一排上同时出现「算」与「包」，正是三态要表达的事。
+             `v-if="acc"`：没点过训练时这一格不存在，一排仍是五格，
+             不会先占一个空位。 -->
+        <StatCard v-if="acc" label="基线 MAE" :value="fmt(acc.baseline.mae, 3)" prov="live" />
         <StatCard v-if="summary" label="gap" :value="fmt(summary.gap, 4)" prov="pack" />
         <StatCard label="最差折" :value="worstFold || '—'" prov="pack" compact />
       </template>
@@ -284,7 +326,59 @@ async function onCancel(): Promise<void> {
     <Card class="block">
       <h3>模型训练</h3>
 
+      <!-- 开始训练：一个按钮，一次十几秒的请求（规格书 §二）。
+           没包时**禁用**并说清下一步 —— 房规：不做点了没反应的按钮。 -->
+      <div class="act">
+        <button class="go" :disabled="!cal.data.value?.present || diag.loading.value"
+                @click="onTrain">
+          {{ diag.loading.value ? '正在训练…' : '开始训练' }}
+        </button>
+        <span v-if="!cal.data.value?.present" class="note state">先做参数优选</span>
+        <!-- 这一行只在**首次**出现：它说的是一件会花十几秒的事，
+             而缓存命中时它会一闪而过。不写它，一个十几秒的按钮看起来就是卡住了。 -->
+        <span v-if="diag.loading.value" class="note state">
+          正在算折外预测（八折各拟合一遍，十几秒）
+        </span>
+      </div>
+      <p v-if="diag.error.value" role="alert" class="alert">
+        精度没算出来：{{ diag.error.value }}
+      </p>
+
       <template v-if="cal.data.value">
+        <!-- 基线永远与模型并排（规格书 §6.3）。**不可拆开读**：
+             单独一个 0.999 会被读成「几乎完美」，而旁边那个基线
+             才说明这把尺子有多粗。 -->
+        <template v-if="acc">
+          <h4>精度：基线与本模型</h4>
+          <!-- ⚠️ `baseline.mae === null` 时**整张表都不渲染** ——
+               模型那一行单独摆着说明不了它准不准，那正是这一节要防的事。 -->
+          <table v-if="acc.baseline.mae !== null">
+            <thead>
+              <tr><th>预测器</th><th>MAE / °C</th><th>RMSE / °C</th><th>R²</th><th>n</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>{{ acc.baseline.label }}</td>
+                <td class="num">{{ fmt(acc.baseline.mae, 4) }}</td>
+                <td class="num">{{ fmt(acc.baseline.rmse, 4) }}</td>
+                <td class="num">{{ fmt(acc.baseline.r2, 4) }}</td>
+                <td class="num">{{ acc.baseline.n }}</td>
+              </tr>
+              <tr>
+                <td>{{ acc.model.label }}</td>
+                <td class="num">{{ fmt(acc.model.mae, 4) }}</td>
+                <td class="num">{{ fmt(acc.model.rmse, 4) }}</td>
+                <td class="num">{{ fmt(acc.model.r2, 4) }}</td>
+                <td class="num">{{ acc.model.n }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else role="alert" class="alert">
+            基线没算出来，模型那一行单独摆着说明不了它准不准，所以这一张表整个不显示。
+          </p>
+          <p v-if="ratioLine" class="note reading">{{ ratioLine }}</p>
+        </template>
+
         <table v-if="cal.data.value.metrics.length">
           <thead>
             <tr>

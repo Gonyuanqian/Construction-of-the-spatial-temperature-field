@@ -78,6 +78,57 @@ function stub(routes: Record<string, unknown>) {
   }))
 }
 
+const DIAG = {
+  present: true,
+  created_at: '2026-10-05T13:52:09+00:00',
+  groups_sig: 'd6294c09',
+  dataset_sig: '6145fa9261e89f1b',
+  n_points: 27936,
+  n_sensors: 24,
+  n_times: 1164,
+  density: {
+    bins: 60, lo: 5, hi: 45, n: 27936,
+    counts: Array.from({ length: 60 }, () => Array.from({ length: 60 }, () => 0)),
+  },
+  accuracy: {
+    folds: ['position:x0.4_z0.7', 'position:x1.05_z0.4'],
+    baseline: { label: '拿背景温度当棚温（不作任何建模）',
+                mae: 0.4712, rmse: 0.612, r2: 0.8896, n: 2352 },
+    model: { label: '本模型（B 组，未参与选参）',
+             mae: 0.168553, rmse: 0.221, r2: 0.999, n: 2352 },
+    ratio: 2.7955,
+  },
+  residual: [
+    { key: 'diurnal', label: '残差 vs 昼夜', axis: '时刻 / 时',
+      bins: [{ at: 0, mean: 0.01, n: 1164, se: 0.002 },
+             { at: 1, mean: -0.02, n: 1164, se: 0.003 }] },
+    { key: 'height', label: '残差 vs 高度', axis: '高度 z / m',
+      bins: [{ at: 0.4, mean: 0.03, n: 9000, se: 0.001 },
+             { at: 0.7, mean: -0.01, n: 9000, se: 0.001 },
+             { at: 1.1, mean: 0.05, n: 9936, se: 0.002 }] },
+    { key: 'length', label: '残差 vs 棚长', axis: '棚长 x / m',
+      bins: [{ at: 0.15, mean: 0.02, n: 4000, se: 0.002 }] },
+  ],
+  note: '折外预测：每一折都用不含该测点的数据重新训练。',
+}
+
+/** 挂上页②、点一次「开始训练」，把带诊断的屏交出来。 */
+async function mountWithDiag(diag: unknown = DIAG) {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    const u = String(url)
+    const body = u.includes('/diagnostics') ? diag
+      : u.includes('/api/calibration') ? CAL : FEATURES
+    return new Response(JSON.stringify(body), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    })
+  }))
+  const w = mount(TrainView)
+  await flushPromises()
+  await w.findAll('button').find((b) => b.text() === '开始训练')!.trigger('click')
+  await flushPromises()
+  return w
+}
+
 describe('页② 模型训练', () => {
   beforeEach(() => vi.restoreAllMocks())
 
@@ -389,5 +440,100 @@ describe('页② 模型训练', () => {
     await flushPromises()
     expect(w.findAll('h3').map((e) => e.text()))
       .toEqual(['特征值的构造', '最优参数的选择', '模型训练'])
+  })
+
+  // ⚠️ 下面两条是从 Task 7 挪过来的：它们在计划的 Task 7 里，
+  // 而「开始训练」那个按钮由本任务（第三段）产出 —— 写在 Task 7 里不可能绿。
+  // 见台账 Task 7 那条 Ruling。
+
+  it('两个按钮都在，且没包时「开始训练」是禁用的', async () => {
+    // T14：房规 —— 不做点了没反应的按钮（与页①「没选文件就禁用」同一条）。
+    stub({
+      '/api/features': FEATURES,
+      '/api/calibration': {
+        ...CAL, present: false, reason: '还没有标定包',
+        metrics: [], params: [], plateau: [], tuned_keys: [],
+        worst_fold: null, ab: null, n_folds: 0,
+      },
+    })
+    const w = mount(TrainView)
+    await flushPromises()
+    const labels = w.findAll('button').map((b) => b.text())
+    expect(labels).toContain('参数优选')
+    expect(labels).toContain('开始训练')
+    const train = w.findAll('button').find((b) => b.text() === '开始训练')!
+    expect(train.attributes('disabled')).toBeDefined()
+    // 「先做参数优选」写在按钮旁边，不是一个禁用了却不说话的按钮
+    expect(w.text()).toContain('先做参数优选')
+  })
+
+  it('有包时「开始训练」可点，「参数优选」永远可点', async () => {
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    const train = w.findAll('button').find((b) => b.text() === '开始训练')!
+    const opt = w.findAll('button').find((b) => b.text() === '参数优选')!
+    expect(train.attributes('disabled')).toBeUndefined()
+    expect(opt.attributes('disabled')).toBeUndefined()
+  })
+
+  it('「开始训练」打的是诊断出口，不是又搜一遍参数', async () => {
+    // T20：把轻的做成重的 —— 用户只想更新精度，却重搜了一遍参数（几分钟）。
+    const urls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      urls.push(String(url))
+      const body = String(url).includes('/diagnostics') ? DIAG
+        : String(url).includes('/api/calibration') ? CAL : FEATURES
+      return new Response(JSON.stringify(body), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+    const w = mount(TrainView)
+    await flushPromises()
+    await w.findAll('button').find((b) => b.text() === '开始训练')!.trigger('click')
+    await flushPromises()
+    expect(urls.some((u) => u.includes('/api/calibration/diagnostics'))).toBe(true)
+    expect(urls.some((u) => u.includes('/api/calibration/jobs'))).toBe(false)
+  })
+
+  it('基线永远跟模型并排，两行一起出来', async () => {
+    // T16：单独一个 0.999 会被读成「几乎完美」。旁边那个基线才说明尺子有多粗。
+    const w = await mountWithDiag()
+    const rows = w.findAll('tbody tr').map((r) => r.text())
+    const base = rows.find((t) => t.includes('拿背景温度当棚温'))!
+    const model = rows.find((t) => t.includes('未参与选参'))!
+    expect(base).toBeDefined()
+    expect(model).toBeDefined()
+    expect(w.text()).toContain('2.8 倍')
+  })
+
+  it('基线算不出来时，模型那一行**单独**不许出现', async () => {
+    // T16 的反面：宁可什么都不给，也不给一个没有尺子的读数。
+    const broken = { ...DIAG, accuracy: { ...DIAG.accuracy,
+      baseline: { ...DIAG.accuracy.baseline, mae: null, rmse: null, r2: null } } }
+    const w = await mountWithDiag(broken)
+    const rows = w.findAll('tbody tr').map((r) => r.text())
+    expect(rows.some((t) => t.includes('未参与选参')),
+      '基线没算出来时不许只渲染模型那一行').toBe(false)
+    expect(w.text()).toContain('基线没算出来')
+  })
+
+  it('点完训练之后，指标卡里多一格「基线 MAE」，图章是「算」', async () => {
+    // 基线是**现场算的**（它不在标定包里），所以它的图章是「算」不是「包」——
+    // 两组图章在同一个页面上同时出现，正是 §七 那套三态要表达的东西。
+    const w = await mountWithDiag()
+    const cards = w.findAll('.stat')
+    expect(cards.map((c) => c.find('.label').text()))
+      .toEqual(['特征列', '折数', 'MAE', '基线 MAE', 'gap', '最差折'])
+    expect(cards.map((c) => c.find('.prov').text()))
+      .toEqual(['算', '包', '包', '算', '包', '包'])
+  })
+
+  it('没点训练之前没有「基线 MAE」那一格', async () => {
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.findAll('.stat').map((c) => c.find('.label').text()))
+      .toEqual(['特征列', '折数', 'MAE', 'gap', '最差折'])
   })
 })
