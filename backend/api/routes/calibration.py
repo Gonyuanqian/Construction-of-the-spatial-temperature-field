@@ -19,7 +19,7 @@ from tfield import config as C
 from tfield.calibration import IDW_SPACE, TREND_SPACE, TUNED_KEYS, load_bundle, load_for
 from tfield.pipeline import PipelineConfig
 
-from .. import deps, paths, ported
+from .. import deps, jobs, paths, ported
 
 router = APIRouter(tags=["calibration"])
 
@@ -59,6 +59,7 @@ def get_calibration() -> dict[str, Any]:
             "created_at": None, "tool_version": None,
             "groups_sig": None, "dataset_sig": ds.signature,
             "feature_groups": list(C.DEFAULT_FEATURE_GROUPS),
+            "job": _job_summary(),
             "trend_kind": cfg.trend_kind,
             "space": _space(),
             "tuned_keys": [], "plateau": [], "lz_note": None,
@@ -94,6 +95,7 @@ def get_calibration() -> dict[str, Any]:
         "groups_sig": bundle.groups_sig,
         "dataset_sig": bundle.dataset_sig,
         "feature_groups": list(bundle.feature_groups),
+        "job": _job_summary(),
         "trend_kind": bundle.trend_kind,
         "space": _space(),
         "tuned_keys": _tuned_keys(bundle),
@@ -279,6 +281,20 @@ def _space() -> dict[str, list[dict[str, Any]]]:
         "trend": [r for r in rows if r["key"].startswith("trend.")],
         "idw": [r for r in rows if not r["key"].startswith("trend.")],
     }
+
+
+def _job_summary() -> dict[str, Any] | None:
+    """当前 / 最近一次标定任务。**读它是为了刷新之后还接得上**（规格书 §4.7）。
+
+    标定要几分钟，而切页与刷新都会把组件连同它手上的 job id 一起丢掉
+    （前端没有 KeepAlive）。页② `onMounted` 反正要调这一个接口 ——
+    读到 `running` 就接着轮询那个 id，零额外请求。
+
+    *为什么不用一条新路由 `GET /api/calibration/jobs/current`*：多一条路由
+    就多一个要守的东西，而它答的是同一件事。
+    """
+    job = jobs.current()
+    return None if job is None else job.to_dict()
 
 
 def _tuned_keys(bundle) -> list[dict[str, Any]]:

@@ -24,6 +24,7 @@ from tfield.calibration import TOOL_VERSION
 from . import deps, paths, uploads
 from .errors import NO_DATASET_DETAIL, NoDatasetError
 from .routes import calibration as calibration_routes
+from .routes import calibration_jobs as calibration_jobs_routes
 from .routes import dataset as dataset_routes
 from .routes import features as features_routes
 from .routes import field as field_routes
@@ -155,6 +156,7 @@ def create_app() -> FastAPI:
     app.include_router(field_routes.router, prefix="/api")
     app.include_router(features_routes.router, prefix="/api")
     app.include_router(calibration_routes.router, prefix="/api")
+    app.include_router(calibration_jobs_routes.router, prefix="/api")
     app.include_router(live_routes.router, prefix="/api")
 
     @app.get("/api/health")
