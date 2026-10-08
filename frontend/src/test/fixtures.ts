@@ -211,6 +211,10 @@ export const PAGE_PAYLOADS: Record<string, unknown> = {
     // 与上面 `n_all_columns` 同一个坑：这一格后端**两个分支都给**，
     // 缺了它页② 会静默渲染 `undefined`，而冒烟测试照样绿。
     mismatch: null,
+    // 这一份是空态（`present: false`），所以来路是 null。
+    // ⚠️ 同样是「两个分支都给」的那一格：缺了它页② 那排图章会静默
+    // 渲染成 `undefined`，而冒烟测试照样绿。
+    source: null,
     groups_sig: null, dataset_sig: 's', feature_groups: [], trend_kind: 'xgboost',
     // 真实后端在空态下也发 8 + 4 行（`_panel` 与盘上有没有包无关）；
     // 这里给空数组，是为了让冒烟测试不依赖那十二个值 —— 面板的行怎么渲染

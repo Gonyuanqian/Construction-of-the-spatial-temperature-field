@@ -257,6 +257,16 @@ export interface PerPointRow {
 export interface CalibrationPayload {
   present: boolean
   /**
+   * 这一份是从哪来的：`"library"`（库里的当前模型）/ `"unsaved"`（刚跑完、
+   * 还没保存的那一份）/ `null`（都没有）。
+   *
+   * ⚠️ **两个分支都给这一格**（与 `mismatch` 同一条房规）：它不是「有时有、
+   * 有时没有」的键。页② 据此选图章 —— 没有它，刚跑完的那一块和库里那份
+   * 在屏上长得一模一样，而「这块数是不是已经留下来了」正是用户此刻唯一
+   * 要判断的事。
+   */
+  source: 'library' | 'unsaved' | null
+  /**
    * ⚠️ 可以是 null。`present === false` 时给的是「为什么没有这一份包」，
    * 页面据此说「未标定」；`present === true` 时没有这句话，是 null。
    */

@@ -25,6 +25,7 @@ import type {
   CalibrationPayload, DiagnosticsPayload, FeaturesPayload, JobSummary, ParamValue,
 } from '../api/types'
 import { getJson, postJson } from '../api/client'
+import { saveModel } from '../api/models'
 import EChart from '../charts/EChart.vue'
 import { buildOofDensityOption } from '../charts/options/oofDensity'
 import { buildResidualOption } from '../charts/options/residualBins'
@@ -35,6 +36,7 @@ import StatCard from '../components/StatCard.vue'
 import StatRow from '../components/StatRow.vue'
 import { useAsync } from '../composables/useAsync'
 import { useJob } from '../composables/useJob'
+import { MODELS, type ProvKind } from '../design/copy'
 import { fmt1, fmtInt } from '../design/format'
 import { readPalette } from '../design/palette'
 
@@ -118,6 +120,66 @@ const worstFold = computed(() => cal.data.value?.worst_fold?.fold ?? '')
  * 所以卡片上印的是 `mae_b`。这是本页最贵的口径：印 A 组等于用调过参的那组自夸。
  */
 const summary = computed(() => cal.data.value?.ab ?? null)
+
+/**
+ * 这一块读数从哪来。⚠️ 三态而不是两态：没有包时是空，不是「包」。
+ *
+ * 刚跑完那一份与库里那份**是同一份包的两个阶段**（规格书 §6.3）——
+ * 屏上那几个数一个都不差，差别只在「用户把它留下来没有」。所以判据只能是
+ * 后端给的 `source`：没有它，用户没法判断「我这一块数到底留下来了没有」。
+ */
+const provKind = computed<ProvKind>(() => {
+  const src = cal.data.value?.source
+  if (src === 'unsaved') return 'unsaved'
+  if (src === 'library') return 'pack'
+  return 'pack'      // present: false 那一支不挂图章（下面 v-if 挡着）
+})
+
+const modelName = ref('')
+const saving = ref(false)
+const saveError = ref('')
+
+/**
+ * 预填一个建议名 —— 用户不用从零想一个。
+ *
+ * 用**保存那一刻**的日期，不用标定的 `created_at`：屏幕上这一行是
+ * 「你现在把它存下来」，给人看的是今天。
+ *
+ * ⚠️ `if (modelName.value) return` —— 用户已经敲过的名字不许被覆盖。
+ * 这一条尤其重要，因为 `source` 会翻（保存成功后重取一次就是 'library'），
+ * 而翻回来再进 `unsaved` 的那条路（又跑一次标定）不该把他上一次写的
+ * 名字抹掉。
+ */
+watch(() => cal.data.value?.source, (src) => {
+  if (src !== 'unsaved' || modelName.value) return
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  modelName.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} 那一份`
+}, { immediate: true })
+
+/**
+ * 保存。**落库的那一份在后端手上**（`POST /api/models` 读的是后端刚跑完
+ * 那一份包），浏览器只发一个名字 —— 不走浏览器搬 794 KB。
+ *
+ * 成功之后**重取一次标定包**：后端已经把它置成当前模型了，重取回来的
+ * `source` 才是 `library`。不重取的话 `source` 还停在载荷里那个 `'unsaved'`
+ * 上，图章不翻、保存那一行也不消失 —— 用户会以为没保存成功，再点一次，
+ * 然后吃一个 409。
+ */
+async function onSave(): Promise<void> {
+  saving.value = true
+  saveError.value = ''
+  try {
+    await saveModel(modelName.value.trim())
+    await cal.run()
+  } catch (e) {
+    // 409（手上没有刚跑完的）与 422（名字不合格）都走这里 —— 把后端那句话
+    // 原样印出来，它比任何前端拼的句子都准。
+    saveError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    saving.value = false
+  }
+}
 
 /**
  * 指标渲染：v 为 null 时显示单个 em 破折号「—」（两侧不带空格）。
@@ -274,16 +336,16 @@ const residualOptions = computed(() => {
         label="特征列" :value="fmtInt(features.data.value.n_all_columns)" prov="live"
       />
       <template v-if="cal.data.value?.present">
-        <StatCard label="折数" :value="fmtInt(cal.data.value.n_folds)" prov="pack" />
-        <StatCard v-if="summary" label="MAE" :value="fmt(summary.mae_b, 3)" prov="pack" />
+        <StatCard label="折数" :value="fmtInt(cal.data.value.n_folds)" :prov="provKind" />
+        <StatCard v-if="summary" label="MAE" :value="fmt(summary.mae_b, 3)" :prov="provKind" />
         <!-- 基线 MAE 紧挨着 MAE（规格书 §6.3）：两个数必须能一眼并排读。
              图章是「算」不是「包」—— 基线是**现场算的**，它不在标定包里
              （裁定 C）。这一排上同时出现「算」与「包」，正是三态要表达的事。
              `v-if="acc"`：没点过训练时这一格不存在，一排仍是五格，
              不会先占一个空位。 -->
         <StatCard v-if="acc" label="基线 MAE" :value="fmt(acc.baseline.mae, 3)" prov="live" />
-        <StatCard v-if="summary" label="gap" :value="fmt(summary.gap, 4)" prov="pack" />
-        <StatCard label="最差折" :value="worstFold || '—'" prov="pack" compact />
+        <StatCard v-if="summary" label="gap" :value="fmt(summary.gap, 4)" :prov="provKind" />
+        <StatCard label="最差折" :value="worstFold || '—'" :prov="provKind" compact />
       </template>
     </StatRow>
 
@@ -530,6 +592,26 @@ const residualOptions = computed(() => {
       </template>
 
       <p v-else class="note state">正在读标定包…</p>
+
+      <!-- 保存到模型库（规格书 §6.3）。
+           ⚠️ 只在**刚跑完还没保存**时出现：`source === 'unsaved'`。
+           跑完自动出现一行、而不是弹一个窗 —— 弹窗会把屏幕上那些数整个
+           盖住，而用户正要看着它们决定要不要留。
+           ⚠️ 库里那份与空态都没有这一行：一份已经存好的模型不该再劝他存一次。 -->
+      <div v-if="cal.data.value?.source === 'unsaved'" class="save-row">
+        <label for="model-name">{{ MODELS.saveTitle }}</label>
+        <input id="model-name" name="model-name" type="text"
+               :placeholder="MODELS.savePlaceholder" v-model="modelName" />
+        <button type="button" :disabled="!modelName.trim() || saving" @click="onSave">
+          {{ MODELS.saveTitle }}
+        </button>
+        <!-- ⚠️ `state` 不是随手贴的（`design/prose.test.ts` 是 spec §十二.11 的
+             判据本身）：这一句只在**这一刻**成立 —— 这一份还没入库，存下去才
+             成为全站当前模型。它随这一行一起出现、一起消失，与上面那句
+             「先做参数优选」是同一类「提示」，不是铺在正文里的散文。 -->
+        <p class="note state">{{ MODELS.saveHint }}</p>
+        <p v-if="saveError" role="alert" class="alert">{{ saveError }}</p>
+      </div>
     </Card>
 
     <!-- 口径与出处：一页最多一处（spec §八）。收起来，但内容始终在 DOM 里。 -->
@@ -635,6 +717,21 @@ tr.worst { background: var(--leaf-soft); }
   color: var(--ink-muted);
   letter-spacing: 0.02em;
 }
+/* 保存那一行。它是一次**主动动作**，不是又一块读数 —— 所以单独一格、
+   自带分隔线，与上面那些表拉开。 */
+.save-row {
+  margin-top: var(--gap-m);
+  padding-top: var(--gap-m);
+  border-top: 1px solid var(--steel);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-s);
+}
+.save-row label { font-weight: var(--w-strong); }
+.save-row input { flex: 1 1 220px; }
+/* 说明与报错都占满一行 —— 挤在输入框旁边会被读成它的后缀。 */
+.save-row .note, .save-row .alert { flex: 1 1 100%; margin: 0; }
 .why { margin-top: var(--gap-l); }
 .why summary { font-size: var(--size-label); color: var(--ink-muted); cursor: pointer; }
 .why > p, .why > ul { margin-top: var(--gap-s); }

@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import TrainView from './TrainView.vue'
 import ParamPanel from '../components/ParamPanel.vue'
-import { NAV_ITEMS } from '../design/copy'
+import { MODELS, NAV_ITEMS } from '../design/copy'
 
 /**
  * jsdom 里没有 canvas，而 `EChart` 一挂上就 `echarts.init` + `setOption` ——
@@ -72,6 +72,9 @@ const FEATURES = {
 const CAL = {
   present: true,
   reason: null,
+  // 这一份的来路是**库里的当前模型**（不是刚跑完那份）。
+  // 「保存到模型库」那一组用例拿它当对照物 —— 见下面 `LIB`。
+  source: 'library',
   created_at: '2026-10-03T13:22:00+00:00',
   tool_version: '0.1.0',
   groups_sig: 'd6294c09',
@@ -943,5 +946,126 @@ describe('页② 模型训练', () => {
 
     expect(w.text(), '改过值了，那句话没上来').toContain('不是没被看过的样本')
     expect(w.text()).toContain('参数优选')          // 下一步给出路
+  })
+})
+
+describe('保存到模型库', () => {
+  beforeEach(() => {
+    installEnvironment()
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  /** 「屏上这份包是库里那份」的对照物。 */
+  const LIB = { ...CAL, source: 'library' }
+  /** 「刚跑完、还没保存」。 */
+  const NEW = { ...CAL, source: 'unsaved' }
+
+  /**
+   * 一份能走通「保存」这条路的替身。
+   *
+   * 记下每一次 `METHOD url`，并记下 POST 请求体 —— 「发出去的是不是屏上
+   * 那个名字」只能从请求体上读（与上面那条读 `init.body` 同一个手法）。
+   *
+   * `body` 那一份回调让调用方决定**第几次**取标定包时回什么：保存成功之后
+   * 页② 会重取一次，而那一刻后端已经把它置成当前模型了，回来的
+   * `source` 该是 `library`。
+   */
+  function stubSaving(cal: unknown, saveStatus = 201,
+                      body: (n: number) => unknown = () => cal) {
+    const urls: string[] = []
+    const sent: unknown[] = []
+    let cals = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url)
+      const method = init?.method ?? 'GET'
+      urls.push(`${method} ${u}`)
+      let out: unknown = FEATURES
+      let status = 200
+      if (u.includes('/api/models')) {
+        if (method === 'POST') {
+          sent.push(JSON.parse(String(init?.body)))
+          if (saveStatus === 201) {
+            out = { id: 1, name: (sent.at(-1) as { name: string }).name }
+          } else {
+            out = { detail: '手上没有刚跑完的模型。' }
+            status = saveStatus
+          }
+        }
+      } else if (u.endsWith('/api/calibration')) {
+        cals += 1
+        out = body(cals)
+      }
+      return new Response(JSON.stringify(out), {
+        status, headers: { 'Content-Type': 'application/json' } })
+    }))
+    return { urls, sent, cals: () => cals }
+  }
+
+  it('刚跑完还没保存时，读数那块挂的是「未入库」', async () => {
+    // ⚠️ 这一条是整行的**全部理由**：刚跑完那一份与库里那份在屏上长得
+    // 一模一样时，用户没法判断「我这一块数到底留下来了没有」。
+    stubSaving(NEW)
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.findAll('.stat').map((c) => c.find('.prov').text()))
+      .toEqual(['算', '未入库', '未入库', '未入库', '未入库'])
+    expect(w.text()).toContain(MODELS.saveTitle)
+  })
+
+  it('库里那份的时候图章还是「包」，而且没有保存那一行', async () => {
+    // 上面那条的反面。少了它，一个把 `provKind` 恒写成 'unsaved' 的实现
+    // 照样全绿 —— 而它会让每一份**已经存好**的模型都在喊「未入库」。
+    stubSaving(LIB)
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.findAll('.stat').map((c) => c.find('.prov').text()))
+      .toEqual(['算', '包', '包', '包', '包'])
+    expect(w.text()).not.toContain(MODELS.saveTitle)
+  })
+
+  it('名字是空的时保存按钮按不动', async () => {
+    stubSaving(NEW)
+    const w = mount(TrainView)
+    await flushPromises()
+    const btn = w.findAll('button').find((b) => b.text() === MODELS.saveTitle)!
+    await w.get('input[name="model-name"]').setValue('   ')
+    expect(btn.attributes('disabled'), '名字全是空白时按钮还能点').toBeDefined()
+    await w.get('input[name="model-name"]').setValue('棚里那套')
+    expect(btn.attributes('disabled')).toBeUndefined()
+  })
+
+  it('保存成功之后图章翻成「包」，那一行也收了', async () => {
+    const s = stubSaving(NEW, 201, (n) => (n === 1 ? NEW : LIB))
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.text()).toContain('未入库')
+
+    await w.get('input[name="model-name"]').setValue('棚里那套')
+    await w.findAll('button').find((b) => b.text() === MODELS.saveTitle)!
+      .trigger('click')
+    await flushPromises()
+
+    // 发出去的就是屏上那个名字
+    expect(s.sent.at(-1)).toEqual({ name: '棚里那套' })
+    // **重取了一次** —— 不重取的话 `source` 还停在载荷里那个 'unsaved' 上，
+    // 图章不翻、那一行不消失，用户会以为没保存成功，再点一次吃 409。
+    expect(s.cals(), '保存之后没有重取标定包').toBe(2)
+    expect(w.findAll('.stat').map((c) => c.find('.prov').text()))
+      .toEqual(['算', '包', '包', '包', '包'])
+    expect(w.text()).not.toContain(MODELS.saveTitle)
+  })
+
+  it('保存失败时把后端那句话印出来，不吞掉', async () => {
+    // 409：手上没有刚跑完的那一份（另一个标签页先存了、或后端重启过）。
+    stubSaving(NEW, 409)
+    const w = mount(TrainView)
+    await flushPromises()
+    await w.findAll('button').find((b) => b.text() === MODELS.saveTitle)!
+      .trigger('click')
+    await flushPromises()
+    expect(w.text()).toContain('手上没有刚跑完的模型。')
+    // 失败之后那一行还在，用户能看着那句话去处理 —— 不许悄悄收掉
+    expect(w.text()).toContain(MODELS.saveTitle)
   })
 })
