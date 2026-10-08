@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException
 
 from tfield import config as C
-from tfield.calibration import IDW_SPACE, TREND_SPACE, TUNED_KEYS, load_bundle, load_for
+from tfield.calibration import IDW_SPACE, TREND_SPACE, TUNED_KEYS, load_bundle
 from tfield.pipeline import PipelineConfig
 
 from .. import deps, diagnostics, jobs, paths, ported
@@ -53,13 +53,15 @@ _BODY_SHAPE_HINT = '请求体要长成 {"params": {"metric.power": 2}} 这样。
 @router.get("/calibration")
 def get_calibration() -> dict[str, Any]:
     ds = deps.get_train_dataset()     # 包是按训练段标的，这里必须问同一份
-    bundle = load_for(ds, C.DEFAULT_FEATURE_GROUPS, root=CONFIGS_ROOT)
+    got = deps.current_bundle()       # 「用哪一份模型」的唯一出口（规格书 §5.4）
+    bundle = got.bundle
 
     if bundle is None:
         cfg = PipelineConfig.fallback()
         return {
             "present": False,
             "reason": NO_BUNDLE_REASON,
+            "source": None,
             "mismatch": _mismatch(ds.signature),
             "created_at": None, "tool_version": None,
             "groups_sig": None, "dataset_sig": ds.signature,
@@ -93,6 +95,7 @@ def get_calibration() -> dict[str, Any]:
     return {
         "present": True,
         "reason": None,
+        "source": got.source,
         "mismatch": None,
         "created_at": bundle.created_at,
         "tool_version": bundle.tool_version,
@@ -537,7 +540,7 @@ def post_diagnostics(body: Any = Body(None)) -> dict[str, Any]:
 
     ds = deps.get_train_dataset()
     groups = tuple(C.DEFAULT_FEATURE_GROUPS)
-    bundle = load_for(ds, groups, root=CONFIGS_ROOT)
+    bundle = deps.current_bundle(groups).bundle
     if bundle is None:
         raise HTTPException(status_code=409,
                             detail="这一份数据集还没有标定包，先做一次参数优选")

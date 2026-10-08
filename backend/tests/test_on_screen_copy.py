@@ -77,6 +77,18 @@ def client() -> TestClient:
     return TestClient(create_app())
 
 
+@pytest.fixture(autouse=True)
+def _library(current_model):
+    """这一整个文件都要求模型库里存着交付那一份模型（见 `tests/conftest.py`）。
+
+    `_EXTRACTORS` 里那一族 `/api/calibration` 的字段（十二维中文名、固定值的
+    说明）**空态与有包各有一份**（`_LABELS` / `_FIXED` 是共用的一份，值却来自
+    两个不同来源）。库里空着扫的是兜底那一份 —— 这个文件此前扫的是**有包**
+    那一份，要原样成立就得让库里也有包。
+    """
+    return current_model
+
+
 @pytest.mark.parametrize("path", sorted(_EXTRACTORS))
 def test_真实响应体上屏的文案干净(client, path):
     body = client.get(path).json()

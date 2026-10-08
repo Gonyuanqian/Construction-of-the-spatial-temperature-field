@@ -36,6 +36,19 @@ def client() -> TestClient:
 
 
 @pytest.fixture(autouse=True)
+def _library(current_model):
+    """这一整个文件都要求模型库里有一份能用的当前模型（见 `tests/conftest.py`）。
+
+    三条 `/api/calibration` 的读（job 字段、mismatch）现在都要读一次模型库。
+    库里空着时它们也答得出来（`present: false`），但 `mismatch` 在
+    `present: true` 那条路上**恒为 null** —— 于是
+    `test_bak_不被_mismatch_捡走` 会变成拿 null 比 null，一个字都没验到。
+    那一条自己标 `empty_library`，让空态成为它真实的前提。
+    """
+    return current_model
+
+
+@pytest.fixture(autouse=True)
 def _clean_jobs():
     """每个用例从「一次都没跑过」开始，收工时不留一个还在跑的任务。
 
@@ -257,6 +270,7 @@ def test_搜索跑完定下结果之前被取消_盘上什么都不留(client, t
 
 # ── 备份的 .bak 不能被当成「上一次标定」（T8）──
 
+@pytest.mark.empty_library
 def test_bak_不被_mismatch_捡走(client, tmp_path, monkeypatch):
     """T8：`_mismatch` 用 `glob("bundle_*.json")`，`.json.bak` 不匹配。
 
@@ -270,7 +284,7 @@ def test_bak_不被_mismatch_捡走(client, tmp_path, monkeypatch):
     """
     from api.routes import calibration as cal_routes
 
-    real = _real_bundle()
+    real = _real_bundle()  # 用来造那个 .bak 的**样本**，与库里的当前模型无关
     (tmp_path / f"bundle_{real.dataset_sig}_{real.groups_sig}.json.bak").write_text(
         real.to_json(), encoding="utf-8")
     monkeypatch.setattr(cal_routes, "CONFIGS_ROOT", tmp_path)

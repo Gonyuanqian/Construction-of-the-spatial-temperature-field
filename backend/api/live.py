@@ -24,10 +24,10 @@ from typing import Callable
 import pandas as pd
 
 from tfield import config as C
-from tfield.calibration import groups_signature, load_for
+from tfield.calibration import groups_signature
 from tfield.data.loader import HOLDOUT_CUTOFF
 
-from . import deps, paths
+from . import deps
 
 #: 一帧 300 秒 —— 就是数据集的采样间隔。**不加速**：加速等于把「5 分钟一帧」
 #: 这件事演成假的，而这一屏要演的正是「数据一帧一帧来」。
@@ -100,13 +100,23 @@ class LiveSource:
 
         **同步的**，几十秒。慢是刻意的：它换来的是这条路径可测
         （没有线程、没有「等它好」的轮询）。
+
+        ⚠️ 取哪一份模型走 `deps.current_bundle()` —— 与页③ 同一条判定。
+        两页用的是同一个训练段（都是那 1164 行），所以要么都能用要么都
+        不能用；各判一次就会漂成「页③ 有场、页⑤ 说没模型」。
+
+        ⚠️ 因此 `self.cutoff` 必须就是 `HOLDOUT_CUTOFF`：`current_bundle()`
+        比的是**默认切点**那个训练段的签名，换一个切点两边的签名就不同，
+        库里的模型会被判成「对不上」而悄悄退回未标定的兜底参数 ——
+        屏上照样画得出场，只是参数不是标定出来的那一套。
+        （现在没有任何一处传过别的切点，这是留给将来的话。）
         """
         if self.pipeline is not None:
             return 0.0
         t0 = self._clock()
         ds = deps.get_train_dataset(cutoff=self.cutoff)
         groups = tuple(C.DEFAULT_FEATURE_GROUPS)
-        bundle = load_for(ds, groups, paths.CONFIGS)
+        bundle = deps.current_bundle(groups).bundle
         self.pipeline = self._builder(ds, groups, bundle)
         # 训练段长度：此刻还没有任何实时帧（`n_live == 0`），所以 `n_times` 就是它。
         self._t0 = self.pipeline.n_times

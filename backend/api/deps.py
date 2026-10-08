@@ -23,11 +23,12 @@ from __future__ import annotations
 
 import pathlib
 import threading
+from dataclasses import dataclass
 from typing import Callable
 
 import pandas as pd
 
-from tfield.calibration import groups_signature, load_for
+from tfield.calibration import groups_signature
 from tfield.data.loader import HOLDOUT_CUTOFF, Holdout, load_dataset, split_holdout
 from tfield.data.types import Dataset
 from tfield.features import build_features
@@ -211,6 +212,85 @@ def on_dataset_change(fn: Callable[[], None]) -> None:
     _INVALIDATORS.append(fn)
 
 
+# ══════════════════════════ 用哪一份模型 ══════════════════════════
+#: 「刚跑完、还没入库」的那一份挂在 job 对象上（`calibration_jobs._work` 的
+#: 尾部写进去）。它排在第一顺位，所以必须有退场条件 —— 见 `retire_result()`。
+
+@dataclass(frozen=True)
+class CurrentBundle:
+    """一次回答的两半：**用哪一份**，以及**它从哪来**。
+
+    为什么把来源一起返回而不是另开一个函数：来源只有页② 用得上，而另开一个
+    函数就得把「挑哪一份」的规则写第二遍 —— 两份实现迟早不一致，表现出来是
+    页② 说「未入库」而构场用的是库里的那一份，屏上没有一处提示。
+    """
+
+    bundle: CalibrationBundle | None
+    #: `"unsaved"` / `"library"` / `None`。前两个对应 §5.4 的两条来路。
+    source: str | None
+
+
+def unsaved_bundle() -> CalibrationBundle | None:
+    """本次会话刚跑完、还没入库的那一份。没有就 None。
+
+    ⚠️ 只认 `DONE` 的 job：`CANCELLED` 与 `FAILED` 的那一次没有可用结果
+    （`_work` 与 `_run` 都会把 result 清掉，这里再判一次是防将来有人改那两处）。
+    """
+    from . import jobs
+    job = jobs.current()
+    if job is None or job.state != jobs.DONE:
+        return None
+    return job.result
+
+
+def _usable(bundle, ds: Dataset, groups: tuple[str, ...]) -> bool:
+    """这一份包能不能拿来给**这一份训练段**构场。
+
+    比两样：数据集签名（它是不是为这份数据标出来的）与特征组（参数是按哪一组
+    特征搜出来的）。规格书 §5.5 说只比签名也够 —— 因为库内特征组是个常量，
+    而那句话**依赖页② 把特征组写死**（`calibration_jobs.py` 用的是
+    `C.DEFAULT_FEATURE_GROUPS`）。多比一个字符串，把那条路堵在门口。
+    """
+    return (bundle.dataset_sig == ds.signature
+            and tuple(bundle.feature_groups) == tuple(groups))
+
+
+def current_bundle(groups: tuple[str, ...] | None = None) -> CurrentBundle:
+    """**全站唯一一处回答「这次用哪一份模型」**（规格书 §5.4）。
+
+    三档，按次序：
+
+    1. 本次会话刚跑完、还没入库的那一份 → `"unsaved"`
+    2. 否则库里的当前模型，与当前训练段对得上 → `"library"`
+    3. 都没有 → `(None, None)`
+
+    ⚠️ 第 1 条压在第 2 条上面，正是因为「用户刚跑完还没保存」时屏幕该显示
+    **他刚跑的那一份**。它的两个退场条件在 `jobs.retire_result()` 与
+    `jobs.submit()` 里（保存成功、再跑一次）。
+
+    ⚠️ 每次请求读一次库（一行 LONGTEXT，约 794 KB）。这与它取代的
+    `load_for()` 读一次 794 KB 的 JSON 是同一个量级 —— 而相对 fit 的几十秒
+    可以忽略。`PipelineCache` 的键里含 `bundle.created_at`，所以「换模型 →
+    场自动重算」这条链路是现成的。
+    """
+    from . import models_store
+    from tfield import config as C
+    groups = tuple(C.DEFAULT_FEATURE_GROUPS if groups is None else groups)
+    ds = get_train_dataset()          # ← 模型认训练段，页① 认文件
+
+    b = unsaved_bundle()
+    if b is not None and _usable(b, ds, groups):
+        return CurrentBundle(bundle=b, source="unsaved")
+
+    mid = models_store.current_id()
+    if mid is None:
+        return CurrentBundle(bundle=None, source=None)
+    b = models_store.load_bundle(mid)
+    if b is None or not _usable(b, ds, groups):
+        return CurrentBundle(bundle=None, source=None)
+    return CurrentBundle(bundle=b, source="library")
+
+
 def get_pipeline(groups: tuple[str, ...] | None = None) -> FieldPipeline:
     """本项目管线的唯一入口。**路由层不许自己 new FieldPipeline、也不许自己 fit。**
 
@@ -223,14 +303,12 @@ def get_pipeline(groups: tuple[str, ...] | None = None) -> FieldPipeline:
     ⚠️ **它 fit 的是训练段，不是用户交进来的那份文件**（见 `get_train_dataset`）。
     页① 报的那份凭证与这里的世界**故意**不是同一个：模型不许看过留出段。
     """
-    from . import paths
     from tfield import config as C
     groups = tuple(C.DEFAULT_FEATURE_GROUPS if groups is None else groups)
     ds = get_train_dataset()          # ← 模型认训练段，页① 认文件
-    # 每次请求读一次标定包（794 KB 的 JSON，约 10 ms 量级）——
-    # 它的 `created_at` 是键的一部分，不读就不知道键。相对 fit 的几十秒可以忽略。
-    bundle = load_for(ds, groups, paths.CONFIGS)
-    return _PIPELINES.get(ds, groups, bundle)
+    # 每次请求问一次「用哪一份模型」—— 它的 `created_at` 是缓存键的一部分，
+    # 不问就不知道键。相对 fit 的几十秒，这一次读可以忽略。
+    return _PIPELINES.get(ds, groups, current_bundle(groups).bundle)
 
 
 _CACHE = DatasetCache()

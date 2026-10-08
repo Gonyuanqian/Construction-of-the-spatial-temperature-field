@@ -39,22 +39,18 @@ def ds():
 
 
 @pytest.fixture()
-def db(monkeypatch):
-    """把这一整套测试指到 `tfield_models_test` 上，每格从空表开始。
+def db(models_db):
+    """每一格从**空表**开始。夹具本体在 `tests/conftest.py::models_db`。
 
-    ⚠️ 改的是**环境变量**而不是模块常量：`models_store` 每次调用现读环境，
-    所以这里改一个变量就够了 —— 而如果它把配置读成模块级常量，这个夹具就
-    改不动它，测试会静默地跑到用户真正的库上去。
+    ⚠️ 库名**必须**是 `tfield_models_test`，而它现在由 conftest 的
+    `_pin_test_library`（session 级、autouse）一次钉住整轮 —— 那段说明也在
+    那里：`models_store` 每次调用现读环境变量，配置要是被读成模块级常量，
+    这个夹具就改不动它，测试会静默地跑到用户真正的库上把模型清掉。
+
+    留一个同名薄壳而不是把用例的形参全改名：本文件 12 处用例都写着 `db`，
+    而它的全部内容就是「空表」这一件事，摊回用例里只会让每条都长两行。
     """
-    monkeypatch.setenv("TFIELD_MYSQL_DB", "tfield_models_test")
-    models_store.init()                      # 连不上就抛，不 skip（见文件头）
-    conn = models_store.connect()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("TRUNCATE TABLE model")
-        conn.commit()
-    finally:
-        conn.close()
+    return models_db
 
 
 def test_存进去再取出来_整份签名一个字符都不少(db, ds):

@@ -108,10 +108,15 @@ WHITELIST = frozenset({"deps.py"})
 #: 不是读入口。它的消费者只有 `api/live.py`（在模块末尾登记自己）——
 #: 路由不许用它。在路由里登记一个「换数据集时顺便干点什么」的回调，
 #: 正是这条守卫要防的那类隐式耦合。
+#:
+#: `current_bundle` 是第十个，理由**与 `get_train_dataset` 那一族同形**
+#: （纯读入口，不绕过缓存）：它是「这次用哪一份模型」的唯一出口，
+#: 路由自己 `load_for` 一遍就是第二套口径 —— 而两套口径不一致的表现，
+#: 是页② 说「未入库」而那几条 field 路由拿库里的模型构场，屏上没有一处提示。
 ALLOWED_FROM_DEPS = frozenset({
     "get_dataset", "get_pipeline", "get_train_dataset", "get_live_frames",
     "_build_pipeline", "current_dataset_path", "probe_dataset", "install_dataset",
-    "on_dataset_change",
+    "on_dataset_change", "current_bundle",
 })
 
 #: 与 `api.deps` 无关的、任何位置都不许直接取用的通用黑名单（直取后端库/缓存类）。
@@ -225,7 +230,7 @@ def test_api_层从_deps_只许取_get_dataset():
     )
 
 
-def test_白名单只有那九个出口():
+def test_白名单只有那十个出口():
     """白名单是一份**写死的声明**。它悄悄变长，是这道守卫失效的第一种方式。
 
     第三、第四、第五个（`get_train_dataset` / `get_live_frames` / `_build_pipeline`）
@@ -244,9 +249,13 @@ def test_白名单只有那九个出口():
     写入口能掩盖的错比读入口多。看到它们在名单上就该多问一句：「为什么这条
     路由能改当前数据集 / 为什么要登记回调」。两个答案都是「那次改动只有这一个
     入口」。
+
+    第十个（`current_bundle`，2026-10-08 模型库那批加）**回到「纯读入口」那一族**：
+    它取代的是四个地方各自一遍的 `load_for(ds, groups, paths.CONFIGS)`，
+    而那四处正是「这次用哪一份模型」有五套口径的来源。
     """
     assert ALLOWED_FROM_DEPS == frozenset({
         "get_dataset", "get_pipeline", "get_train_dataset", "get_live_frames",
         "_build_pipeline", "current_dataset_path", "probe_dataset", "install_dataset",
-        "on_dataset_change",
+        "on_dataset_change", "current_bundle",
     })

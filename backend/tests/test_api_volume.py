@@ -27,6 +27,18 @@ def client():
         yield c
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _library(library_module):
+    """这一整个模块都要求模型库里存着交付那一份模型（见 `tests/conftest.py`）。
+
+    ⚠️ **必须是 module 级。** 下面那个 `volume` 夹具是一次真实请求的响应体
+    （37 片，约 1.25 s），整个模块拿它当基准比；pytest 先建大作用域的夹具，
+    函数级的 `current_model` 跑得太晚 —— 它会拿到**空库**建出的那一卷
+    （兜底参数，与标定那份**同折族、不同参数**），而后面每一条都在拿它比。
+    """
+    return library_module
+
+
 @pytest.fixture(scope="module")
 def volume(client):
     r = client.get("/api/field/volume", params=QUERY)

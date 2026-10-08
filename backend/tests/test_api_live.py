@@ -41,6 +41,25 @@ def src(clock) -> live.LiveSource:
     return live.LiveSource(clock=clock)
 
 
+@pytest.fixture(autouse=True)
+def _library(current_model, monkeypatch):
+    """这一整个文件都要求模型库里存着交付那一份模型（见 `tests/conftest.py`）。
+
+    2026-10-08 起 `LiveSource.prepare()` 与页③ 走**同一条判定**
+    （`deps.current_bundle()`），而本文件里凡是要 `prepare()` 的用例都因此
+    要读一次库。库空着也不报错 —— `prepare()` 会拿兜底参数把管线建起来、
+    场照样画得出来，只是参数不是标定出来的那一套；`test_验收折_接口的数与
+    直接调库逐位相等` 那条正好会因为这个差距而红，其余的会静默地测错东西。
+
+    ⚠️ 它同时把「当前数据集」指过去：`src` 夹具是**函数级、不走 autouse**，
+    而 `LiveSource.prepare()` 要经 `deps.get_train_dataset()`，那条路在指针
+    为空时抛 `NoDatasetError`。本文件没有别的夹具设它。
+    """
+    from api import paths
+    deps.set_current_dataset(paths.dataset_path())
+    return current_model
+
+
 def test_没准备之前_status_字段是_idle_且不动管线(src, monkeypatch):
     """**status 是纯读。** 把「建管线」那条路径换成会炸的替身，它也必须照样答得出来。
 

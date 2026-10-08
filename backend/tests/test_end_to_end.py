@@ -26,6 +26,18 @@ def client() -> TestClient:
     return TestClient(create_app())
 
 
+@pytest.fixture(autouse=True)
+def _library(current_model):
+    """这一整个文件都要求模型库里存着交付那一份模型（见 `tests/conftest.py`）。
+
+    `PAGE_2` 里那个 `/api/calibration` 现在要读模型库才能答得出来。库里空着
+    它也会答（`present: false` 是合法响应），所以「每个接口都通」照样绿 ——
+    那这条端到端就退化成「答得出空态」了，而它想验的是页② 打开时真的拿到
+    东西。
+    """
+    return current_model
+
+
 @pytest.mark.parametrize("path", PAGE_1 + PAGE_2 + ["/api/health"])
 def test_每个接口都通且是合法_JSON(client, path):
     r = client.get(path)

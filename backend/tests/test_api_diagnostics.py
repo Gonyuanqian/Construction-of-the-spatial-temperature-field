@@ -24,6 +24,21 @@ from tfield import config as C                                  # noqa: E402
 pytestmark = pytest.mark.slow      # 一次 oof_table 要 8 折各 fit 一遍，十秒上下
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _library(library_module):
+    """这一整个模块都要求模型库里存着交付那一份模型（见 `tests/conftest.py`）。
+
+    `GET /api/calibration` 与 `POST /api/calibration/diagnostics` 现在都要走
+    `deps.current_bundle()`，即读模型库。下面那个 `oof` 夹具是整个模块最贵的
+    一步（十几秒），先建它 —— 所以种子也必须是 module 级的，否则它会拿着
+    空库（兜底参数）算出一份折外表，而模块里每一条都在拿它比对。
+
+    ⚠️ 模块级种子对付不了 `@pytest.mark.empty_library`（那是逐个用例看的），
+    要空态的那几条自己请求 `empty_now`。
+    """
+    return library_module
+
+
 @pytest.fixture(scope="module")
 def bundle():
     """训练段那一份包 —— 页② 报的就是它。
@@ -496,17 +511,19 @@ def test_诊断的缓存键比管线缓存多一格_因为参数只进诊断那�
         ds, C.DEFAULT_FEATURE_GROUPS, b, "别的签名") != dk
 
 
-def test_没有包时诊断出口报_409_并说清下一步(monkeypatch, tmp_path):
+def test_没有包时诊断出口报_409_并说清下一步(monkeypatch, tmp_path, empty_now):
     """⚠️ 请求体是**合法的** —— 面板与包无关（Task 1 的空态用例钉着）。
 
     这样 409 就只可能是「没有包」这一个原因，而不是「请求体不合法」。
+
+    ⚠️ 空态由 `empty_now` 造：它临时清空模型库、用完种回去。**不能再靠
+    `CONFIGS_ROOT` 指空目录** —— 那个常量只剩 `_mismatch` 一个消费者，
+    「有没有包」现在由 `deps.current_bundle()` 说了算，指了也是空转。
     """
     from fastapi.testclient import TestClient
     from api import deps, paths
     from api.main import create_app
-    from api.routes import calibration as cal_routes
     deps.set_current_dataset(paths.dataset_path())
-    monkeypatch.setattr(cal_routes, "CONFIGS_ROOT", tmp_path)
     c = TestClient(create_app())
     panel = c.get("/api/calibration").json()["panel"]
     params = {r["key"]: r["current"] for r in panel["trend"] + panel["idw"]}
@@ -515,7 +532,8 @@ def test_没有包时诊断出口报_409_并说清下一步(monkeypatch, tmp_pat
     assert "参数优选" in r.json()["detail"]
 
 
-def test_请求体不合法时报_422_而不是被没有包的_409_盖住(monkeypatch, tmp_path):
+def test_请求体不合法时报_422_而不是被没有包的_409_盖住(monkeypatch, tmp_path,
+                                                     empty_now):
     """⚠️ 次序：**结构检查排在 409 之前**（与上一条互为对照）。
 
     上一条送的是**合法**请求体，于是 422 与 409 谁也分不出先后（两种实现都绿）；

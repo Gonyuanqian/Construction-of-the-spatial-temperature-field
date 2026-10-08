@@ -18,6 +18,18 @@ def client():
     return TestClient(create_app())
 
 
+@pytest.fixture(autouse=True)
+def _library(current_model):
+    """这一整个文件都要求模型库里存着交付那一份模型（见 `tests/conftest.py`）。
+
+    本文件的要害是「两边拿到的**必须是同一份**」：路由里那条
+    `deps.get_pipeline()` 与用例里手写的那条都要读模型库。库里空着两边也
+    一致（都退到兜底参数），断言照样绿 —— 但这三张载荷就与页③ 实际跑的那
+    一份脱了钩：兜底参数与标定参数**同折族、不同参数**，形状一样、数不一样。
+    """
+    return current_model
+
+
 def test_sections_接口的载荷就是_sections_payload_给的(client):
     body = client.get("/api/field/sections?t_index=7").json()
     mine = sections_payload(deps.get_pipeline(), t_index=7,

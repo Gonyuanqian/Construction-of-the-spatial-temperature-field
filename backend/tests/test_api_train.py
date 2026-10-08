@@ -29,6 +29,23 @@ def client() -> TestClient:
     return TestClient(create_app())
 
 
+@pytest.fixture(autouse=True)
+def _library(current_model):
+    """这一整个文件都要求模型库里存着交付那一份模型（见 `tests/conftest.py`）。
+
+    2026-10-08 起「用哪一份模型」唯一的来路是模型库，而本文件大多数用例要
+    断言包里的数（`created_at` 2026-10-05T13:52:09+00:00、`groups_sig`
+    d6294c09、八折、A/B 两组的 MAE）。库里空着的话它们拿到的是**兜底参数**
+    那一份 —— 红绿还在、测的东西换了，而没有一个字提示。要空态的那几条
+    自己标 `@pytest.mark.empty_library`。
+
+    写成 autouse 而不是给每条用例加参数：本文件有 **3 处**内联
+    `TestClient(create_app())`，逐个加参数必漏（与本文件 `_current_dataset`
+    那条同一个理由）。
+    """
+    return current_model
+
+
 # ── 特征构造表 ──
 
 def test_特征组表覆盖四组且列名来自后端库(client):
@@ -203,7 +220,6 @@ def test_某一折_mae_是_NaN_时判最差不_500_而是报_null(monkeypatch):
     import json
     from dataclasses import replace as dc_replace
 
-    from api.routes import calibration as cal_routes
     from tfield.calibration import load_for
     from tfield.data.loader import load_dataset, test_data_path
 
@@ -217,7 +233,13 @@ def test_某一折_mae_是_NaN_时判最差不_500_而是报_null(monkeypatch):
     metrics.loc[0, "mae"] = float("nan")
     broken = dc_replace(bundle, metrics=metrics)
 
-    monkeypatch.setattr(cal_routes, "load_for", lambda *a, **k: broken)
+    # ⚠️ 接口点从 `cal_routes.load_for` 换成了 `deps.current_bundle`（2026-10-08
+    # 模型库那一轮）：路由不再自己读盘，而是问「这次用哪一份模型」那一个出口。
+    # 补 `cal_routes.load_for` 现在是 `AttributeError` —— `calibration.py` 里
+    # 已经没有这个名字了。
+    monkeypatch.setattr(deps, "current_bundle",
+                        lambda *a, **k: deps.CurrentBundle(bundle=broken,
+                                                           source="library"))
     c = TestClient(create_app())
     r = c.get("/api/calibration")
 
@@ -235,7 +257,6 @@ def test_全折_mae_都是_NaN_时_worst_fold_为_None(monkeypatch):
     在这一页（最容易误读口径的一页）是句谎话。契约扩展：`worst_fold` 现在可为 null。"""
     from dataclasses import replace as dc_replace
 
-    from api.routes import calibration as cal_routes
     from tfield.calibration import load_for
     from tfield.data.loader import load_dataset, test_data_path
 
@@ -246,7 +267,10 @@ def test_全折_mae_都是_NaN_时_worst_fold_为_None(monkeypatch):
     metrics["mae"] = float("nan")
     broken = dc_replace(bundle, metrics=metrics)
 
-    monkeypatch.setattr(cal_routes, "load_for", lambda *a, **k: broken)
+    # 接口点同 `test_某一折_mae_是_NaN_时…`：`cal_routes.load_for` 已退役。
+    monkeypatch.setattr(deps, "current_bundle",
+                        lambda *a, **k: deps.CurrentBundle(bundle=broken,
+                                                           source="library"))
     c = TestClient(create_app())
     r = c.get("/api/calibration")
     assert r.status_code == 200, r.text
@@ -308,14 +332,17 @@ def test_lz_落在搜索下界时要自己说出来(client):
             f"lz = {lz:g} 不在下界 {lo:g} 上，不该发「还没扫够」的警告")
 
 
-def test_没有标定包时也要答得出来(monkeypatch, tmp_path):
+@pytest.mark.empty_library
+def test_没有标定包时也要答得出来():
     """空状态是行动的邀请，不是一片空白（spec §8.5）。
 
     没有包时界面要能显示**兜底参数**，并明说它不是最优。
-    """
-    from api.routes import calibration as cal_routes
 
-    monkeypatch.setattr(cal_routes, "CONFIGS_ROOT", tmp_path)
+    ⚠️ 空态现在由**模型库里没有当前模型**造出来（`empty_library` 标记），
+    不再是「把 `CONFIGS_ROOT` 指到一个空目录」—— `present` 已经不问盘了，
+    指着空目录也是空转：用例照旧拿到库里那一份，而它断言的每一句都在测
+    另一条路。
+    """
     c = TestClient(create_app())
     b = c.get("/api/calibration").json()
 
@@ -353,9 +380,8 @@ def test_上屏文案干净_没有被禁的连接符与_markdown_标记(client):
 
 # 空态那一份（没有包时走的是 `PipelineConfig.fallback()`，与上面的包**不是**
 # 同一个来源），标签与固定值必须与有包时逐字相同。
-def test_空态的上屏文案也干净(monkeypatch, tmp_path):
-    from api.routes import calibration as cal_routes
-    monkeypatch.setattr(cal_routes, "CONFIGS_ROOT", tmp_path)
+@pytest.mark.empty_library
+def test_空态的上屏文案也干净():
     b = TestClient(create_app()).get("/api/calibration").json()
     rendered = [r["label"] for r in b["panel"]["trend"] + b["panel"]["idw"]]
     rendered += [v for r in b["panel"]["trend"] + b["panel"]["idw"] for v in r["values"]]
@@ -367,13 +393,13 @@ def test_空态的上屏文案也干净(monkeypatch, tmp_path):
 
 # ── 待优选参数清单（规格书 §三）──
 
-def test_面板在没有包时也在(monkeypatch, tmp_path):
-    """T1：面板是**模块常量加兜底值**，与盘上有没有包无关。
+@pytest.mark.empty_library
+def test_面板在没有包时也在():
+    """T1：面板是**模块常量加兜底值**，与库里有没有模型无关。
 
     只在有包时才给 = 逼用户先跑一次才知道要调什么，而 §三 那个「先」字
     说的正是「点之前就在屏上」。空态是唯一能验这一条的地方。
     """
-    monkeypatch.setattr(routes.calibration, "CONFIGS_ROOT", tmp_path)
     c = TestClient(create_app())
     b = c.get("/api/calibration").json()
     assert b["present"] is False
@@ -451,7 +477,8 @@ def test_面板每一维的当前值都不是空的(client):
     assert empty == [], f"这些维度读不出当前值：{empty}"
 
 
-def test_空态面板十二维的当前值都在候选里(monkeypatch, tmp_path):
+@pytest.mark.empty_library
+def test_空态面板十二维的当前值都在候选里():
     """**没包那条路**也要十二维齐全，而且当前值都得是屏上的一档。
 
     上面两条用的是有包的 `client` 夹具，于是空态整个漏在网外 —— 而空态正是
@@ -460,7 +487,6 @@ def test_空态面板十二维的当前值都在候选里(monkeypatch, tmp_path)
     `None`：`fmt_value(None)` 印成 `"None"`（一个英文单词落在中文面板上），
     又不落进 `raw`，前端那个按下标定位的滑块一格都不选中。
     """
-    monkeypatch.setattr(routes.calibration, "CONFIGS_ROOT", tmp_path)
     c = TestClient(create_app())
     b = c.get("/api/calibration").json()
     assert b["present"] is False
@@ -693,8 +719,15 @@ def test_换了数据集之后报出上一次标定对的是谁(client, tmp_path
     deps.install_dataset(paths.dataset_path())
 
 
+@pytest.mark.empty_library
 def test_从来没有标过的数据集_mismatch_是_null(client, monkeypatch, tmp_path):
-    """反面的那一种：`configs/` 是空的 → 没有「上一次」，不许编一个出来。"""
+    """反面的那一种：`configs/` 是空的 → 没有「上一次」，不许编一个出来。
+
+    ⚠️ `mismatch` 只在 `present=false` 那条路上被算（`present=true` 时它恒为
+    null）。所以这一条要**两个空**同时成立：`CONFIGS_ROOT` 空，模型库也空
+    （`empty_library` 标记）。只空其中一个的话，`mismatch` 照样是 null ——
+    而它 null 的原因是另一个，这条用例一个字都没验到。
+    """
     monkeypatch.setattr(routes.calibration, "CONFIGS_ROOT", tmp_path)
     deps.set_current_dataset(paths.dataset_path())
     deps.reset_cache()
@@ -703,6 +736,7 @@ def test_从来没有标过的数据集_mismatch_是_null(client, monkeypatch, t
     assert body["mismatch"] is None
 
 
+@pytest.mark.empty_library
 def test_configs_里有一份读不动的包_mismatch_要跳过它而不是把接口打挂(
         client, monkeypatch, tmp_path):
     """Review Focus 之外的第六类输入：`configs/` 里躺着半份包。
@@ -729,8 +763,14 @@ def test_configs_里有一份读不动的包_mismatch_要跳过它而不是把�
     assert body["mismatch"] is None
 
 
+@pytest.mark.empty_library
 def test_坏包旁边有一份好包时_照旧报出好包那一份(client, monkeypatch, tmp_path):
-    """跳过坏的那一份，不等于整条路都不报 —— 好的那一份要说出来。"""
+    """跳过坏的那一份，不等于整条路都不报 —— 好的那一份要说出来。
+
+    ⚠️ 要空库，同上：库里只要有一份能用的当前模型，`present` 就是 true，
+    `mismatch` 就是 null，下面那句 `assert m is not None` 会直接红 ——
+    而它红起来的样子像「`_mismatch` 挑包挑错了」，离真正的原因很远。
+    """
     from dataclasses import replace
     from tfield.calibration import load_bundle, save_bundle
 
