@@ -156,4 +156,19 @@ describe('路由冒烟', () => {
     expect(w.text()).toContain(MODELS.title)
     assertCleanText(w.text(), '/models')
   })
+
+  it('模型库详情点得进去', async () => {
+    // 与上一条同一个缺口：渲染用的是**替身载荷**，后端真实文案不经过这里。
+    //
+    // ⚠️ 这一条是**从 Task 6 挪过来的**：计划把它写在入口图标那一步，而那时
+    // `ModelsView.vue` 还只有一句标题（Task 6 自己说「先建一个只有标题的最小
+    // 版本」），断言的内容要等信息态建好才存在 —— 写在那里是一条永远红的用例。
+    const router = createAppRouter(createMemoryHistory())
+    await router.push('/models/1')
+    await router.isReady()
+    const w = mount(App, { attachTo: document.body, global: { plugins: [router] } })
+    await flushPromises()
+    expect(w.text()).toContain('七月下旬那套')
+    assertCleanText(w.text(), '/models/1')
+  })
 })

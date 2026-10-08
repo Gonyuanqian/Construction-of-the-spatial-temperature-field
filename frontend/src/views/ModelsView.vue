@@ -12,23 +12,29 @@
  * ⚠️ 它**不进 `NAV_ITEMS`**：入口是标题条右侧那个图标（规格书 D8），
  * 而左导航那一列有测试钉着「`<a>` 的数量与次序精确等于已开放项」。
  */
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { fetchModels, setCurrentModel } from '../api/models'
+import { fetchModelDetail, fetchModels, setCurrentModel } from '../api/models'
 import type { ModelRowPayload } from '../api/types'
 import Card from '../components/Card.vue'
+import StatCard from '../components/StatCard.vue'
+import StatRow from '../components/StatRow.vue'
 import { useAsync } from '../composables/useAsync'
 import { MODELS } from '../design/copy'
 
 const route = useRoute()
 const router = useRouter()
 const models = useAsync(fetchModels)
+const detail = useAsync(() => fetchModelDetail(Number(route.params.id)))
 
 /** 详情态由路由名决定 —— 一个组件两条路由，没有第二份状态 */
 const detailId = computed(() => (route.name === 'model-detail' ? Number(route.params.id) : null))
 
-onMounted(() => void models.run())
+// ⚠️ 两态各取各的：列表态不该去打 `/api/models/{id}`，详情态也不该去打
+// `/api/models` —— 后者的响应体里那十几行在详情页一个字都用不上。
+onMounted(() => { if (detailId.value === null) void models.run() })
+watch(detailId, (id) => { if (id !== null) void detail.run() }, { immediate: true })
 
 /** 小数印四位。⚠️ 只印后端给的数，null 就印「无值」—— 不补一个 0。 */
 function num(v: number | null): string {
@@ -52,7 +58,80 @@ async function onSetCurrent(row: ModelRowPayload): Promise<void> {
 
     <!-- 详情态：同一个文件里的另一支，用同一层 v-if 分派 -->
     <template v-if="detailId !== null">
-      <!-- Task 8 填 -->
+      <Card v-if="detail.error.value"><p class="err">{{ detail.error.value }}</p></Card>
+
+      <template v-else-if="detail.data.value">
+        <Card>
+          <h3>{{ detail.data.value.name }}</h3>
+          <p class="note">
+            ID <span class="num">{{ detail.data.value.id }}</span>
+            保存于 {{ when(detail.data.value.saved_at) }}
+            标定于 {{ when(detail.data.value.created_at ?? '') }}
+          </p>
+          <p class="note">
+            数据来源 {{ detail.data.value.data_file }}
+            （{{ when(detail.data.value.data_start) }} 至 {{ when(detail.data.value.data_end) }}）
+            　数据集指纹 <span class="num">{{ detail.data.value.dataset_sig }}</span>
+          </p>
+          <p><RouterLink to="/models">{{ MODELS.back }}</RouterLink></p>
+        </Card>
+
+        <Card>
+          <h3>参数</h3>
+          <StatRow>
+            <StatCard label="特征组"
+                      :value="detail.data.value.feature_groups.join('、')" />
+            <StatCard label="树型" :value="detail.data.value.trend_kind" />
+            <StatCard label="metric.power"
+                      :value="String(detail.data.value.metric.power)" />
+            <StatCard label="跨棚" :value="detail.data.value.cross_shed ? '是' : '否'" />
+          </StatRow>
+          <p class="note">
+            这一份是在这些维度上搜出来的：{{ detail.data.value.tuned_keys.join('、') }}
+          </p>
+          <p class="note">
+            搜索 <span class="num">{{ detail.data.value.n_trials }}</span> 次试验，
+            种子 <span class="num">{{ detail.data.value.seed }}</span>
+          </p>
+        </Card>
+
+        <Card>
+          <h3>效果</h3>
+          <StatRow>
+            <StatCard label="A 组（参与选参）" :value="num(detail.data.value.ab?.mae_a ?? null)" />
+            <StatCard label="B 组（未参与选参）" :value="num(detail.data.value.ab?.mae_b ?? null)" />
+            <StatCard label="调参带来的乐观偏差" :value="num(detail.data.value.ab?.gap ?? null)" />
+          </StatRow>
+          <table>
+            <thead>
+              <tr><th>折</th><th>区域</th><th>组</th><th>n</th>
+                  <th>MAE</th><th>RMSE</th><th>R²</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="m in detail.data.value.metrics" :key="m.fold">
+                <td>{{ m.fold }}</td><td>{{ m.region }}</td><td>{{ m.group }}</td>
+                <td class="num">{{ m.n }}</td>
+                <td class="num">{{ num(m.mae) }}</td>
+                <td class="num">{{ num(m.rmse) }}</td>
+                <td class="num">{{ num(m.r2) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="note">{{ MODELS.listHint }}</p>
+        </Card>
+
+        <Card>
+          <h3>搜索的可接受区间</h3>
+          <table>
+            <thead><tr><th>维度</th><th>下界</th><th>上界</th></tr></thead>
+            <tbody>
+              <tr v-for="p in detail.data.value.plateau" :key="p.dim">
+                <td>{{ p.dim }}</td><td class="num">{{ p.lo }}</td><td class="num">{{ p.hi }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </Card>
+      </template>
     </template>
 
     <template v-else>

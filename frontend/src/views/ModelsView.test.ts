@@ -6,7 +6,7 @@ import ModelsView from './ModelsView.vue'
 import { createAppRouter } from '../router'
 import { makeModelDetailPayload, makeModelsPayload } from '../test/fixtures'
 import { MODELS } from '../design/copy'
-import type { ModelsPayload } from '../api/types'
+import type { ModelDetailPayload, ModelsPayload } from '../api/types'
 
 enableAutoUnmount(afterEach)
 
@@ -40,10 +40,13 @@ function installTokens(): void {
  * 是 `/api/models` 的前缀，只按 `includes('/api/models')` 认的话，
  * 详情那一条会拿到列表载荷去当详情解，而报错是「读不到某个字段」。
  */
-function stub(list: ModelsPayload, status = 200) {
-  // 详情从**传进来的那一行**派生，不是另起一份：详情那几条用例要改
-  // `rows[0].mae` 再断言屏上印「无值」—— 派生的话那个改动才跟着过去。
-  const detail = { ...makeModelDetailPayload(), ...list.rows[0] }
+function stub(list: ModelsPayload, status = 200,
+              over: Partial<ModelDetailPayload> = {}) {
+  // 详情从**传进来的那一行**派生，不是另起一份：这样改 `rows[0]` 里那几个
+  // 列表字段（名字、时间、指纹）才跟着过到详情上。
+  // `over` 是给详情**独有**的那几格用的（`metrics` / `ab` / `plateau`），
+  // 列表行里根本没有它们。
+  const detail = { ...makeModelDetailPayload(), ...list.rows[0], ...over }
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     const u = String(url)
     const body = u.includes('/current') ? { id: 1, is_current: true }
@@ -129,5 +132,72 @@ describe('模型库列表', () => {
     const w = await mountAt('/models')
     expect(w.find('img').exists()).toBe(false)
     expect(w.text()).toContain('<img src=x')
+  })
+})
+
+describe('模型库详情', () => {
+  beforeEach(() => { installTokens(); vi.restoreAllMocks() })
+
+  it('两个时间分开印，各用各的词', async () => {
+    // ⚠️ 规格书 §6.1 单列一条：`saved_at` 是**用户点保存**的时刻，包里那个
+    // `created_at` 是**标定跑完**的时刻。平时只差几秒 —— 印反了没人看得出来，
+    // 而「这个模型是哪天定的」正是详情页要回答的事之一。
+    stub(makeModelsPayload())
+    const w = await mountAt('/models/1')
+    const text = w.text()
+    expect(text).toContain('保存于')
+    expect(text).toContain('2026-10-08 09:12')
+    expect(text).toContain('标定于')
+    expect(text).toContain('2026-10-08 09:12')     // created_at 那一份在载荷里
+    expect(text).not.toContain('保存于 2026-10-08T09:12:28')  // 不许把 created_at 印成保存时刻
+  })
+
+  it('参数、特征组、被调过的键都在', async () => {
+    stub(makeModelsPayload())
+    const w = await mountAt('/models/1')
+    const text = w.text()
+    expect(text).toContain('coord')
+    for (const k of ['metric.power', 'trend.max_depth']) expect(text).toContain(k)
+  })
+
+  it('A/B 分开印，而且 gap 说的是「调参带来的乐观偏差」', async () => {
+    stub(makeModelsPayload())
+    const w = await mountAt('/models/1')
+    const text = w.text()
+    expect(text).toContain('A 组（参与选参）')
+    expect(text).toContain('B 组（未参与选参）')
+    expect(text).toContain('调参带来的乐观偏差')
+  })
+
+  it('逐折指标表按区域与组分开，一列都不少', async () => {
+    stub(makeModelsPayload())
+    const w = await mountAt('/models/1')
+    const head = w.get('table').text()
+    for (const col of ['折', '区域', '组', 'MAE', 'RMSE', 'R²']) {
+      expect(head).toContain(col)
+    }
+  })
+
+  it('没有逐测点表 —— 用户刚把页② 那张撤掉，这里再摆一张是同一个东西', async () => {
+    stub(makeModelsPayload())
+    const w = await mountAt('/models/1')
+    // 载荷里本来就没有 per_point；这条钉的是「没人又加回去」。
+    expect(w.text()).not.toContain('逐点')
+  })
+
+  it('指标算不出来时印「无值」，不印 NaN', async () => {
+    // ⚠️ 报的必须是**详情那一份**载荷。详情表那几行来自
+    // `makeModelDetailPayload()`，而 `rows[0].mae` 是**列表那一列**的 B 组
+    // 均值（`report_metrics` 就是 B 组均值，与 `ab.mae_b` 同一个数）——
+    // 改列表行够不到详情表，而把那三个数搬到详情上又是同一个数印两遍。
+    stub(makeModelsPayload(), 200, {
+      metrics: [{
+        fold: 'position:x0.15_z0.4', fold_kind: 'position', region: '切面内',
+        group: 'B', tag: '报告组', n: 1308, mae: null, rmse: null, r2: null,
+      }],
+    })
+    const w = await mountAt('/models/1')
+    expect(w.text()).toContain('无值')
+    expect(w.text()).not.toContain('NaN')
   })
 })
