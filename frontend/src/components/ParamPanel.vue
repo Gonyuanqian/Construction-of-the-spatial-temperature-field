@@ -20,6 +20,10 @@
  * ⚠️ **不做卡片套卡片**（规格书 §2.1）：本仓只有一档卡片，`Card.vue` 是全站
  * 唯一写圆角与阴影的地方。在这张卡里再塞两张 `Card`，就是同一个面上叠两层
  * 阴影。所以这里是「一张卡里并排的两个区块」，中间一道 `--rule`。
+ *
+ * ⚠️ **当前值不在行末尾再重复一遍**（人眼走查时删的）：滑块的档位由把手落在
+ * 哪个刻度上表示，下拉自己就显示着当前那一项。删掉的那一格值没有丢 ——
+ * 它改走滑块的 `aria-valuetext`（值语义是下标，读屏软件念的得是那个值本身）。
  */
 import { computed } from 'vue'
 
@@ -67,8 +71,10 @@ function domId(row: PanelRow): string {
  * 当前值在候选里的下标。**不另存一份状态**：屏上的位置就是值的函数。
  *
  * 后端保证 `current` 一定在 `raw` 里（不在就并进去，见 `_panel`），
- * 所以这里正常不会得到 `-1`；真得到 `-1` 时滑块停在最左、`.now` 印空白，
- * 是**看得见**的坏，不是静默的错值。
+ * 所以这里正常不会得到 `-1`；真得到 `-1` 时滑块停在最左、`aria-valuetext`
+ * 是空的，而且**看得见**：那一行会多印一句「当前值不在候选里」（见模板里
+ * 那个 `v-if`）—— 不然把手被钳在最左档，看上去就像选中了第一个候选值，
+ * 那是一个静默的错值。
  */
 function indexOf(row: PanelRow): number {
   return row.raw.indexOf(props.values[row.key])
@@ -102,15 +108,27 @@ function onSelect(row: PanelRow, e: Event): void {
 
         <template v-else>
           <!-- `max` 是**下标的上界**，不是值的运算：候选有 n 个，档位就是 0..n-1。 -->
+          <!-- ⚠️ 这一行的值**只有** `aria-valuetext` 这一个去处（行末尾那个可见的
+               当前值已删，见文件头的说明）。滑块的取值语义是**下标**，没有它，
+               读屏软件念的是「2」而不是「0.08」。取 `values` 那一列 ——
+               屏上是印法（「开」），不是 `raw` 里那个值（`true`）。 -->
           <input :id="domId(row)" type="range"
                  :min="0" :max="row.raw.length - 1" step="1"
-                 :value="indexOf(row)" @input="onSlide(row, $event)">
+                 :value="indexOf(row)"
+                 :aria-valuetext="row.values[indexOf(row)]"
+                 @input="onSlide(row, $event)">
           <div class="ticks">
             <span v-for="(v, i) in row.values" :key="i">{{ v }}</span>
           </div>
         </template>
 
-        <span class="now num">{{ row.values[indexOf(row)] }}</span>
+        <!-- 当前值**不再**在行末尾重复一遍：滑块的档位由把手落在哪个刻度上表示，
+             下拉自己就显示着当前那一项。原先那一格还与刻度标签落进同一行，
+             屏上读成「3 4 5 6 3」——「6」后面挂着一个孤零零的「3」。
+             ⚠️ 只在**找不到对应档位**时才出声（走查时定的那一案）：那时把手被
+             浏览器钳在最左档，看上去就像选中了第一个候选值。后端 `_panel` 保证
+             走不到这一支（不在候选里的当前值会被并进去），留着是不让它静默变错。 -->
+        <span v-if="indexOf(row) < 0" class="note state missing">当前值不在候选里</span>
       </div>
 
       <!-- `state` 是 `design/prose.test.ts` 放行的那几个类之一（规格书 §7.1）。 -->
@@ -137,7 +155,7 @@ function onSelect(row: PanelRow, e: Event): void {
 .group { flex: 1 1 0; min-width: 0; }
 .group + .group { border-left: var(--rule); padding-left: var(--gap-l); }
 
-/* 一行 = 标签（占满） + 控件 + 当前值；滑块的刻度标签另占一行。 */
+/* 一行 = 标签（占满） + 控件（+ 找不到档位时右边那一句）；滑块的刻度标签另占一行。 */
 .row {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -160,7 +178,10 @@ function onSelect(row: PanelRow, e: Event): void {
   color: var(--ink-muted);
   font-size: var(--size-label);
 }
-.now { grid-column: 2; }
+/* 「当前值不在候选里」那一句。**钉死在控件右边那一格**（`grid-row: 2`）：
+   不能让它自己落位 —— 自动落位会跟 `.ticks` 挤进第 3 行，那正是删掉末尾那个
+   当前值要治的毛病（「3 4 5 6」后面跟着一句）。 */
+.missing { grid-row: 2; grid-column: 2; }
 
 select { font: inherit; color: inherit; }
 

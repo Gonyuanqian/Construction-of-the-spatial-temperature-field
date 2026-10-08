@@ -224,7 +224,7 @@ async function mountWithDiag(diag: unknown = DIAG) {
 }
 
 /** 面板里某一维那一行。**按 key 找，不按次序找** —— 十二行里屏上第一个
-    `.now` 是 `trend.objective`，不是 `trend.max_depth`：`w.find('.now')`
+    `.row` 是 `trend.objective`，不是 `trend.max_depth`：`w.find('.row')`
     拿到的是**目标函数**那一格。 */
 function rowOf(w: ReturnType<typeof mount>, key: string) {
   return w.findAll('.panel .row').find((r) => r.text().includes(key))!
@@ -825,11 +825,13 @@ describe('页② 模型训练', () => {
     await flushPromises()
 
     // 手调一维，再从**屏上**读它现在那一档（读 DOM，不读夹具）。
+    // 读的是 `aria-valuetext`：行末尾那个可见的当前值已经删掉了，
+    // 这一份就是面板现在对外说的那个值（`ParamPanel.test.ts` 里有专条钉它）。
     const depth = rowOf(w, 'trend.max_depth')
     const guide = depth.find('input[type="range"]')
     ;(guide.element as HTMLInputElement).value = '3'      // 第 4 档 → 6
     await guide.trigger('input')
-    const shown = depth.find('.now').text()
+    const shown = depth.find('input[type="range"]').attributes('aria-valuetext')
 
     await w.findAll('button').find((b) => b.text() === '开始训练')!.trigger('click')
     await flushPromises()
@@ -911,8 +913,8 @@ describe('页② 模型训练', () => {
     }))
     const w = mount(TrainView)
     await flushPromises()
-    expect(rowOf(w, 'trend.max_depth').find('.now').text(), '第一趟不是包里那套')
-      .toBe('4')
+    expect(rowOf(w, 'trend.max_depth').find('input[type="range"]')
+      .attributes('aria-valuetext'), '第一趟不是包里那套').toBe('4')
 
     await w.findAll('button').find((b) => b.text() === '参数优选')!.trigger('click')
     await flushPromises()
@@ -920,8 +922,8 @@ describe('页② 模型训练', () => {
     await flushPromises()
 
     expect(cals, '任务跑完之后没有重取标定包').toBe(2)
-    expect(rowOf(w, 'trend.max_depth').find('.now').text(), '重取回来的值没有落到面板上')
-      .toBe('6')
+    expect(rowOf(w, 'trend.max_depth').find('input[type="range"]')
+      .attributes('aria-valuetext'), '重取回来的值没有落到面板上').toBe('6')
     w.unmount()
     vi.useRealTimers()
   })

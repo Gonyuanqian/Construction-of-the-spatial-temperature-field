@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 
 import ParamPanel from './ParamPanel.vue'
-import type { CalibrationPanel } from '../api/types'
+import type { CalibrationPanel, ParamValue } from '../api/types'
 
 /** 一份最小的面板载荷：XGBoost 二维、IDW 二维、一个固定值。 */
 const PANEL: CalibrationPanel = {
@@ -23,7 +23,7 @@ const PANEL: CalibrationPanel = {
             note: '固定 1.0，从未进过搜索空间' }],
 }
 
-const VALUES = {
+const VALUES: Record<string, ParamValue> = {
   'trend.max_depth': 4, 'trend.objective': 'reg:squarederror',
   'metric.power': 0.5, 'cross_shed': true,
 }
@@ -74,6 +74,12 @@ describe('ParamPanel', () => {
     const opts = selects[0].findAll('option')
     expect(opts.map((o) => o.text())).toEqual(PANEL.trend[1].values)
     expect(opts.map((o) => o.attributes('value'))).toEqual(['0', '1'])
+    // ⚠️ 第二行不是可有可无的重复：`cross_shed` 的 `values` 是 `['开', '关']`，
+    // 而 `raw` 是 `[true, false]` —— 印错一列就会印成「true / false」。
+    // 这份分辨力原来落在每行末尾那个当前值上（见下一条用例），
+    // 那个删掉之后，由选项这一份接住。
+    expect(selects[1].findAll('option').map((o) => o.text()))
+      .toEqual(PANEL.idw[1].values)
   })
 
   it('选了下拉的第 n 项，发出去的也是 raw[n]', async () => {
@@ -84,33 +90,43 @@ describe('ParamPanel', () => {
     expect(w.emitted('pick')?.[0]).toEqual(['trend.objective', 'reg:absoluteerror'])
   })
 
-  it('当前值印在旁边，取的是 values 那一列', () => {
-    // 印的是「印法」那一串，不是 `raw` 里那个值的另一种写法 ——
-    // 同一页不许两个口径（规格书 §2.2）。
+  it('每行末尾不再重复一遍当前值；滑块的值改走 aria-valuetext', () => {
+    // 走查时定的：档位由把手落在哪个刻度上表示，下拉自己就显示着当前那一项，
+    // 末尾再印一个当前值是重复。而且它与刻度标签落在同一行，屏上读成
+    // 「3 4 5 6 3」——「6」后面挂着一个孤零零的「3」，看着像排版出错。
     //
-    // ⚠️ 单看 `max_depth` 是**钉不住**这件事的：`values[1]` 是 `'4'`、
-    // `raw[1]` 是 `4`，两种写法 `text()` 出来一模一样。真正能分辨的只有
-    // `cross_shed` —— 它的值是布尔 `true`，`values` 那一列写的是 `'开'`；
-    // 误从 `raw` 取值就会印成 `true`。所以这里把四行一次断言完，
-    // 分辨力落在最后那一格上。
+    // ⚠️ 删掉可见的那个之后，**值得有别的去处**：滑块的取值语义是**下标**，
+    // 读屏软件念的是「2」而不是「0.08」。所以值走 `aria-valuetext` ——
+    // 认的是 `values` 那一列（印法），不是 `raw`。
     const w = show()
-    expect(w.findAll('.now').map((e) => e.text()))
-      .toEqual(['4', 'reg:squarederror', '0.5', '开'])
+    expect(w.findAll('.now').length, '屏上还有重复的当前值').toBe(0)
+    for (const r of [...PANEL.trend, ...PANEL.idw]) {
+      const label = w.findAll('label').find((l) => l.text().includes(r.key))
+      const el = w.find(`#${label!.attributes('for')}`)
+      if ((el.element as HTMLElement).tagName !== 'INPUT') continue   // 下拉那一行不适用
+      const i = r.raw.indexOf(VALUES[r.key])
+      expect(el.attributes('aria-valuetext'), `${r.key} 的值没走 aria-valuetext`)
+        .toBe(r.values[i])
+    }
   })
 
-  it('找不到对应档位时印空白，而不是编一个数出来', () => {
+  it('当前值不在候选里时明说一句，不装作第一个候选被选中', () => {
     // 规格书 §3.1 保证后端会把「不在候选里的当前值」并进候选，所以真实数据
     // 走不到这一支（后端那半由 `test_当前值不在候选里时并进候选` 钉着）。
-    // 这一条钉的是**退化的方向**：`indexOf` 得到 -1 时，`.now` 是空的
-    // （用户看得见不对劲），而不是 `values[-1]` 那样**环回**过来一个错的数
-    // —— 屏上摆一个错的数，比摆一片空白坏得多。
+    // 这一条钉的是**退化的方向**：`indexOf` 得到 -1 时，滑块会被浏览器钳在
+    // **最左那一档**，看上去就像「选中了第一个候选值」—— 那正是本仓那句
+    // 「屏上摆一个错的数，比摆一片空白坏得多」。所以这一支要出声。
     // （滑块的落点交给浏览器对区间的钳制，不在这里钉，那是实现细节。）
     const w = show({
       trend: [{ key: 'trend.max_depth', label: '每棵树最深几层',
                 values: ['3', '4', '5', '6'], raw: [3, 4, 5, 6],
                 current: 7 }],
     }, { ...VALUES, 'trend.max_depth': 7 })
-    expect(w.find('.now').text()).toBe('')
+    const row = w.findAll('.row').find((r) => r.text().includes('trend.max_depth'))!
+    expect(row.text(), '没出声，滑块看起来就像选中了 3').toContain('当前值不在候选里')
+    // 也不许编一个值出来：`values[-1]` 是 `undefined`，所以无障碍那一份就没有。
+    expect(row.find('input[type="range"]').attributes('aria-valuetext'))
+      .toBeUndefined()
     expect(w.text()).toContain('每棵树最深几层')   // 别的部分照常渲染，没崩
   })
 
