@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException
 
 from tfield import config as C
 from tfield.calibration import IDW_SPACE, TREND_SPACE, TUNED_KEYS, load_bundle, load_for
@@ -496,7 +496,7 @@ def _job_summary() -> dict[str, Any] | None:
 
 
 @router.post("/calibration/diagnostics")
-async def post_diagnostics(request: Request) -> dict[str, Any]:
+def post_diagnostics(body: Any = Body(None)) -> dict[str, Any]:
     """页② 第三段那个「开始训练」按钮打的就是这一条（规格书 §二、§8.4）。
 
     它是一次**真实的训练**：八折各拟合一遍，只是不搜参数。
@@ -513,11 +513,23 @@ async def post_diagnostics(request: Request) -> dict[str, Any]:
     可以报 —— 兜底参数配上一堆图，只会让人以为那是一个可以用的模型。
     空态下**面板仍然有值**（`_panel` 与包无关），所以这一步的 409
     只可能是「没有包」，不会是「请求体不合法」。
+
+    ⚠️ **为什么是普通的 `def`，不是 `async def`**（复查时改回来的，别再改回去）：
+    这一条从头到尾是**同步算力** —— 八折各拟合一遍加插值，实测这份数据集
+    一次约 **15.8 秒**。FastAPI 对 `async def` 处理器的分派方式是
+    **直接在事件循环上跑**，于是每来一次缓存未命中的「开始训练」，
+    `/api/health`、驱动参数优选进度的那条 1 秒轮询、页③ 的场与体、
+    页⑤ 的实时帧，全都会一起等这十几秒。写成 `def`，FastAPI 把它丢进
+    线程池，事件循环是空的。
+
+    请求体因此交给 `Body(None)` 让框架自己解析 —— 这边不再需要 `await`，
+    也就没有理由当协程函数。**这条性质有源码级守卫钉着**：
+    `tests/test_routes_offload_heavy_work.py`。真要 `async`，就把下面那段
+    同步算力交给 `run_in_threadpool`，而不是把这里的 `def` 改回 `async`。
     """
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=422, detail="请求体不是 JSON。")
+    # 「请求体不是 JSON」现在由 FastAPI 自己的 422 报出来（`Body(None)` 会
+    # 先解析一遍），所以这里只剩「解析出来了，但形状不对」这一种 ——
+    # 与 `_validated_shape` 那个 422 一样，都排在 409 前面（次序有测试守着）。
     if not isinstance(body, dict):
         raise HTTPException(status_code=422,
                             detail=_BODY_SHAPE_HINT)
