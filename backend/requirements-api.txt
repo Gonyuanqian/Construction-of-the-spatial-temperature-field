@@ -2,3 +2,4 @@
 fastapi>=0.139
 uvicorn>=0.51
 httpx>=0.27
+pymysql>=1.1
