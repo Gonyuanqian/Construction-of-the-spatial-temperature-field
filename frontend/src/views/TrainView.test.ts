@@ -337,6 +337,18 @@ describe('页② 模型训练', () => {
     expect(w.text()).toContain('负数是好消息')
   })
 
+  it('逐点误差那张明细表不上屏（接口照旧回它，只是不画）', async () => {
+    // 头一句是**非空断言**，不是装饰：夹具里没数据时，「不显示」是自己成立的，
+    // 下面两条会照样绿 —— 那就成了一句永远绿的谎话，测不出删没删干净。
+    expect(CAL.per_point.length, '夹具里没有逐点明细，这条测不出东西').toBeGreaterThan(0)
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL })
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.text()).not.toContain('逐点误差')
+    // 比小标题字面更硬的一条：`点位` 这一列只属于那张表。
+    expect(w.findAll('th').map((t) => t.text())).not.toContain('点位')
+  })
+
   it('没有标定包时说「未标定」，并提示跑一次标定', async () => {
     stub({
       '/api/features': FEATURES,

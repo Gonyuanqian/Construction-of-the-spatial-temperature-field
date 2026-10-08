@@ -521,26 +521,12 @@ const residualOptions = computed(() => {
           </table>
         </template>
 
-        <template v-if="cal.data.value.per_point.length">
-          <h4>逐点误差</h4>
-          <table>
-            <thead>
-              <tr><th>棚</th><th>点位</th><th>层</th>
-                  <th>MAE / °C</th><th>RMSE / °C</th><th>R²</th><th>n</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="p in cal.data.value.per_point" :key="`${p.shed}-${p.position}`">
-                <td>{{ p.shed }}</td>
-                <td class="num">{{ p.position }}</td>
-                <td class="num">{{ p.layer }}</td>
-                <td class="num">{{ fmt(p.mae, 4) }}</td>
-                <td class="num">{{ fmt(p.rmse, 4) }}</td>
-                <td class="num">{{ fmt(p.r2, 4) }}</td>
-                <td class="num">{{ p.n }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </template>
+        <!-- ⚠️ 这里原来还有一张「逐点误差」的 24 行明细表（棚 / 点位 / 层 / MAE …），
+             **有意不上屏**（人眼验收时定下来的）。去掉的是**展示**，不是数据：
+             `/api/calibration` 照旧回 `per_point`，`CalibrationPayload` 也照旧
+             带着它。A 组/B 组的均值与上面那张逐折表已经够回答「这把尺子有多准」；
+             再往下钻到「哪个棚的哪个测点」是排查用的，不是这一页要报的数。
+             要把它请回来，先把 `TrainView.test.ts` 里那条「不上屏」改成反的。 -->
       </template>
 
       <p v-else class="note state">正在读标定包…</p>
