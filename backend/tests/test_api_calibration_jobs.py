@@ -1,15 +1,21 @@
-"""页② 第二段：标定长任务的四态、取消、写回失败、换数据集。
+"""页② 第二段：标定长任务的四态、取消、换数据集。
 
 **全程用替身替掉搜索**：真跑一次是分钟级（阶段 2 是 40 次试验 × 4 折拟合），
 而这个文件要验的是**我们这一层**的状态机与落点，不是库的搜索质量。
 库那一边的保证（中断不写任何文件）由它自己的测试守。
+
+⚠️ **2026-10-08 起跑完不再写回盘**（模型库那一轮，规格书 D2）：跑出来的那一份
+挂在 `job.result` 上，用户点「保存到模型库」才存进库。所以这个文件里凡是
+「盘上有没有包」的断言都反过来了 —— 「跑完**不**落盘」才是现在该钉的事。
+
+⚠️ **`test_标定跑着时换了数据集_包写在旧签名下且不崩` 已退场**：它守的是
+「包路径按**当前**数据集重算会写进别人的签名里」。现在 `_work` 一个字节都
+不往盘上写，那条路在结构上不存在了。
 """
 from __future__ import annotations
 
 import pathlib
-import shutil
 import sys
-import threading
 import time
 
 import pytest
@@ -92,7 +98,7 @@ def _settled(client, job_id: str):
 
 # ── 四态（T3）──
 
-def test_跑完置_done_并写出包(client, tmp_path, monkeypatch):
+def test_跑完置_done_并把结果留在任务上(client, tmp_path, monkeypatch):
     monkeypatch.setattr(cj, "CONFIGS_ROOT", tmp_path)
     monkeypatch.setattr(cj, "run_calibration", lambda ds, g, **k: _real_bundle())
     job = client.post("/api/calibration/jobs").json()
@@ -101,8 +107,13 @@ def test_跑完置_done_并写出包(client, tmp_path, monkeypatch):
     assert done["state"] == "done"
     assert done["error"] is None
     assert done["elapsed_s"] >= 0
-    # 包真的落盘了，且名字按 (数据集签名, 特征组签名) 编
-    assert list(tmp_path.glob("bundle_*.json")), "done 了盘上却没有包"
+    # 结果挂在 job 上 —— 「保存到模型库」那一层要从这里取
+    stored = jobs.get(job["id"]).result
+    assert stored is not None
+    assert stored.dataset_sig == _real_bundle().dataset_sig
+    # ⚠️ 盘上**一个包都不许有**：自动落盘在 2026-10-08 退场（规格书 D2）。
+    # 这一条是那个退场的钉子 —— 谁把 save_bundle 加回来，它就红。
+    assert list(tmp_path.glob("bundle_*.json")) == [], "跑完又自动落盘了"
 
 
 def test_抛异常置_failed_且_detail_是异常原话(client, tmp_path, monkeypatch):
@@ -137,13 +148,13 @@ def test_取消一个正在跑的置_cancelled(client, tmp_path, monkeypatch):
     _wait(lambda: client.get(f"/api/calibration/jobs/{job['id']}").json()["progress"])
     # DELETE 当下**不改状态**：真正的取消点在库里下一次被问到时
     now = client.delete(f"/api/calibration/jobs/{job['id']}").json()
-    assert now["state"] == "running", "取消不该在写回还没停下来时就自称已取消"
+    assert now["state"] == "running", "取消不该在库里那次搜索还没真的停下来时就自称已取消"
     end = _wait(lambda: _settled(client, job["id"]))
     assert end["state"] == "cancelled"
 
 
 def test_取消一个已经结束的报_409(client, tmp_path, monkeypatch):
-    """已经写回盘的那一次不能再「取消」—— 报「已取消」是句谎话。"""
+    """已经跑完的那一次不能再「取消」—— 报「已取消」是句谎话。"""
     monkeypatch.setattr(cj, "CONFIGS_ROOT", tmp_path)
     monkeypatch.setattr(cj, "run_calibration", lambda ds, g, **k: _real_bundle())
     job = client.post("/api/calibration/jobs").json()
@@ -187,8 +198,8 @@ def test_没有这个任务时_404(client):
 def test_取消之后盘上逐位没变(client, tmp_path, monkeypatch):
     """T4：取消一次真跑起来的（替身）之后，包与 CSV 一个字节都不许变。
 
-    盘上先放一份**同名**的真包：这样「备份到 .bak」那条路也被走到 ——
-    如果取消没能拦住写回，这里的字节数与 mtime 都会变。
+    盘上先放一份**同名**的真包：这样「写回会不会踩到它」这件事有个可观测的
+    哨兵 —— 字节数与 mtime 只要有一处变了，就是取消没能拦住写。
     """
     monkeypatch.setattr(cj, "CONFIGS_ROOT", tmp_path)
     real = _real_bundle()
@@ -212,13 +223,15 @@ def test_取消之后盘上逐位没变(client, tmp_path, monkeypatch):
     assert target.stat().st_mtime_ns == mtime
     assert not (tmp_path / (target.name + ".bak")).exists(), "取消不许留下 .bak"
     assert list(tmp_path.glob("sensitivity_*.csv")) == [], "取消不许留下参数曲面 CSV"
+    assert jobs.get(job["id"]).result is None, (
+        "取消了却把结果挂上去了 —— 挂上去等于这次取消只取消了一半")
 
 
-def test_搜索跑完写回之前被取消_盘上什么都不留(client, tmp_path, monkeypatch):
-    """**Review Focus 1**：搜索成功返回与 `save_bundle` 之间那一小段。
+def test_搜索跑完定下结果之前被取消_盘上什么都不留(client, tmp_path, monkeypatch):
+    """**Review Focus 1**：搜索成功返回与「结果定下来」之间那一小段。
 
-    人期待的是「已取消，盘上没变」。这一段没有 `should_stop` 的问询点，
-    靠的是 `_work` 在写回前补的那一次检查 —— 把那次检查删掉，这条会红。
+    人期待的是「已取消，什么都没发生」。这一段没有 `should_stop` 的问询点，
+    靠的是 `_work` 在定下结果之前补的那一次检查 —— 把那次检查删掉，这条会红。
     """
     monkeypatch.setattr(cj, "CONFIGS_ROOT", tmp_path)
     real = _real_bundle()
@@ -238,59 +251,22 @@ def test_搜索跑完写回之前被取消_盘上什么都不留(client, tmp_pat
     assert end["state"] == "cancelled"
     assert not target.exists(), "取消之后包不许出现"
     assert list(tmp_path.iterdir()) == []
+    assert jobs.get(job.id).result is None, (
+        "搜索跑完、取消检查之后被取消的那一次不许把结果挂上去")
 
 
-# ── 写回失败（Review Focus 2）──
-
-def test_写回失败时报_failed_而且旧包还在(client, tmp_path, monkeypatch):
-    """盘满 / 只读 / 被占着时，人期待的是「这次失败了，上一次的还在」。
-
-    真把目录设成只读在 Windows 上不可靠（也是 root 下不成立的那类做法），
-    所以直接让 `save_bundle` 抛 —— 验的是**我们这一层**接不接得住。
-    """
-    monkeypatch.setattr(cj, "CONFIGS_ROOT", tmp_path)
-    real = _real_bundle()
-    target = tmp_path / f"bundle_{real.dataset_sig}_{real.groups_sig}.json"
-    target.write_bytes('{"sentinel": "上一版"}'.encode())
-
-    monkeypatch.setattr(cj, "run_calibration", lambda ds, g, **k: real)
-
-    def disk_full(b, root):
-        raise OSError(28, "No space left on device")
-
-    monkeypatch.setattr(cj, "save_bundle", disk_full)
-    job = client.post("/api/calibration/jobs").json()
-    end = _wait(lambda: _settled(client, job["id"]))
-    assert end["state"] == "failed"
-    assert "No space left" in end["error"]
-    assert target.read_bytes() == '{"sentinel": "上一版"}'.encode(), "写回失败不许动旧包"
-    assert (tmp_path / (target.name + ".bak")).read_bytes() == '{"sentinel": "上一版"}'.encode(), (
-        "备份写在写回之前 —— 这条正是 §5.1 那个顺序的意义")
-
-
-# ── 写回与备份的顺序（T7 / T8）──
-
-def test_写回之前先备份_且_bak_是旧的那一份(client, tmp_path, monkeypatch):
-    """T7：备份写在写回**之后**等于没备份。用一个能区分新旧的哨兵。"""
-    monkeypatch.setattr(cj, "CONFIGS_ROOT", tmp_path)
-    real = _real_bundle()
-    target = tmp_path / f"bundle_{real.dataset_sig}_{real.groups_sig}.json"
-    target.write_bytes('{"sentinel": "旧"}'.encode())
-    monkeypatch.setattr(cj, "run_calibration", lambda ds, g, **k: real)
-
-    job = client.post("/api/calibration/jobs").json()
-    _wait(lambda: _settled(client, job["id"]))
-
-    bak = tmp_path / (target.name + ".bak")
-    assert bak.read_bytes() == '{"sentinel": "旧"}'.encode(), ".bak 必须是**旧的**那一份"
-    assert target.read_bytes() != '{"sentinel": "旧"}'.encode(), "同名包必须被新的覆盖"
-
+# ── 备份的 .bak 不能被当成「上一次标定」（T8）──
 
 def test_bak_不被_mismatch_捡走(client, tmp_path, monkeypatch):
     """T8：`_mismatch` 用 `glob("bundle_*.json")`，`.json.bak` 不匹配。
 
     模式一旦被改宽（`bundle_*`），那一份备份就会冒充「上一次标定」，
     于是页② 会报出一份谁也不认识的包 —— 而它其实是同一份包的影子。
+
+    ⚠️ **2026-10-08 保留这一条**（规格书 §5.6 把它算进了退场名单，那是把
+    「跑完不再造 .bak」当成了「不用再防 .bak」）：它这里的 `.bak` 是**自己
+    写上去的**，不依赖 `_work` 写回。盘上四份历史包还在，人手也可能造出
+    一个 `.bak` —— 这个 glob 模式的守卫不该跟着写回一起退场。
     """
     from api.routes import calibration as cal_routes
 
@@ -301,61 +277,6 @@ def test_bak_不被_mismatch_捡走(client, tmp_path, monkeypatch):
     deps.set_current_dataset(paths.dataset_path())
     deps.reset_cache()
     assert client.get("/api/calibration").json()["mismatch"] is None
-
-
-# ── 标定跑着的时候，用户又导入了另一份数据集（Review Focus 3）──
-
-def test_标定跑着时换了数据集_包写在旧签名下且不崩(client, tmp_path, monkeypatch):
-    """**Review Focus 3**：标定要几分钟，而这几分钟里用户完全可能去导一份新的。
-
-    人期待的是界面还能用、且说得出「这一次标的是上一份数据」。
-
-    实际发生的：job 手上那份 `Dataset` 是 **Python 引用**，`install_dataset`
-    换了当前数据集也搬不动它 —— 搜索照样跑完，包写在这个**旧**签名下。
-    这不坏：包落盘是对的（它就是那份数据集的包），只是对不上新的那一份，
-    于是页② 的 `mismatch` 会说「上一次标定对的是另一份数据集」。
-    **要防的是崩** —— 例如 `_work` 里现取一次当前数据集（拿到新的、与
-    job 开局那份不是一回事），或者包路径按当前数据集重算（写进别人的签名里）。
-
-    ⚠️ **两处都必须真做到，否则这份用例什么也没验**（这一条原来两条都没做到）：
-    一是**真的换一份签名不同的数据集** —— 原地再装一遍同一份，两边签名相同，
-    包写在谁名下都看不出来；二是**真的走到 `done`** —— `_work` 在搜索跑完之后
-    还要再问一次 `should_stop`，所以「先撤走替身再按取消」会落到 `cancelled`
-    那条路上，而**那条路根本不写包**，`done` 那一支的断言就永远执行不到。
-    """
-    monkeypatch.setattr(cj, "CONFIGS_ROOT", tmp_path)
-    real = _real_bundle()
-
-    entered = threading.Event()
-    release = threading.Event()
-
-    def slow(ds, g, *, should_stop=None, **k):
-        entered.set()
-        assert release.wait(5.0), "用例没有放行这一次搜索"
-        return real                      # **没有被取消**：包要真的写回去
-
-    monkeypatch.setattr(cj, "run_calibration", slow)
-    job = client.post("/api/calibration/jobs").json()
-
-    # 跑到一半，用户导了一份**别的**数据集。复制一份就够：
-    # 签名是 sha1(绝对路径 | mtime | 大小)[:16]，换个路径就是另一份。
-    assert entered.wait(5.0), "搜索没开始"
-    other = tmp_path / "另一份数据集.xlsx"
-    shutil.copy2(paths.dataset_path(), other)
-    deps.install_dataset(other)
-
-    release.set()
-    end = _wait(lambda: _settled(client, job["id"]))
-    assert end["state"] == "done", f"换了数据集之后崩了：{end['error']}"
-
-    # 包按 job 开局那份数据集的签名写 —— 那是它真的标过的那一份
-    assert (tmp_path / f"bundle_{real.dataset_sig}_{real.groups_sig}.json").exists()
-    # 新数据集名下**不该**有包：那正是「`_work` 半路重取当前数据集」会写出来的
-    # 东西（写进一份它没有标过的签名里）。`_work` 用的是开局那一份引用，
-    # 所以这里读到的旧签名就是它。
-    new_sig = deps.get_train_dataset().signature
-    assert new_sig != real.dataset_sig, "换的那一份与原来的是同一份，这条就白测了"
-    assert not list(tmp_path.glob(f"bundle_{new_sig}_*.json")), "包写进了新数据集的名下"
 
 
 # ── 刷新之后接得上（T3 的后半、§4.7）──

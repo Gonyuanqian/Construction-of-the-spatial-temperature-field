@@ -38,6 +38,15 @@ class Job:
     started: float = field(default_factory=time.monotonic)
     finished: float | None = None
     cancel: threading.Event = field(default_factory=threading.Event)
+    #: 跑出来的那一份结果（现在是 `CalibrationBundle`）。
+    #:
+    #: **只在这一次会话里**：不落盘、不进 `to_dict()`、进程一停就没了 ——
+    #: 与「不保存就丢掉」是同一条规则（规格书 §5.3）。放这里而不是写回盘，
+    #: 是因为「训完的模型要不要留下」现在由用户回答，不由系统替他回答。
+    #:
+    #: 不进 `to_dict()` 不是省事：轮询接口每次都要序列化它，而这一份是
+    #: 794 KB —— 前端每两秒问一次「跑到哪一句了」，不该拖着 794 KB 走。
+    result: Any = None
 
     def elapsed_s(self) -> float:
         now = self.finished if self.finished is not None else time.monotonic()
@@ -85,6 +94,19 @@ def clear() -> None:
         _CURRENT = None
 
 
+def retire_result() -> None:
+    """把「刚跑完的那一份」摘掉。**保存成功、显式换模型时都要调它。**
+
+    为什么不靠 job 自己的状态：`POST /api/models` 存成功之后那个 job 还是
+    `done`、`result` 也还在，于是 `current_bundle()` 的第一顺位永远命中它 ——
+    用户在库列表里把**另一个**模型设为当前，页③ 上一点变化都没有，而屏上
+    没有一个字提示这件事。摘掉它，第二顺位才轮得上。
+    """
+    job = current()
+    if job is not None:
+        job.result = None
+
+
 def set_progress(job: Job, line: str) -> None:
     """库的 `progress` 回调收的就是它。只保留**最近一行**（规格书 §4.3）。"""
     job.progress = line
@@ -126,6 +148,7 @@ def _run(work: Callable[[Job], None], job: Job) -> None:
     try:
         work(job)
     except BaseException as exc:                      # noqa: BLE001
+        job.result = None     # 半途而废的那一份不许留下：它没走完该走的检查
         finish(job, FAILED, error=f"{type(exc).__name__}: {exc}")
     else:
         if job.state == RUNNING:                      # work 忘了下结论

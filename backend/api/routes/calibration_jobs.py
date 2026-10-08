@@ -10,15 +10,13 @@
 """
 from __future__ import annotations
 
-import shutil
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from starlette.responses import JSONResponse
 
 from tfield import config as C
-from tfield.calibration import (CalibrationAborted, bundle_path, run_calibration,
-                                save_bundle)
+from tfield.calibration import CalibrationAborted, run_calibration
 
 from .. import deps, jobs, paths
 
@@ -65,15 +63,15 @@ def get_job(job_id: str) -> dict[str, Any]:
 def cancel_job(job_id: str) -> dict[str, Any]:
     """取消。真正的取消点在库里那个 `should_stop` 下一次被问到时。
 
-    ⚠️ **这里不把状态改成 `cancelled`**：提前改的话，界面会在盘的写回还没
-    停下来的那一刻说「已取消」—— 而验收 3（取消之后包逐位没变）要否掉的
-    正是那一幕。回的是**当下**的状态，前端接着轮询，让后端说。
+    ⚠️ **这里不把状态改成 `cancelled`**：提前改的话，界面会在库里那次搜索
+    还没真的停下来的时候说「已取消」—— 而那正是验收要否掉的一幕。
+    回的是**当下**的状态，前端接着轮询，让后端说。
     """
     job = jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="没有这个标定任务")
     if job.state != jobs.RUNNING:
-        # 已经结束的不能再取消：那一次已经写回盘了，报「已取消」是句谎话。
+        # 已经跑完的不能再取消：它已经给了结论，报「已取消」是句谎话。
         raise HTTPException(status_code=409,
                             detail=f"这一次标定已经结束（{job.state}），来不及取消了")
     job.cancel.set()
@@ -81,11 +79,13 @@ def cancel_job(job_id: str) -> dict[str, Any]:
 
 
 def _work(job: jobs.Job) -> None:
-    """标定 + 写回。跑在 `jobs` 的执行器线程上。
+    """标定。跑在 `jobs` 的执行器线程上。
 
     **故意不调 `calibrate_or_load`**：那个函数末尾自己 `save_bundle`，
-    于是备份就不可能发生在写回之前（规格书 §5.1 第 2 步要求先备份）。
-    所以这里直接调 `run_calibration` —— 它只写参数曲面 CSV，**不写包**。
+    而这一轮起「要不要留下」由用户回答 —— 系统不再替他决定（规格书 D2）。
+    所以这里直接调 `run_calibration`：它只写参数曲面 CSV，**不写包**。
+
+    包的去处是 `job.result`（见函数尾部），消费它的是 `POST /api/models`。
     """
     ds = deps.get_train_dataset()
     groups = tuple(C.DEFAULT_FEATURE_GROUPS)
@@ -101,25 +101,18 @@ def _work(job: jobs.Job) -> None:
         jobs.finish(job, jobs.CANCELLED)
         return
 
-    # ⚠️ 再问一次取消。搜索跑完到写回之间有一小段没有 `should_stop` 的问询点，
-    # 不在这里补一次的话，「取消之后盘上一个字节都不变」在「恰好在这一刻取消」
-    # 这条窄路上是假的 —— 而验收 3 只走典型路径，测不到它。
+    # ⚠️ 再问一次取消。搜索跑完到「结果定下来」之间有一小段没有 `should_stop`
+    # 的问询点，不在这里补一次的话，「取消之后什么都不留」在「恰好在这一刻取消」
+    # 这条窄路上是假的 —— 而典型路径走不到它。
     if job.stop_requested():
         jobs.finish(job, jobs.CANCELLED)
         return
 
-    target = bundle_path(bundle.dataset_sig, bundle.feature_groups, root)
-    if target.exists():
-        # `save_bundle` 是 `write_text`（非原子）：写一半掉电 / 盘满，旧包当场
-        # 变成半截 JSON，而 `_mismatch` 会把「包坏了」说成「没标过」。
-        # 先备份后写，这个前提就还在。
-        #
-        # ⚠️ 手写 `.name + ".bak"` 而不是 `with_suffix(".json.bak")`：
-        # `with_suffix` 替换的是**最后一个**后缀，行为随 Python 版本变过。
-        # `.json.bak` 不被 `_mismatch` 的 `glob("bundle_*.json")` 匹配。
-        shutil.copy2(target, target.parent / (target.name + ".bak"))
-
-    # 写回失败（只读、盘满、被占着）时让它抛出去 —— `_run` 会把 job 兜成
-    # `failed` 并把异常原话上屏，而 `.bak` 还在盘上。**不许在这里吞掉它。**
-    save_bundle(bundle, root)
+    # 2026-10-08（模型库）：**不再写回盘**。跑出来的那一份只挂在这个 job 对象
+    # 上；用户看过那些数、判它合格之后，由 `POST /api/models` 把它存进模型库
+    # （规格书 D2、§5.3）。于是 `save_bundle` / `.bak` / `shutil` 三样一起退场。
+    #
+    # ⚠️ 这一份**活不过重启**：它在内存里，进程一停就没了。这与「不保存就
+    # 丢掉」是同一条规则，不是缺陷。
+    job.result = bundle
     jobs.finish(job, jobs.DONE)
