@@ -128,26 +128,44 @@ def _delivered_bundle():
     return _DELIVERED["b"]
 
 
+def _ensure_dataset() -> None:
+    """「当前数据集」还空着时指到交付那一份。已经设好时**不覆盖**。
+
+    ⚠️ 这一句不是客套。conftest 里的夹具会**先于**各测试文件自己的 autouse
+    夹具（`_current_dataset`）跑，于是此刻指针多半还是空的，「当前数据集」那条
+    路会抛 `NoDatasetError`，而报错地点在一份夹具里，离现场很远。
+
+    已经设好时**不覆盖**：有的用例故意把数据集换成另一份（换数据集那几条），
+    覆盖它等于把它们的前提悄悄改掉。
+    """
+    from api import deps, paths
+    from api.errors import NoDatasetError
+
+    try:
+        deps.current_dataset_path()
+    except NoDatasetError:
+        deps.set_current_dataset(paths.dataset_path())
+
+
+@pytest.fixture()
+def delivered_bundle():
+    """盘上那份**与当前训练段对得上**的真包。见 `_delivered_bundle` 的说明。
+
+    要它的用例关心的是包里的东西（参数 / 效果 / 搜索区间），与库无关；
+    为什么不是 `sorted(glob)[0]` 那件事写在 `_delivered_bundle` 上。
+    """
+    _ensure_dataset()
+    return _delivered_bundle()
+
+
 def seed_delivered_model():
     """把交付数据集训练段那一份包存成**当前模型**，返回那一行。
 
     与 `empty_library` 同理，是模块级函数而不是夹具体：三个夹具要用它。
     """
     from api import deps, paths
-    from api.errors import NoDatasetError
 
-    # ⚠️ 这一句不是客套。`current_model` 住在 conftest 里，而「当前在用哪一份
-    # 数据集」是各测试文件自己的 autouse 夹具（`_current_dataset`）设的 ——
-    # conftest 的夹具**先跑**，于是此刻指针多半还是空的，「当前数据集」那条
-    # 路会抛 `NoDatasetError`，而报错地点在一份夹具里，离现场很远。
-    #
-    # 已经设好时**不覆盖**：有的用例故意把数据集换成另一份（换数据集那几条），
-    # 覆盖它等于把它们的前提悄悄改掉。
-    try:
-        deps.current_dataset_path()
-    except NoDatasetError:
-        deps.set_current_dataset(paths.dataset_path())
-
+    _ensure_dataset()
     ds = deps.get_train_dataset()
     return empty_library().save_model("交付那一份", _delivered_bundle(), ds,
                                       paths.dataset_path().name)
