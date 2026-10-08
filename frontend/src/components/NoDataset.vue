@@ -25,6 +25,8 @@ import { NO_DATASET } from '../design/copy'
 
 <style scoped>
 .block { max-width: 46ch; }
-h3 { margin: 0 0 var(--gap-s); font-size: 1.05rem; color: var(--ink); }
+/* 字号走全局标尺（原来写死 `1.05rem` —— 全树唯一一处不走令牌的字号，
+   改标尺时它不跟着动，空态标题就成了唯一一处没放大的字）。 */
+h3 { margin: 0 0 var(--gap-s); color: var(--ink); }
 .note { margin: 0; color: var(--ink-muted); line-height: 1.7; }
 </style>

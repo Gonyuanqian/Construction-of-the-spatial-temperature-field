@@ -4,9 +4,11 @@ import { buildResidualOption } from './residualBins'
 import type { Palette } from '../../design/palette'
 import type { ResidualPanel } from '../../api/types'
 
+// `bar` 与 `steel` 给了**不同的哨兵值**：柱子取错令牌时，断言分得出来是哪一个。
 const P = {
   paper: '#fff', ink: '#111', inkMuted: '#666', steel: '#888', leaf: '#0a0',
-  leafSoft: '#efe', net: '#c00', layerTop: '#1', layerMid: '#2', layerLow: '#3',
+  leafSoft: '#efe', net: '#c00', bar: '#abc',
+  layerTop: '#1', layerMid: '#2', layerLow: '#3',
   chartAxis: 12, chartTitle: 14,
 } as unknown as Palette
 
@@ -34,6 +36,17 @@ describe('残差图', () => {
     const bar = (opt.series as { type: string; data: unknown[] }[])[0]
     expect(bar.data).toHaveLength(3)
     expect(bar.data[2]).toBeNull()
+  })
+
+  it('柱子用数据色，不用界面线条那个灰', () => {
+    // 人眼走查时定的：柱子原先是 `p.steel`，而 `--steel` 在本仓的定义是
+    // 「线、分隔、表格框」—— 图上的**数据**被画成了界面**线条**的颜色，
+    // 屏上读起来像一块没上色的占位；误差棒用的 `p.ink` 反倒成了最响的东西。
+    // 层级反了，柱子改走 `p.bar`（琥珀橙，值定在 tokens.css）。
+    // 夹具里 `bar` 与 `steel` 是两个不同的哨兵值，所以取错令牌这条会红。
+    const opt = buildResidualOption(PANEL, P)
+    const bar = (opt.series as { itemStyle: { color: string } }[])[0]
+    expect(bar.itemStyle.color, '柱子又不是数据色了').toBe(P.bar)
   })
 
   it('有标准误的箱才有误差棒，一个点的箱没有', () => {

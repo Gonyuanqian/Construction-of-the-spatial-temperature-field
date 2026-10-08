@@ -59,7 +59,7 @@ export function buildConstraintDeltaOption(
     type: 'category' as const,
     axisLine: { lineStyle: { color: p.steel } },
     axisTick: { show: false },
-    axisLabel: { color: p.inkMuted, fontSize: 10 },
+    axisLabel: { color: p.inkMuted, fontSize: p.chartAxis },
     splitLine: { show: false },
   }
 
@@ -73,18 +73,18 @@ export function buildConstraintDeltaOption(
       left: `${(GRID_LEFT0 + i * (GRID_W + GRID_GAP) + GRID_W / 2) * 100}%`,
       top: '2%',
       textAlign: 'center',
-      textStyle: { color: p.ink, fontSize: 12, fontWeight: 600 },
+      textStyle: { color: p.ink, fontSize: p.chartTitle, fontWeight: 600 },
     })),
     grid,
     xAxis: [0, 1, 2].map((i) => ({
       ...axisCommon, gridIndex: i, data: xs, name: '棚长 x / m',
       nameLocation: 'middle' as const, nameGap: 24,
-      nameTextStyle: { color: p.inkMuted, fontSize: 10 },
+      nameTextStyle: { color: p.inkMuted, fontSize: p.chartAxis },
     })),
     yAxis: [0, 1, 2].map((i) => ({
       ...axisCommon, gridIndex: i, data: zs, name: i === 0 ? '高度 z / m' : '',
       nameLocation: 'middle' as const, nameGap: 30,
-      nameTextStyle: { color: p.inkMuted, fontSize: 10 },
+      nameTextStyle: { color: p.inkMuted, fontSize: p.chartAxis },
     })),
     // 两个色标：温度一套、差异一套。各自绑住自己的那些热力场。
     // 两条都**可以拖着看**（spec §七 V5）。拖动的效果是区间外**压暗**，
@@ -106,7 +106,7 @@ export function buildConstraintDeltaOption(
         itemHeight: 120,
         precision: 1,
         text: [`${payload.vmax.toFixed(1)} °C`, `${payload.vmin.toFixed(1)} °C`],
-        textStyle: { color: p.inkMuted, fontSize: 10 },
+        textStyle: { color: p.inkMuted, fontSize: p.chartAxis },
       },
       {
         type: 'continuous',
@@ -124,7 +124,7 @@ export function buildConstraintDeltaOption(
         itemHeight: 120,
         precision: 2,
         text: [`+${payload.delta_vmax.toFixed(2)}`, `−${payload.delta_vmax.toFixed(2)}`],
-        textStyle: { color: p.inkMuted, fontSize: 10 },
+        textStyle: { color: p.inkMuted, fontSize: p.chartAxis },
       },
     ],
     tooltip: {

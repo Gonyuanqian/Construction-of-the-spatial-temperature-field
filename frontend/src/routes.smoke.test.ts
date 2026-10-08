@@ -71,6 +71,9 @@ function installTokens(): void {
   root.style.setProperty('--layer-top', '#C44E52')
   root.style.setProperty('--layer-mid', '#4C72B0')
   root.style.setProperty('--layer-low', '#55A868')
+  root.style.setProperty('--bar', '#D98C2B')
+  root.style.setProperty('--size-chart-axis', '12px')
+  root.style.setProperty('--size-chart-title', '14px')
 }
 
 /** spec §8.5 禁的连接符与会漏成字面字符的 markdown 标记。 */

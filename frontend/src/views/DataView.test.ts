@@ -27,6 +27,9 @@ function installEnvironment(): void {
   root.style.setProperty('--layer-top', '#C44E52')
   root.style.setProperty('--layer-mid', '#4C72B0')
   root.style.setProperty('--layer-low', '#55A868')
+  root.style.setProperty('--bar', '#D98C2B')
+  root.style.setProperty('--size-chart-axis', '12px')
+  root.style.setProperty('--size-chart-title', '14px')
   vi.stubGlobal('ResizeObserver', class {
     observe() {}
     unobserve() {}
@@ -78,17 +81,37 @@ const TH = {
   sheds: { p1: { labels: ['z0.4'], z: [0.4], values: [[40, 41]] } },
 }
 
+/**
+ * 数据预览的载荷。`n_rows` 故意**远小于** `n_times` —— 页面上那行
+ * 「前 N 行，共 M 行」就是靠这两个数的差形成的，两个都写 1308 的话，
+ * 那一行会变成「全部 1308 行」，这条夹具就测不到截断那一路。
+ * `values` 只给三行：这一层测的是**页面拿到载荷之后干了什么**，
+ * 不是「五百行画不画得下」（那是 `DataPreviewTable.test.ts` 的事）。
+ */
+const PREVIEW = {
+  n_times: 1308, limit: 3, n_rows: 3,
+  columns: [
+    { key: 'bg_temp_C', label: '背景温度' },
+    { key: 'p1_x0.15_z0.4_temp_C', label: 'p1·B6' },
+  ],
+  time: ['2026-07-23T11:00:00', '2026-07-23T11:05:00', '2026-07-23T11:10:00'],
+  values: [[31.4, 40.1], [31.5, null], [31.6, 40.3]],
+}
+
 function stub(routes: Record<string, unknown>) {
+  // 预览给一份缺省载荷：这一页现在一进来就发三条请求，而绝大多数用例
+  // 关心的不是预览那一条。想让它不答（或答成别的）就自己传同一个键盖掉。
+  const all: Record<string, unknown> = { '/api/dataset/preview': PREVIEW, ...routes }
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     // ⚠️ 取**最长**的匹配前缀，不是第一个命中。路由里 '/api/dataset' 是
     // '/api/dataset/timeseries' 的前缀；用 find 的话，对象字面量里先写
     // 短的那条，长接口就会被它吃掉，ts 拿到的是数据集载荷 —— 报错发生在
     // 图表构造器里，离现场很远。按最长匹配，写不写先后都对。
-    const hit = Object.keys(routes)
+    const hit = Object.keys(all)
       .filter((k) => String(url).includes(k))
       .sort((a, b) => b.length - a.length)[0]
     if (!hit) return new Response('{"detail":"没有这个接口"}', { status: 404 })
-    return new Response(JSON.stringify(routes[hit]), {
+    return new Response(JSON.stringify(all[hit]), {
       status: 200, headers: { 'Content-Type': 'application/json' },
     })
   }))
@@ -121,22 +144,34 @@ describe('页① 数据导入与检查', () => {
     useDataset().reset()
   })
 
-  it('一排四张卡：样本数 / 样本时间范围 / 缺失样本量 / 重复样本量', async () => {
+  it('一排四张卡：样本数 / 样本时间范围 / 缺失样本量剔除 / 重复样本量剔除', async () => {
     stub({ '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH,
            '/api/field/arch': ARCH, '/api/dataset': DATASET })
     const w = mountView()
     await flushPromises()
     const cards = w.findAll('.stat')
     expect(cards.map((c) => c.find('.label').text()))
-      .toEqual(['样本数', '样本时间范围', '缺失样本量', '重复样本量'])
+      .toEqual(['样本数', '样本时间范围', '缺失样本量剔除', '重复样本量剔除'])
     const value = (label: string) =>
       cards.find((c) => c.find('.label').text() === label)!.find('.value').text()
     expect(value('样本数')).toBe('1308')
     // 时刻走 `fmtTime`（不带 T、不带秒），两端用「至」接 —— §8.5 禁的是
     // 破折号与中点那类装饰连接符，「至」不在禁列。
     expect(value('样本时间范围')).toBe('2026-07-23 11:00 至 2026-07-27 23:55')
-    expect(value('缺失样本量')).toBe('0')
-    expect(value('重复样本量')).toBe('4')
+    expect(value('缺失样本量剔除')).toBe('0')
+    expect(value('重复样本量剔除')).toBe('4')
+  })
+
+  it('那一排卡的文字居中开关接上了（`center`）', async () => {
+    // 2026-10-06 用户裁定：那一排的文字与数字要在卡片里居中。
+    // jsdom 不做布局，量不到「到底居中没有」—— 但**开关有没有接上**量得到，
+    // 而「忘了传 prop」正是它最容易坏的方式：规则在、`centered` 不在，
+    // 屏上一切照旧，没有任何东西会红。
+    stub({ '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH,
+           '/api/field/arch': ARCH, '/api/dataset': DATASET })
+    const w = mountView()
+    await flushPromises()
+    expect(w.find('.stats').classes()).toContain('centered')
   })
 
   it('这一排卡铺浅叶色底，与页上别处的白卡分得开', async () => {
@@ -155,10 +190,76 @@ describe('页① 数据导入与检查', () => {
            '/api/field/arch': ARCH, '/api/dataset': DATASET })
     const w = mountView()
     await flushPromises()
-    expect(w.findAll('table').length, '页① 还有一张表').toBe(0)
+    // ⚠️ 这里原先断言的是「页上一张表都没有」。2026-10-06 加了数据预览之后
+    // 页① **又有一张表了** —— 改量内容而不是有无：撤下的是那张检查表，
+    // 不是「表格」这个形态。把断言写成 0 会让后来的人以为页① 不许有表。
+    expect(w.findAll('table').length, '页① 多出了第二张表').toBe(1)
     expect(w.text()).not.toContain('在查什么')
     expect(w.text()).not.toContain('结构完整性')
     expect(w.text()).not.toContain('跨棚离群')
+  })
+
+  it('数据预览与切面图左右并排，两块说同一套编号', async () => {
+    // 2026-10-06 用户裁定：四个指标卡以下的部分左右分栏，左图右表。
+    stub({ '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH,
+           '/api/field/arch': ARCH, '/api/dataset': DATASET })
+    const w = mountView()
+    await flushPromises()
+    const split = w.find('.split')
+    expect(split.exists(), '没有左右分栏这一层').toBe(true)
+    // 两块**都在这一层里**，而且左图右表 —— 次序是这一块的意思所在
+    // （表头的 `p1·B6` 与图上那个 B 编号是同一个点，并排才读得通）。
+    expect(split.findAll('h3').map((h) => h.text()))
+      .toEqual(['棚的切面与测点', '数据预览'])
+    expect(split.findAll('table').length, '表不在分栏里').toBe(1)
+    expect(split.find('thead th').text(), '首列不是时刻').toBe('时刻')
+    expect(split.findAll('thead th').map((h) => h.text()))
+      .toEqual(['时刻', '背景温度', 'p1·B6'])
+  })
+
+  it('屏上写明表里装了多少：前 N 行，共 M 行', async () => {
+    // 少了这一行，「能滚」就等于「里面就是全部」，而它其实是前 500 行 ——
+    // 看的人不会想到要去数。两个数都由后端给（`n_rows` / `n_times`）。
+    stub({ '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH,
+           '/api/field/arch': ARCH, '/api/dataset': DATASET })
+    const w = mountView()
+    await flushPromises()
+    expect(w.text()).toContain('前 3 行，共 1308 行')
+  })
+
+  it('整份数据都在时写「全部」，不写「前 1308 行，共 1308 行」', async () => {
+    // 导一份只有几百行的数据集时走的就是这一支。说「前 N 行」会让人以为
+    // 后面还有 —— 而那正是这一行存在的理由，它自己先说错就没意义了。
+    stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH,
+           '/api/dataset/preview': { ...PREVIEW, limit: 1308, n_rows: 1308 } })
+    const w = mountView()
+    await flushPromises()
+    expect(w.text()).toContain('全部 1308 行')
+    expect(w.text()).not.toContain('前 1308 行')
+  })
+
+  it('预览挂了只报在它自己那张卡里，不连累左边的切面图', async () => {
+    // 并进页顶那条 `failure` 的话，左边的图会被说成「测点或几何没取到」——
+    // 而图好好的。两件事一件件说。
+    //
+    // 这一条不能用 `stub()`：它一律回 200，而这里要的正是**这条接口失败**。
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('/api/dataset/preview')) {
+        return new Response('{"detail":"数据集不存在：C:/x.xlsx"}', {
+          status: 404, headers: { 'Content-Type': 'application/json' } })
+      }
+      const body = String(url).includes('/api/field/arch') ? ARCH : DATASET
+      return new Response(JSON.stringify(body), {
+        status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const w = mountView()
+    await flushPromises()
+    const alert = w.find('[role="alert"]')
+    expect(alert.exists(), '预览挂了却没有报出来').toBe(true)
+    expect(alert.text()).toContain('C:/x.xlsx')
+    // 页顶那条 summary 告警不该被这件事带出来
+    expect(w.text()).not.toContain('测点或几何没取到')
+    expect(w.findAllComponents({ name: 'EChart' }).length, '图被连累着一起没了').toBe(1)
   })
 
   it('指纹与列数不再出现在页面上', async () => {
@@ -195,16 +296,16 @@ describe('页① 数据导入与检查', () => {
     expect(w.find('input[type="file"]').exists(), '页顶没有导入块').toBe(true)
   })
 
-  it('四张卡各自带出处图章（屏上一个字，整句在 title 上）', async () => {
+  it('四张卡都不挂出处图章（2026-10-06 用户裁定：四个「算」是同一句话说了四遍）', async () => {
     stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH,
            '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH })
     const w = mountView()
     await flushPromises()
-    const stamps = w.findAll('.stat .prov')
-    expect(stamps.length, '四张卡的图章不齐').toBe(4)
-    for (const s of stamps) {
-      expect(s.text()).toBe('算')
-      expect(s.attributes('title')).toContain('现场重算')
+    // 这一排的四个数在本页一律是「本次请求现算」，屏上不再印它（spec §七 主张 2
+    // 的有意偏离，原委写在 `DataView.vue` 那段注释里）。用 `exists()` 而不是
+    // `text()`：图章整个不在，`text()` 会拿空串悄悄放过一张还挂着的卡。
+    for (const c of w.findAll('.stat')) {
+      expect(c.find('.prov').exists(), `这张卡还挂着图章：${c.text()}`).toBe(false)
     }
   })
 
@@ -440,8 +541,30 @@ describe('页① 的空态：只有导入块，没有一句告警', () => {
     expect(w.findAll('.stat').length).toBe(0)
     expect(w.findAllComponents({ name: 'EChart' }).length).toBe(0)
     expect(w.findAll('details').length).toBe(0)
+    expect(w.findAll('table').length, '空态下还画着数据预览表').toBe(0)
+    expect(w.find('.split').exists(), '空态下还画着左右分栏').toBe(false)
     // 那句「测点或几何没取到」是在指一条并不存在的上方提示。
     expect(w.text()).not.toContain('没取到')
+  })
+
+  it('空态下不发数据预览那条请求 —— 它必得 409，白跑一趟', async () => {
+    // 这条请求因此被排在数据集之后（见 `DataView.vue` 的 onMounted）。
+    // 发出去不只是浪费：它会让页顶那条 `failure` 多一句话，而空态下该说的是
+    // 「先导入数据集」，不是三条报错。
+    const asked: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      asked.push(String(url))
+      if (String(url).includes('/api/field/arch')) {
+        return new Response(JSON.stringify(ARCH), {
+          status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response(JSON.stringify({ detail: NO_DATASET }), {
+        status: 409, headers: { 'Content-Type': 'application/json' } })
+    }))
+    mountView()
+    await flushPromises()
+    expect(asked.some((u) => u.includes('/api/dataset/preview')),
+      '空态下还是发了预览请求').toBe(false)
   })
 
   it('500 照旧报出来 —— 只有 409 才是空态', async () => {

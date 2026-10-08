@@ -40,25 +40,45 @@ import { NAV_ITEMS } from '../design/copy'
   padding: 0 var(--gap-m) var(--gap-m) var(--gap-l);
   display: flex;
   flex-direction: column;
+  /* 项间距由 gap 给（2026-10-06 卡片化）。`.why` 自带的下内边距叠在 gap 上，
+     于是「卡片 → 它的说明」8px、「说明 → 下一张卡」16px —— 说明因此读起来
+     贴着上面那张灰卡，而不是悬在两张卡中间。 */
+  gap: var(--gap-s);
+  /* 导航模块自成一「面」（2026-10-06 用户裁定）：浅蓝底，与内容区的暖纸分开。
+     这是**面**的区别，不是把激活色搬到这里 —— 激活项仍走 `--nav-blue`。
+     `align-self: stretch`：这一列要铺满**整个框**（`.body` 已成为框，见
+     `App.vue` 与 `design/base.css`）。不撑的话底色只裹住那几张卡，
+     成一条浮在中途的色条，而不是一列。
+     `overflow-y: auto`：框闭合之后左栏不能再靠文档滚到底 —— 页③ 往
+     `#rail-extra` 投进来的视图切换与时刻游标，窗口一矮就会比框还高，
+     不自己滚就是「底下那半截永远够不着」。
+     代价认下来：滚动容器裁在**内边距盒**上，而这一列的上内边距是 0，
+     所以第一张卡那条 1px 的投影在上缘会被裁掉一像素。 */
+  background: var(--nav-tint);
+  align-self: stretch;
+  overflow-y: auto;
 }
+/* 每一项是一张卡（2026-10-06 用户裁定）。圆角与阴影走全站那一档
+   （spec §四：全站只有一档），这里不新开第二种卡。 */
 .item {
   display: block;
-  position: relative;
-  padding: 3px 0 3px 10px;
+  padding: var(--gap-s) 10px;
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
   color: var(--ink);
   text-decoration: none;
 }
-.item.router-link-active { color: var(--leaf); font-weight: var(--w-strong); }
-/* 选中态的竖标走 CSS，不加字符 —— 加了会被 `routes.smoke.test.ts` 的
-   渲染文本扫描看见，也会被读屏软件念出来（spec §十三.2）。 */
-.item.router-link-active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 3px;
-  bottom: 3px;
-  width: 2px;
-  background: var(--leaf);
+/* 激活态：底色 `--nav-blue` + 字 `--paper`，与模式开关 `.on`（叶底 + 纸字）
+   同一套语言。激活色走 `--nav-blue` 而不是 `--leaf`（2026-10-06 用户裁定）：
+   导航要与内容区分开，而全站其余地方仍是叶绿。令牌那边记着这个蓝与页①
+   中层测点蓝同屏的已知冲突 —— 那是被接受的选择，不是这里写错了。
+   **原先那根竖标撤掉了**：底色已经说明「是这一项」，再插一根同色的竖条
+   是同一句话说了两遍。 */
+.item.router-link-active {
+  background: var(--nav-blue);
+  color: var(--paper);
+  font-weight: var(--w-strong);
 }
 .item.off { color: var(--ink-muted); cursor: not-allowed; }
 .why { display: block; padding: 0 0 var(--gap-s) 10px; }

@@ -47,7 +47,9 @@ defineProps<{
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-height: 82px;
+  /* 随字号标尺走：标签 14px（行高 1.4）、读数 36px（1.15）、图章那行 23px，
+     加上 8px 的上下内边距正是 104px。矮于它，一排里最高的那张会把别的拉高。 */
+  min-height: 104px;
 }
 .label {
   font-size: var(--size-label);
@@ -64,5 +66,7 @@ defineProps<{
 }
 .value.compact { font-size: var(--size-h); line-height: 1.5; }
 .value.muted { color: var(--ink-muted); }
-.stamp { min-height: 15px; }
+/* 与 `Provenance` 的边框盒等高（标签字号 14 × 行高 1.5 + 上下各 1px 边框）。
+   有图章的那些卡靠它对齐；页① 那排没有图章，这一行是空的占位。 */
+.stamp { min-height: 23px; }
 </style>

@@ -55,7 +55,7 @@ export function buildDiurnalResidualOption(
       axisLine: { show: false },
       axisTick: { show: false },
       splitLine: { show: false },
-      axisLabel: { color: p.inkMuted, fontSize: 11, formatter: dayOf, hideOverlap: true },
+      axisLabel: { color: p.inkMuted, fontSize: p.chartAxis, formatter: dayOf, hideOverlap: true },
     },
   ]
 
@@ -71,7 +71,7 @@ export function buildDiurnalResidualOption(
       axisLine: { show: false },
       axisTick: { show: false },
       splitLine: { show: false },
-      axisLabel: { color: p.inkMuted, fontSize: 11 },
+      axisLabel: { color: p.inkMuted, fontSize: p.chartAxis },
     },
   ]
 
@@ -144,7 +144,9 @@ export function buildDiurnalResidualOption(
   })
 
   return {
-    backgroundColor: p.paper,
+    // 底色由外层的卡片给，图自己不铺，免得在卡片里留一块颜色不同的方板
+    // （原委见 `sensorLayout.ts` 同一处）。
+    backgroundColor: 'transparent',
     animation: false,
     grid, xAxis, yAxis, series,
     // 一条游标贯穿三格 —— 这是这张图存在的全部理由（spec §七 V2）
@@ -168,7 +170,7 @@ export function buildDiurnalResidualOption(
       right: 0, top: '40%',
       itemHeight: 120,
       inRange: { color: tempStops() },
-      textStyle: { color: p.inkMuted, fontSize: 11 },
+      textStyle: { color: p.inkMuted, fontSize: p.chartAxis },
     },
   } as unknown as EChartsOption
 }
@@ -184,7 +186,7 @@ function axisTime(
     axisTick: { show: false },
     splitLine: { show: false },
     axisLabel: showLabel
-      ? { color: p.inkMuted, fontSize: 11, formatter: (v: number) =>
+      ? { color: p.inkMuted, fontSize: p.chartAxis, formatter: (v: number) =>
             fmt(new Date(v).toISOString()), hideOverlap: true }
       : { show: false },
   }
@@ -195,12 +197,12 @@ function value(gridIndex: number, name: string, p: Palette) {
     gridIndex,
     type: 'value' as const,
     name,
-    nameTextStyle: { color: p.inkMuted, fontSize: 11 },
+    nameTextStyle: { color: p.inkMuted, fontSize: p.chartAxis },
     nameGap: 12,
     scale: true,
     axisLine: { show: false },
     axisTick: { show: false },
     splitLine: { show: true, lineStyle: { color: p.steel, type: 'dashed' as const } },
-    axisLabel: { color: p.inkMuted, fontSize: 11 },
+    axisLabel: { color: p.inkMuted, fontSize: p.chartAxis },
   }
 }

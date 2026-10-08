@@ -13,6 +13,10 @@ const PALETTE: Palette = {
   // 页① 切面图的三层点色。这一张图不用它们，但 `Palette` 是整个调色板
   // 一份读出来的 —— 用得着用不着的令牌都在同一个对象上（与 `net` 同理）。
   layerTop: '#C44E52', layerMid: '#4C72B0', layerLow: '#55A868',
+  // 页② 残差图的柱子色。这一张图也不用它，同上。
+  bar: '#D98C2B',
+  // 图表字号。**是数不是色** —— canvas 的 fontSize 不吃 `'12px'`。
+  chartAxis: 12, chartTitle: 14,
 }
 
 /** 4×4 的小场，四种格子各占一角（与 pick.test.ts 同一套夹具，便于对照）。 */

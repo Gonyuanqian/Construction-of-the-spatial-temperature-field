@@ -56,19 +56,19 @@ export function buildSectionFieldOption(
     type: 'category' as const,
     axisLine: { lineStyle: { color: p.steel } },
     axisTick: { show: false },
-    axisLabel: { color: p.inkMuted, fontSize: 10 },
+    axisLabel: { color: p.inkMuted, fontSize: p.chartAxis },
     splitLine: { show: false },
   }
 
   const xAxis = payload.sheds.map((_, i) => ({
     ...axisCommon, gridIndex: i, data: xs, name: '棚长 x / m',
     nameLocation: 'middle' as const, nameGap: 24,
-    nameTextStyle: { color: p.inkMuted, fontSize: 10 },
+    nameTextStyle: { color: p.inkMuted, fontSize: p.chartAxis },
   }))
   const yAxis = payload.sheds.map((_, i) => ({
     ...axisCommon, gridIndex: i, data: zs, name: i === 0 ? '高度 z / m' : '',
     nameLocation: 'middle' as const, nameGap: 30,
-    nameTextStyle: { color: p.inkMuted, fontSize: 10 },
+    nameTextStyle: { color: p.inkMuted, fontSize: p.chartAxis },
   }))
 
   return {
@@ -79,7 +79,7 @@ export function buildSectionFieldOption(
       left: `${(GRID_LEFT0 + i * (GRID_W + GRID_GAP) + GRID_W / 2) * 100}%`,
       top: '3%',
       textAlign: 'center',
-      textStyle: { color: p.ink, fontSize: 12, fontWeight: 600 },
+      textStyle: { color: p.ink, fontSize: p.chartTitle, fontWeight: 600 },
     })),
     grid,
     xAxis,
@@ -106,7 +106,7 @@ export function buildSectionFieldOption(
       itemHeight: 150,
       precision: 1,
       text: [`${payload.vmax.toFixed(1)} °C`, `${payload.vmin.toFixed(1)} °C`],
-      textStyle: { color: p.inkMuted, fontSize: 10 },
+      textStyle: { color: p.inkMuted, fontSize: p.chartAxis },
     },
     tooltip: {
       trigger: 'item',

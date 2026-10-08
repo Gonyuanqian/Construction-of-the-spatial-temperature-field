@@ -13,9 +13,11 @@
  * 不是「不需要它」—— 它带测试、带完整规格注释，要接回来只改一处 import。
  *
  * 2026-10-06 二次修订（用户裁定）：那排卡片换成**样本数 / 样本时间范围 /
- * 缺失样本量 / 重复样本量**，卡片铺 `--leaf-soft`；下面那张「数据检查」表
- * **整块撤下**（四个数已经在上面的卡片里，同一页说两遍）。接口照旧返回
- * `checks` / `checks_note`，这一页不再读它们。
+ * 缺失样本量剔除 / 重复样本量剔除**，卡片铺 `--leaf-soft`、文字居中（`center`）；
+ * 下面那张「数据检查」表**整块撤下**（四个数已经在上面的卡片里，同一页说两遍）。
+ * 接口照旧返回 `checks` / `checks_note`，这一页不再读它们。
+ * 后两个标签里的「剔除」是用户 2026-10-06 加的：这两个数说的是**因此被剔掉的
+ * 样本量**。下面对应的那段口径也跟着改口，免得卡片与散文各叫各的。
  *
  * 随表一起没了去向的还有两个数：**列数**（原第三张卡）与**指纹**（原第五张卡）。
  * 指纹撤下之后，页尾那两句讲「指纹里的绝对路径就是数据集身份」的话
@@ -25,16 +27,23 @@
  * 三块的次序回到规格书原本的样子：导入 → 检查 → 分布图。
  * 空态下它是唯一可用的一块 —— 那时候指标卡没数可报、主图没几何可画。
  *
+ * 2026-10-06 四次修订（用户裁定）：**棚的切面图与数据预览表左右并排**。
+ * 「我导进来的确实是这份文件」这句话，四个统计数说不了 —— 得能看到行与列
+ * 本身。表由后端切好送来（新出口 `GET /api/dataset/preview`），前端一格不算；
+ * 截断多少也由后端一并给（`n_rows` 与 `n_times`），所以屏上那行「前 500 行，
+ * 共 1308 行」里的两个数都是后端的话，不是前端自己数出来的。
+ *
  * **这一页不做任何计算**（硬约束 1）。连测点的 5 天均值都是后端算好送来的，
  * 图表里的每一个数都能追到后端某一行。
  */
 import { computed, onMounted, ref } from 'vue'
 
-import type { ArchPayload, DatasetPayload } from '../api/types'
+import type { ArchPayload, DatasetPayload, PreviewPayload } from '../api/types'
 import { getJson, uploadDataset } from '../api/client'
 import EChart from '../charts/EChart.vue'
 import { buildSensorLayoutOption } from '../charts/options/sensorLayout'
 import Card from '../components/Card.vue'
+import DataPreviewTable from '../components/DataPreviewTable.vue'
 import StatCard from '../components/StatCard.vue'
 import StatRow from '../components/StatRow.vue'
 import { useAsync } from '../composables/useAsync'
@@ -45,12 +54,22 @@ import { readPalette } from '../design/palette'
 
 const ds = useAsync(() => getJson<DatasetPayload>('/api/dataset'))
 const arch = useAsync(() => getJson<ArchPayload>('/api/field/arch'))
+const pv = useAsync(() => getJson<PreviewPayload>('/api/dataset/preview'))
 
 const dataset = useDataset()
 
-onMounted(() => {
-  void ds.run()
+/**
+ * ⚠️ **预览那条要等数据集回来再发**（其余两条照旧并行）。
+ *
+ * 空态下它必得 409 —— 发出去就是白跑一趟，还会往页顶那条 `failure` 里
+ * 多塞一句话，而那时候屏上该说的是「先导入数据集」，不是三条报错。
+ * `useAsync.run` 把错误收进 `status` / `error`，**不 rethrow**，所以这里
+ * `await` 之后照样读得到结果。
+ */
+onMounted(async () => {
   void arch.run()
+  await ds.run()
+  if (ds.data.value) void pv.run()
 })
 
 const palette = readPalette()
@@ -59,6 +78,21 @@ const v1 = computed(() =>
   ds.data.value && arch.data.value
     ? buildSensorLayoutOption(ds.data.value, arch.data.value, palette)
     : null)
+
+/**
+ * 预览表上方那一行：**说清表里装了多少，装的是哪一段**。
+ *
+ * 两个数都来自后端（`n_rows` / `n_times`），前端只把它们排成一句话 ——
+ * 与页顶那行 `importedLine` 同一个分法。少了这一行，「能滚」就等于
+ * 「里面就是全部」，而它其实是前 500 行；看的人不会想到要去数。
+ */
+const previewLine = computed(() => {
+  const p = pv.data.value
+  if (!p) return ''
+  return p.n_rows < p.n_times
+    ? `前 ${fmtInt(p.n_rows)} 行，共 ${fmtInt(p.n_times)} 行`
+    : `全部 ${fmtInt(p.n_times)} 行`
+})
 
 /**
  * 空态：`/api/dataset` 回 `409`。**这不是故障**，是系统的起点
@@ -159,28 +193,62 @@ const importedLine = computed(() => {
       <!-- 指标卡片一排（spec §6.2 页①）。四个数**全部由后端算**（硬约束 1）：
            前端一处加法都没有，这里只把它们排成一排。
            铺浅叶底（`tint`）是为了与页上别处的白卡分得开 —— 这一排是「这份数据的
-           体检结论」，白卡是「内容」。 -->
-      <StatRow v-if="ds.data.value" tint>
-        <StatCard label="样本数" :value="fmtInt(ds.data.value.n_times)" prov="live" />
+           体检结论」，白卡是「内容」。
+           卡里的字居中（`center`），四个数在等宽的格子里左右对齐才不会晃（2026-10-06
+           用户裁定）。
+           ⚠️ 这四张卡**不挂出处图章**，是对 spec §七 主张 2「每个数字旁边都带三态
+           之一」的有意偏离（2026-10-06 用户裁定）。本页这四个数一律是「本次请求
+           现算」，四个「算」字是同一句话说了四遍 —— 说四遍不比说一遍更可信，只让
+           这一排更吵。信息没丢：口径与出处仍在下面那一段折叠区里，页②③⑤ 的图章
+           一个没动。 -->
+      <StatRow v-if="ds.data.value" tint center>
+        <StatCard label="样本数" :value="fmtInt(ds.data.value.n_times)" />
         <StatCard
           label="样本时间范围"
           :value="`${fmtTime(ds.data.value.time_start)} 至 ${fmtTime(ds.data.value.time_end)}`"
-          prov="live" compact
+          compact
         />
-        <StatCard label="缺失样本量" :value="fmtInt(ds.data.value.n_missing)" prov="live" />
-        <StatCard label="重复样本量" :value="fmtInt(ds.data.value.n_dup_times)" prov="live" />
+        <StatCard label="缺失样本量剔除" :value="fmtInt(ds.data.value.n_missing)" />
+        <StatCard label="重复样本量剔除" :value="fmtInt(ds.data.value.n_dup_times)" />
       </StatRow>
 
-      <!-- 主图（页① 只剩这一张 —— 「昼夜与残差」已整块撤下）。
-           只画一座棚的切面：三座棚的八个点位是同一套，并排放三张是把同一个
+      <!-- 左右并排（2026-10-06 用户裁定）：左边切面图，右边数据预览表。
+           两块的次序不是排版偏好：先看「这份数据长什么样」，再在图上把测点
+           认下来 —— 而两边的编号是同一套（表头的 `p1·B3` 就是图上那个 B3），
+           所以并排摆着才读得通。
+           左边只画一座棚的切面：三座棚的八个点位是同一套，并排放三张是把同一个
            形状画三遍，而每格只剩三分之一宽。420px 是照参考图的纵横比定的，
-           压到 300px 拱会显得又宽又扁。 -->
-      <Card class="block">
-        <h3>棚的切面与测点</h3>
-        <EChart v-if="v1" :option="v1" height="420px" />
-        <p v-else-if="failure" class="note state">测点或几何没取到，见上方提示。</p>
-        <p v-else class="note state">正在取几何与测点…</p>
-      </Card>
+           压到 300px 拱会显得又宽又扁；右边的窗口取同一个高度，两张卡才齐平。
+           ⚠️ 图幅**横向几乎占满这张卡**（2026-10-06 用户裁定，见
+           `charts/options/sensorLayout.ts` 的 `GRID`）：留白是按卡片的百分比
+           算的，卡片被分栏减半之后，原来那三成留白从构图变成了白地。 -->
+      <div class="split">
+        <Card class="block">
+          <h3>棚的切面与测点</h3>
+          <EChart v-if="v1" :option="v1" height="420px" />
+          <p v-else-if="failure" class="note state">测点或几何没取到，见上方提示。</p>
+          <p v-else class="note state">正在取几何与测点…</p>
+        </Card>
+
+        <Card class="block">
+          <h3>数据预览</h3>
+          <!-- `reading`：这一行是**读数**（数字为主），不是散文 —— 而且两个数
+               都是后端给的。见 `previewLine`。 -->
+          <p v-if="previewLine" class="note reading">{{ previewLine }}</p>
+          <DataPreviewTable
+            v-if="pv.data.value"
+            :columns="pv.data.value.columns"
+            :time="pv.data.value.time"
+            :values="pv.data.value.values"
+          />
+          <!-- 预览挂了**只报在这一张卡里**，不并进页顶那条 `failure`：
+               那句话会连带把左边的切面图说成「测点或几何没取到」，而图好好的。 -->
+          <p v-else-if="pv.error.value" role="alert" class="alert">
+            数据预览没取到：{{ pv.error.value }}
+          </p>
+          <p v-else class="note state">正在取数据预览…</p>
+        </Card>
+      </div>
 
       <!-- 口径与出处：一页最多一处（spec §八）。收起来，但内容始终在 DOM 里。 -->
       <details class="why">
@@ -192,9 +260,9 @@ const importedLine = computed(() => {
           标定包不会跟着换，要重新标定一次才能与新的数据集对上。
         </p>
         <p class="note">
-          重复样本量说的是原始文件里的重复时刻：那是已知缺陷（每天 16:00 的行被写成
+          重复样本量剔除说的是原始文件里的重复时刻：那是已知缺陷（每天 16:00 的行被写成
           次日 00:00），读进来时已按 8 小时回退修好，所以下面的图与数都是修复之后的。
-          缺失样本量是整张宽表里没有值的格子数。
+          缺失样本量剔除是整张宽表里没有值的格子数。
         </p>
         <p class="note">
           切面只画一座棚：三座棚的八个点位是同一套，并排放三张是把同一个形状画三遍。
@@ -205,7 +273,12 @@ const importedLine = computed(() => {
           z = 1.10 m 以上没有任何传感器，不报数。每个点的 5 天均值在鼠标停上去时
           报出来，三座棚各一行（均值是后端算的）。
         </p>
-        <p class="note">本页的出处图章只有一个意思：算，就是这次请求现算出来的数。</p>
+        <p class="note">
+          数据预览表给的是这份数据集的开头一段，不是全部，表上方那行写着到底给了
+          多少行。表头用的是切面图上那套编号（p1·B3 就是图上那个点），所以并排看
+          图与表读的是同一套名字。湿度、光照与逐格插值标记不进这张表：本系统没有
+          一处读它们，摆进来只是把宽度翻一倍。
+        </p>
       </details>
     </template>
   </section>
@@ -213,6 +286,23 @@ const importedLine = computed(() => {
 
 <style scoped>
 .block { margin-bottom: var(--gap-l); }
+/* 左边切面图、右边预览表。
+   ⚠️ `minmax(0, 1fr)` 不是可选的：预览表 26 列的 min-content 很宽，写成
+   `1fr` 时格子的下限是内容宽度，右边那张卡会先撑破页宽 —— 于是整页横向
+   滚动，而表自己的窗口反而没滚起来。`minmax(0, …)` 允许格子窄于内容，
+   溢出的部分交给表内部的窗口。
+   `align-items: start`：两块各按自己的高度，右边比左边高一点是应该的
+   （多一行读数），硬拉齐只会在左边的图底下留一块空白。 */
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--gap-l);
+  align-items: start;
+  margin-bottom: var(--gap-l);
+}
+/* 卡片的底边距在这个网格里是多余的空白：间距由 `gap` 与 `.split` 的
+   `margin-bottom` 说了，再来一份就把下一块推远一倍。 */
+.split > .block { margin-bottom: 0; }
 .import-row { display: flex; align-items: center; gap: var(--gap-s); }
 .alert { color: var(--leaf); border-left: 3px solid var(--leaf); padding-left: var(--gap-s); }
 .ok { color: var(--leaf); }

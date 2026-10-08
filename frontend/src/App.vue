@@ -81,6 +81,20 @@ const showRail = computed(() => route.meta.rail !== false)
 </template>
 
 <style scoped>
-.body { display: flex; align-items: flex-start; gap: var(--gap-m); padding: var(--gap-m) 0; }
-.page { flex: 1 1 auto; min-width: 0; padding-right: var(--gap-l); }
+/* 滚的是右边这一列，不是整个文档（`#app` 已钉成框，见 `design/base.css`）。
+   `min-height: 0` 不是可选项：flex 子项默认**不低于内容**，不减这一条
+   `.page` 就永远由内容撑高，它的 `overflow-y: auto` 永远不会生效。
+   `overflow: hidden` 把溢出挡在框里，两列于是各自滚。
+   `align-items: stretch`（原先是 `flex-start`）：两列都要满高 —— `.page`
+   不满高就没有可滚的高度，`.rail` 不满高则只剩一条浮在中途的色条。 */
+.body {
+  display: flex;
+  align-items: stretch;
+  gap: var(--gap-m);
+  padding: var(--gap-m) 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.page { flex: 1 1 auto; min-width: 0; padding-right: var(--gap-l); overflow-y: auto; }
 </style>

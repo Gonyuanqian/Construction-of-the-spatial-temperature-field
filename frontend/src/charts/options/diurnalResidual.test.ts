@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { buildDiurnalResidualOption } from './diurnalResidual'
 import type { LayerTimeHeightPayload, TimeseriesPayload } from '../../api/types'
+import { paletteColors } from '../../design/palette'
 
 const PALETTE = {
   paper: '#F7F6F2', ink: '#211F1C', inkMuted: '#5C5850',
@@ -9,6 +10,10 @@ const PALETTE = {
   // 页① 切面图的三层点色。这一张图不用它们，但 `Palette` 是整个调色板
   // 一份读出来的 —— 用得着用不着的令牌都在同一个对象上（与 `net` 同理）。
   layerTop: '#C44E52', layerMid: '#4C72B0', layerLow: '#55A868',
+  // 页② 残差图的柱子色。这一张图也不用它，同上。
+  bar: '#D98C2B',
+  // 图表字号。**是数不是色** —— canvas 的 fontSize 不吃 `'12px'`。
+  chartAxis: 12, chartTitle: 14,
 }
 
 const N = 4
@@ -108,7 +113,7 @@ describe('V2 的 option', () => {
     for (const c of used) expect(flat.toUpperCase()).toContain(c.toUpperCase())
     // cividis 是**色标名**不是颜色，canvas 的渐变要的是真颜色，只能写成字面量。
     const cividis = ['#00224E', '#12456F', '#4C6C7F', '#7C7B78', '#BE8353', '#EB9A31', '#FFE945']
-    const allowed = new Set([...Object.values(PALETTE), ...cividis].map((c) => c.toUpperCase()))
+    const allowed = new Set([...paletteColors(PALETTE), ...cividis].map((c) => c.toUpperCase()))
     const hexes = [...flat.matchAll(/#[0-9A-Fa-f]{6}/g)].map((m) => m[0].toUpperCase())
     const foreign = [...new Set(hexes.filter((h) => !allowed.has(h)))]
     expect(foreign, `这些色不在调色板或 cividis 里：${foreign.join('、')}`).toEqual([])

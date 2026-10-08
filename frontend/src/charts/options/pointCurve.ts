@@ -25,7 +25,7 @@ export function buildPointCurveOption(
       text: payload.label,
       left: 0,
       top: 0,
-      textStyle: { color: p.ink, fontSize: 12, fontWeight: 600 },
+      textStyle: { color: p.ink, fontSize: p.chartTitle, fontWeight: 600 },
     },
     grid: { left: 56, right: 16, top: 40, bottom: 40 },
     xAxis: {
@@ -33,15 +33,15 @@ export function buildPointCurveOption(
       data: payload.time,
       axisLine: { lineStyle: { color: p.steel } },
       axisTick: { show: false },
-      axisLabel: { color: p.inkMuted, fontSize: 10 },
+      axisLabel: { color: p.inkMuted, fontSize: p.chartAxis },
     },
     yAxis: {
       type: 'value',
       name: '温度 / °C',
       scale: true,          // 不强制从 0 起：这一段温差可能只有几度，从 0 起就压平了
-      nameTextStyle: { color: p.inkMuted, fontSize: 10 },
+      nameTextStyle: { color: p.inkMuted, fontSize: p.chartAxis },
       axisLine: { lineStyle: { color: p.steel } },
-      axisLabel: { color: p.inkMuted, fontSize: 10 },
+      axisLabel: { color: p.inkMuted, fontSize: p.chartAxis },
       splitLine: { lineStyle: { color: p.steel } },
     },
     tooltip: { trigger: 'axis' },

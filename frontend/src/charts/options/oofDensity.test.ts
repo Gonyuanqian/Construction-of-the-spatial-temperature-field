@@ -15,7 +15,7 @@ import type { DiagnosticsPayload } from '../../api/types'
 const P = {
   paper: '#fff', ink: '#111', inkMuted: '#666', steel: '#888', leaf: '#0a0',
   leafSoft: '#efe', net: '#c00', layerTop: '#1', layerMid: '#2', layerLow: '#3',
-  chartAxis: 12, chartTitle: 14,
+  bar: '#4', chartAxis: 12, chartTitle: 14,
 } as unknown as Palette
 
 function payload(counts: number[][], extra: Partial<DiagnosticsPayload['density']> = {}) {

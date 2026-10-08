@@ -17,14 +17,15 @@
  *     轴线框仍然关着：拱还是这张图的轮廓，网格只是量尺；
  *   · **测点按高度分三层着色**，三色取自用户的那张参考图。
  *
- * 图幅的纵横比照参考图定：横 2.1 m、纵约 1.05 m，纵向拉长约 1.4 倍。
- * 参考图就是这个比例，照搬 —— 按真实比例画出来的拱是又宽又扁的。
+ * 图幅照参考图定：横 2.1 m 对纵约 1.1 m，**纵向被拉长**（不是等比例），
+ * 拱因此比真比例（2.1 : 0.85）显得高。拉长的倍率随卡片宽度走 ——
+ * 图幅是按百分比给的，窗口越宽拱越扁，这是百分比图幅的固有代价。
  */
 import type { EChartsOption } from 'echarts'
 
 import type { ArchPayload, DatasetPayload, Position } from '../../api/types'
 import { fmt1 } from '../../design/format'
-import type { Palette } from '../../design/palette'
+import type { ColorKey, Palette } from '../../design/palette'
 
 /**
  * 纵轴下界。**不从 0 起**：拱脚在 z ≈ 0.45 m、最低测点在 0.40，从 0 起画
@@ -37,18 +38,29 @@ const X_STEP = 0.5
 const Z_STEP = 0.2
 
 /**
- * 图幅。左 30% 宽 40% 是**有意留白的** —— 四边各留三成，图就居中成一张
- * 图谱，而不是一条被拉满的横带。宽度与高度之比决定拱的胖瘦，
- * 这两组数字是被 `sensorLayout.test.ts` 之外的眼睛定的，改之前先在浏览器里看。
+ * 图幅。**横向几乎占满卡片**（2026-10-06 用户裁定）。
+ *
+ * 原先是 `left: '30%', width: '40%'`，注释写的是「四边各留三成，图居中成一张
+ * 图谱」—— 那是这张图**还占满整页宽**时定的：卡片约 1000px 时图幅 400px，
+ * 那三成是构图。页① 改成左右分栏之后卡片只剩一半，同一组百分比把图幅压到
+ * 约 190px，留白却原样留着 —— 用户看到的就是「图挤在中间、两边一大片白」。
+ * **留白是相对卡片算的，卡片一变，构图就变成了白地。**
+ *
+ * 现在这三个数是按**卡片里各要让出多少**定的，不是按构图：
+ *   left 12%    纵轴刻度（"1.3" 在 12px 等宽下约 30px，再加轴与刻度之间的间距）
+ *   width 80%   图幅本身
+ *   剩下 8%     最右那个测点（x = 1.95 的 B8）点旁的编号。它按 `position: 'right'`
+ *               往外画，没有这块地方就会被卡片边裁掉。
+ * 上下两成留白照旧：上面给纵轴名，下面给横轴名与它的刻度。
  */
-const GRID = { left: '30%', width: '40%', top: '10%', bottom: '14%' }
+const GRID = { left: '12%', width: '80%', top: '10%', bottom: '14%' }
 
 /**
  * 层从高到低取哪一档色。**层的名字（`ztop` / `z0.7` / `z0.4`）不进这里** ——
  * 名字是后端的事，这里只认高低。多过三层的层落回 `ink-muted`：那是
  * 「有个东西我没认出来」的灰，比悄悄拿第一层的色画上去诚实。
  */
-const LAYER_SLOTS: (keyof Palette)[] = ['layerTop', 'layerMid', 'layerLow']
+const LAYER_SLOTS: ColorKey[] = ['layerTop', 'layerMid', 'layerLow']
 
 /** `[x, z, 编号, 棚1 均值, 棚2 均值, …]`。均值缺失是 `null`，不是 0。 */
 type PointDatum = [number, number, string, ...(number | null)[]]
@@ -87,7 +99,7 @@ export function buildSensorLayoutOption(
         position: 'right',
         distance: 6,
         color: p.ink,
-        fontSize: 11,
+        fontSize: p.chartAxis,
         // 编号拿不到就空着。**不就地编一个** —— 错的编号与对的看起来一模一样。
         formatter: (params: { data: PointDatum }) => params.data[2] ?? '',
       },
@@ -96,7 +108,10 @@ export function buildSensorLayoutOption(
   }
 
   return {
-    backgroundColor: p.paper,
+    // 底色由外层的卡片给，图自己不铺。铺一层纸色的话，页面底一深（2026-10-06
+    // 起页面比卡片深）就成了卡片里一块颜色不同的**方板** —— 方角嵌在圆角卡里，
+    // 而且与另外三张 option 的 `'transparent'` 不一致。
+    backgroundColor: 'transparent',
     animation: false,
     grid: GRID,
     xAxis: {
@@ -107,11 +122,11 @@ export function buildSensorLayoutOption(
       name: '棚长 x / m',
       nameLocation: 'middle',
       nameGap: 26,
-      nameTextStyle: { color: p.inkMuted, fontSize: 12 },
+      nameTextStyle: { color: p.inkMuted, fontSize: p.chartAxis },
       axisLine: { show: false },
       axisTick: { show: false },
       splitLine: { show: true, lineStyle: { color: p.steel, width: 1 } },
-      axisLabel: { show: true, color: p.inkMuted, fontSize: 11, formatter: (v: number) => fmt1(v) },
+      axisLabel: { show: true, color: p.inkMuted, fontSize: p.chartAxis, formatter: (v: number) => fmt1(v) },
     },
     yAxis: {
       type: 'value',
@@ -119,11 +134,11 @@ export function buildSensorLayoutOption(
       max: arch.z_max,
       interval: Z_STEP,
       name: '高度 z / m',
-      nameTextStyle: { color: p.inkMuted, fontSize: 12 },
+      nameTextStyle: { color: p.inkMuted, fontSize: p.chartAxis },
       axisLine: { show: false },
       axisTick: { show: false },
       splitLine: { show: true, lineStyle: { color: p.steel, width: 1 } },
-      axisLabel: { show: true, color: p.inkMuted, fontSize: 11, formatter: (v: number) => fmt1(v) },
+      axisLabel: { show: true, color: p.inkMuted, fontSize: p.chartAxis, formatter: (v: number) => fmt1(v) },
     },
     series,
     tooltip: {

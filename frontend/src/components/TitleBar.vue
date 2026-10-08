@@ -46,7 +46,9 @@ onMounted(() => void health.run())
 <style scoped>
 .titlebar {
   background: var(--leaf);
-  padding: var(--gap-s) var(--gap-l);
+  /* 2026-10-06 用户裁定：原来 8px 的上下内边距配上 17px 的标题，整条读起来
+     像一条细带子，压不住整页。加高到 `--gap-m`，标题走 `--size-title`（26px）。 */
+  padding: var(--gap-m) var(--gap-l);
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: baseline;

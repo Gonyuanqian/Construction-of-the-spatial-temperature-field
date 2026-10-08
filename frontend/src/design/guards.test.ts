@@ -71,6 +71,14 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
       '--rule', '--sidebar-w', '--temp-scale', '--err-scale',
       // 切面图的测点分层色（页①，2026-10-06）：取自用户给的参考图
       '--layer-top', '--layer-mid', '--layer-low',
+      // 导航专属的一对蓝（2026-10-06 用户裁定）。登记的用处不是"存在"，
+      // 是**被删掉会红** —— 没进这张表的令牌，谁把它删了都没人吭声。
+      '--nav-tint', '--nav-blue',
+      // 字号标尺（2026-10-06 放大）与两个图表字号。图表那两个是给
+      // `design/palette.ts` 读走的（canvas 不认 var()），删了图会静默退回默认字号。
+      '--size-h3', '--size-chart-axis', '--size-chart-title',
+      // 残差图的柱子色（页②，2026-10-08 走查时从 `--steel` 换过来的）。
+      '--bar',
     ]
     const missing = need.filter((t) => !css.includes(`${t}:`))
     expect(missing, `tokens.css 少了这些令牌：${missing.join('、')}`).toEqual([])
@@ -153,13 +161,41 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
     expect(rule, '浅叶底那一条只该改背景色').not.toMatch(/border-radius|box-shadow/)
   })
 
+  it('页① 的数据预览两个方向都能滚，表头与首列粘住', () => {
+    // 用户对这一块的原话是「做成上下左右滑动的窗口形式」。而 jsdom 不做布局
+    // （`getBoundingClientRect()` 一律回 0），滚动与 sticky 在那边量不出任何
+    // 效果 —— 所以与上面 StatRow 那两条同一个道理：量的是**规则本身**。
+    //
+    // ⚠️ 这条够不着：`max-height` 到底够不够高、粘住的表头会不会透出底下的字、
+    // 26 列在 1280px 下横向滚动条在不在。三条都是人眼验收项。
+    const text = readFileSync(join(SRC, 'components', 'DataPreviewTable.vue'), 'utf8')
+      // 注释里写着的 `overflow` / `sticky` 不该被当成真规则。
+      .replace(/\/\*[\s\S]*?\*\//g, (c) => ' '.repeat(c.length))
+    const rule = (sel: string): string => {
+      // 选择器先当字面量转义（`.win` 的 `.` 是元字符），再把空白放宽成 `\s+`
+      // —— 源码里换不换行、缩进几个空格都不该让这条测试红。
+      const pat = sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
+      const m = [...text.matchAll(new RegExp(`${pat}\\s*\\{([^}]*)\\}`, 'g'))]
+      expect(m.length, `DataPreviewTable.vue 里没有 ${sel} 这条规则`).toBeGreaterThan(0)
+      return m.map((x) => x[1]).join('\n')
+    }
+    const win = rule('.win')
+    expect(win, '纵向不可滚').toMatch(/overflow-y:\s*auto/)
+    expect(win, '横向不可滚').toMatch(/overflow-x:\s*auto/)
+    // 没有高度上限，表就跟着内容往上长，滚动条长在 <body> 上 —— 那不是一个
+    // 窗口，是一张很长的表。用户要的是前者。
+    expect(win, '没有高度上限').toMatch(/max-height:\s*\d+px/)
+    expect(rule('thead th'), '表头不粘').toMatch(/position:\s*sticky/)
+    expect(rule('td.t'), '时刻列不粘').toMatch(/position:\s*sticky/)
+  })
+
   it('palette.ts 只按名字读令牌，不重打一遍色值', () => {
     // 图表要的是真颜色字符串（canvas 不认 var(--ink)），所以 palette.ts 得把
     // 令牌读成值。但**读**不等于**抄**：色值只在 tokens.css 里存在一次。
     // 若这里把十六进制重打一遍，单一来源就名存实亡 —— 而现有的守卫只扫 .vue，看不见它。
     const text = readFileSync(join(SRC, 'design', 'palette.ts'), 'utf8')
     for (const t of ['--paper', '--ink', '--ink-muted', '--steel',
-                     '--leaf', '--leaf-soft', '--net']) {
+                     '--leaf', '--leaf-soft', '--net', '--bar']) {
       expect(text, `palette.ts 没有读令牌 ${t}`).toContain(t)
     }
     const hexes = [...text.matchAll(/#[0-9A-Fa-f]{6}\b/g)].map((m) => m[0])

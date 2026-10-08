@@ -288,6 +288,76 @@ def get_layer_timeheight(step: int | None = None) -> dict[str, Any]:
     }
 
 
+# ── 页① 的数据预览表 ──
+
+#: 预览表一次给多少行。缺省，不是上限 —— 上限是总行数（见下面 `n` 那一行）。
+PREVIEW_ROWS: int = 500
+
+
+@router.get("/dataset/preview")
+def get_preview(limit: int | None = None) -> dict[str, Any]:
+    """页① 的数据预览表：**只读的头部切片**。
+
+    为什么要有这条出口：页① 上「我导进来的确实是这份文件」这句话，四个统计数
+    说不了 —— 得能看到行与列本身。而前端不做任何计算（spec §六 硬约束 1），
+    宽表只能由后端切好送过来。
+
+    为什么只给前 N 行：1308 × 25 全铺进 DOM 是 3.4 万个单元格。切片是**明写在
+    屏上的** —— `n_rows` 与 `n_times` 一起给，页面上才写得出「前 500 行
+    （共 1308 行）」。只回一个数组的话，屏幕上看不出看到的是全部还是一段，
+    而那种沉默比截断本身更坏。
+
+    为什么列名不照抄 xlsx：文件里的列名是 `p1_x0.15_z0.4_temp_C`，25 个这种
+    名字并排没人读得动，且与切面图上的编号对不上。标签用 `p1·B1`：B 编号与
+    切面图同源（同一个 `_point_codes`），棚前缀与 tooltip 同源（都是 shed id）。
+    而 `key` **照旧是宽表里的列名** —— 表里任何一格因此都还追得回文件那一列。
+
+    湿度列与光照列不进表：本系统没有一处读它们，摆进来只是把宽度翻倍。
+
+    ⚠️ 每个数都过 `_finite`：缺失格子是 NaN，进了响应体就是
+    `JSONResponse(allow_nan=False)` → HTTP 500（与上面两条出口同一个坑）。
+    """
+    ds = _load()
+    wide = ds.wide
+    n_times = int(len(wide))
+
+    # 夹到 [0, n_times]：
+    #   负数按 0（**不是**按缺省的 500 —— 静默放大是另一种撒谎）
+    #   超出按总行数（这份数据 1308 行由契约钉死，不另设一个魔法上界）
+    n = PREVIEW_ROWS if limit is None else int(limit)
+    n = max(0, min(n, n_times))
+
+    codes = _point_codes(ds)
+    columns: list[dict[str, str]] = []
+    if C.BG_TEMP in wide.columns:
+        columns.append({"key": C.BG_TEMP, "label": "背景温度"})
+    for shed in C.SHED_ORDER:
+        # ⚠️ 走 `codes` 的次序，**不是** `ds.layout` 的。
+        # `SENSOR_LAYOUT` 是按参考图上的坐标一条条写下来的（x0.15、x0.4、x0.8…），
+        # 而 B 编号是「层从高到低、同层从左到右」**另排**出来的 —— 两者不是同一个
+        # 次序，差得很远：照 `ds.layout` 排，表头会读成 B6、B3、B1、B7、B4、B2…
+        # 并排摆着的那张切面图是按编号读的，表头也按编号排，两张才对得上。
+        # （`dict` 保插入序，`_point_codes` 正是按编号次序插的。）
+        for pos in codes:
+            col = f"{shed}_{pos}_{C.VAR_TEMP}"
+            if col in wide.columns:
+                columns.append({"key": col, "label": f"{shed}·{codes[pos]}"})
+
+    head = wide.iloc[:n]
+    # 时间**单列一个字段**，不混进 `values`：它是行标、要在表里粘在左边，
+    # 与那 25 个数值列不是一类东西（混一起就得往 `list[float]` 里塞字符串）。
+    ts = pd.to_datetime(head[C.COL_TIMESTAMP])
+    return {
+        "n_times": n_times,
+        "limit": n,
+        "n_rows": n,
+        "columns": columns,
+        "time": [t.isoformat() for t in ts],
+        "values": [[_finite(v) for v in row]
+                   for row in head[[c["key"] for c in columns]].to_numpy(float).tolist()],
+    }
+
+
 # ── 上传（页① 的第一块）──
 
 

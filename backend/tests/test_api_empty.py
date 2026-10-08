@@ -43,7 +43,11 @@ def _empty():
     deps.set_current_dataset(paths.dataset_path())
 
 
-#: 参数最少、覆盖三个不同 router 的四条接口。
+#: 参数最少、覆盖三个不同 router 的五条接口。
+#:
+#: `/api/dataset/preview` 与 `/api/dataset` 同一个 router，列在这里不为覆盖面 ——
+#: 是 T1 那句「防新加的路由漏了这条判断」：它读的也是当前那份宽表，漏了就是
+#: 空态下回一个 500。
 #:
 #: ⚠️ **`/api/field/arch` 不在名单里，这是有意的**：它由 `_arch_polyline()`
 #: 与 `_sensors()` 从 `tfield.config` 现算，**不碰数据集**，所以空态下它
@@ -53,6 +57,7 @@ def _empty():
 _空态下应当_409 = [
     "/api/dataset",
     "/api/dataset/timeseries",
+    "/api/dataset/preview",
     "/api/calibration",
     "/api/live/status",
 ]

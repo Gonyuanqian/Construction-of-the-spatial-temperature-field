@@ -84,7 +84,11 @@ export function buildResidualOption(panel: ResidualPanel, p: Palette): EChartsOp
     series: [
       {
         type: 'bar', silent: true, barCategoryGap: '22%',
-        itemStyle: { color: p.steel },
+        // ⚠️ 柱子走 `p.bar`（数据色），**不是** `p.steel`：`--steel` 在本仓是
+        // 「线、分隔、表格框」，拿它画柱子就是让数据穿界面线条的衣服
+        // （2026-10-08 人眼走查时改的，配色与对比度见 tokens.css 里 `--bar` 那一节）。
+        // 同一份 option 里的坐标轴与分割线**仍然**用 `p.steel` —— 那些才是界面线条。
+        itemStyle: { color: p.bar },
         data: means,
         // 零线。没有它，读者看不出「这根柱子是往上还是往下」——
         // 纵轴的范围是数据撑出来的，零不一定落在看得见的地方。

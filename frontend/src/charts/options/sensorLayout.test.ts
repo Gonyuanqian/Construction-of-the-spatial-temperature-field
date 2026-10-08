@@ -2,12 +2,17 @@ import { describe, expect, it } from 'vitest'
 
 import { buildSensorLayoutOption } from './sensorLayout'
 import type { ArchPayload, DatasetPayload } from '../../api/types'
+import { paletteColors } from '../../design/palette'
 
 const PALETTE = {
   paper: '#F7F6F2', ink: '#211F1C', inkMuted: '#5C5850',
   steel: '#DEDCD6', leaf: '#14532D', leafSoft: '#E7EFE9', net: '#0B0F0D',
   // 三个层的点色。值是用户那张切面图上的（seaborn deep），在 tokens.css 里定一次。
   layerTop: '#C44E52', layerMid: '#4C72B0', layerLow: '#55A868',
+  // 页② 残差图的柱子色。这一张图也不用它，同上。
+  bar: '#D98C2B',
+  // 图表字号。**是数不是色** —— canvas 的 fontSize 不吃 `'12px'`。
+  chartAxis: 12, chartTitle: 14,
 }
 
 const ARCH: ArchPayload = {
@@ -90,6 +95,22 @@ describe('页① 切面图', () => {
       left: expect.any(String), width: expect.any(String),
       top: expect.any(String), bottom: expect.any(String),
     })
+  })
+
+  it('图幅横向几乎占满卡片：两边不留大片白', () => {
+    // 2026-10-06 用户裁定。原先是 `left: '30%', width: '40%'`（「四边各留三成」）——
+    // 那是这张图**还占满整页宽**时按构图定的。页① 改成左右分栏之后卡片只剩一半，
+    // 同一组百分比把图幅压到约 190px，留白却原样留着，用户的原话是
+    // 「图表部分距离卡片的边缘还有很长一段距离」。
+    // 这条钉的不是哪两个数，是**那片白**：左右留白合计超过一成，就是又犯了一遍。
+    const g = buildSensorLayoutOption(ds(), ARCH, PALETTE).grid as Record<string, string>
+    const pct = (s: string) => Number.parseFloat(s) / 100
+    const left = pct(g.left)
+    const width = pct(g.width)
+    expect(left + width, '左右留白合计超过一成：图又缩回卡片中间了')
+      .toBeGreaterThanOrEqual(0.9)
+    expect(left + width, '图幅加左距超出了卡片').toBeLessThanOrEqual(1)
+    expect(left, '左边放不下纵轴刻度').toBeGreaterThanOrEqual(0.08)
   })
 
   it('轴只有一根，不再有 gridIndex', () => {
@@ -210,7 +231,7 @@ describe('页① 切面图', () => {
     const used = [PALETTE.paper, PALETTE.ink, PALETTE.steel,
       PALETTE.layerTop, PALETTE.layerMid, PALETTE.layerLow]
     for (const c of used) expect(flat.toUpperCase()).toContain(c.toUpperCase())
-    const allowed = new Set(Object.values(PALETTE).map((c) => c.toUpperCase()))
+    const allowed = new Set(paletteColors(PALETTE).map((c) => c.toUpperCase()))
     const hexes = [...flat.matchAll(/#[0-9A-Fa-f]{6}/g)].map((m) => m[0].toUpperCase())
     const foreign = [...new Set(hexes.filter((h) => !allowed.has(h)))]
     expect(foreign, `这些色不在调色板里：${foreign.join('、')}`).toEqual([])
