@@ -8,7 +8,8 @@
  * 照样会全绿 —— 而图会整个转置。
  */
 import type {
-  LiveFramePayload, LiveStatus, SectionShed, SectionsPayload, VolumePayload,
+  LiveFramePayload, LiveStatus, ModelDetailPayload, ModelsPayload,
+  SectionShed, SectionsPayload, VolumePayload,
 } from '../api/types'
 
 export function makeValues(): (number | null)[][] {
@@ -106,6 +107,76 @@ export function makeLiveFramePayload(over: Partial<LiveFramePayload> = {}): Live
  * ⚠️ `/api/dataset` 在这张表里是 **200**（「在用一份数据集」）。空态那几条用例
  * 由 `App.test.ts` 自己覆盖成 409/500 —— 它要的正是这个开关。
  */
+/**
+ * 模型库列表的载荷。
+ *
+ * ⚠️ **第一行必须是 `compatible: true` 且 `current_id: 1`。** 它是**全站默认**
+ * 的「有一个能用的模型」—— 页③ 与页⑤ 现有的那一批用例都靠它才继续走到
+ * 「画场」那条路。想测「一个能用的模型都没有」的，在用例里自己换一份
+ * （`vi.stubGlobal('fetch', ...)`），别改这里。
+ *
+ * 第二行是**对不上**的那一种：它让「哪些能用」这件事在默认载荷里就有一行
+ * 反例可看（`usableModels` 正是靠它才不是恒等式）。
+ */
+export function makeModelsPayload(): ModelsPayload {
+  return {
+    current_id: 1,
+    dataset_file: '人参棚_原始.xlsx',
+    dataset_sig: '0066856dc40a8bbc-h20260727T1200',
+    rows: [
+      {
+        id: 1, name: '七月下旬那套',
+        saved_at: '2026-10-08T09:12:33',
+        dataset_sig: '0066856dc40a8bbc-h20260727T1200',
+        groups_sig: 'd6294c09',
+        data_file: '人参棚_原始.xlsx',
+        data_start: '2026-07-23T11:00:00', data_end: '2026-07-27T11:55:00',
+        mae: 0.1685, rmse: 0.2537, r2: 0.9987,
+        is_current: true, compatible: true, why: '',
+      },
+      {
+        id: 2, name: '上一份数据训的',
+        saved_at: '2026-10-07T18:40:02',
+        dataset_sig: 'ffffffffffffffff-h20260727T1200',
+        groups_sig: 'd6294c09',
+        data_file: '别人家的棚.xlsx',
+        data_start: '2026-07-23T11:00:00', data_end: '2026-07-27T11:55:00',
+        mae: 0.2210, rmse: 0.3104, r2: 0.9971,
+        is_current: false, compatible: false,
+        why: '数据来源不同：别人家的棚.xlsx',
+      },
+    ],
+  }
+}
+
+export function makeModelDetailPayload(): ModelDetailPayload {
+  const row = makeModelsPayload().rows[0]
+  return {
+    ...row,
+    created_at: '2026-10-08T09:12:28',
+    tool_version: '0.1.0',
+    feature_groups: ['coord', 'zbasis', 'meteo', 'interaction'],
+    trend_kind: 'xgboost',
+    trend_params: { max_depth: 5, learning_rate: 0.05, n_estimators: 300 },
+    metric: { lx: 1, ly: 1, lz: 1, power: 2 },
+    cross_shed: true,
+    tuned_keys: ['metric.power', 'metric.lx', 'metric.lz', 'cross_shed',
+      'trend.max_depth', 'trend.learning_rate', 'trend.n_estimators'],
+    folds: ['position:x0.15_z0.4', 'position:x0.4_z0.7'],
+    metrics: [
+      { fold: 'position:x0.15_z0.4', fold_kind: 'position', region: '切面内',
+        group: 'A', tag: '调参组', n: 1308, mae: 0.0812, rmse: 0.1103, r2: 0.9996 },
+      { fold: 'position:x1.05_z0.7', fold_kind: 'position', region: '切面内',
+        group: 'B', tag: '报告组', n: 1308, mae: 0.1376, rmse: 0.1809, r2: 0.9993 },
+    ],
+    ab: { mae_a: 0.0812, mae_b: 0.1685, gap: -0.0873 },
+    plateau: [{ dim: 'metric.power', lo: '1.5', hi: '2.5' }],
+    best: { 'metric.power': 2, 'trend.max_depth': 5 },
+    n_trials: 40,
+    seed: 0,
+  }
+}
+
 export const PAGE_PAYLOADS: Record<string, unknown> = {
   '/api/health': { status: 'ok', version: '0.1.0' },
   '/api/dataset': {
@@ -154,6 +225,10 @@ export const PAGE_PAYLOADS: Record<string, unknown> = {
   // （气象、24 路读数、分级那几句）根本渲染不出来。
   '/api/live/status': makeLiveStatus({ state: 'ready', running: false, cursor: 3, total: 144 }),
   '/api/live/frame/': makeLiveFramePayload(),
+  // 次序无所谓：`matchPayload` 按前缀**长度从长到短**匹配，`/api/models/1`
+  // 会赢过 `/api/models`（这个文件头那段注释说的就是这件事）。
+  '/api/models': makeModelsPayload(),
+  '/api/models/1': makeModelDetailPayload(),
 }
 
 /**

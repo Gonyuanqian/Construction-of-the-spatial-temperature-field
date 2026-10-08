@@ -638,3 +638,70 @@ export interface DiagnosticsPayload {
   params_used: Record<string, ParamValue>
   note: string
 }
+
+/**
+ * 模型库里的一行。字段名与 `backend/api/models_store.py::ModelRow.to_dict()`
+ * 逐字对应，另加两个**由后端按当前数据集算出来**的字段。
+ */
+export interface ModelRowPayload {
+  id: number
+  name: string
+  /** ⚠️ 用户**点保存**的时刻。与详情里那个 `created_at`（标定跑完的时刻）
+   *  不是一回事，平时只差几秒。页上写「保存于」。 */
+  saved_at: string
+  dataset_sig: string
+  groups_sig: string
+  data_file: string
+  data_start: string
+  data_end: string
+  /** ⚠️ 三个都可以是 null（B 组一折都没算出有限值时）。null 是**后端承认的
+   *  合法状态**，不是 0，也不是整行缺失 —— 与 `MetricRow` 同一条房规。 */
+  mae: number | null
+  rmse: number | null
+  r2: number | null
+  is_current: boolean
+  /** 能不能拿来给**当前**训练段构场。 */
+  compatible: boolean
+  /** 对不上时那一句人话；对得上时是空串（不是 null —— 前端不用判两种空）。 */
+  why: string
+}
+
+export interface ModelsPayload {
+  rows: ModelRowPayload[]
+  /** 当前模型的行号。一行都没有、或一行都没标当前时是 null。 */
+  current_id: number | null
+  /** 当前数据集的文件名。列表上那两行「对不上」的理由由后端算好，
+   *  这一格只是让前端有机会在页面上说清「在比的是哪一份」。 */
+  dataset_file: string
+  dataset_sig: string
+}
+
+/**
+ * 详情里那张逐折表的一行。
+ *
+ * ⚠️ **是别名，不是又抄一份接口**：`GET /api/models/{id}` 的 `metrics` 与
+ * `/api/calibration` 的 `metrics` 是同一个 DataFrame 出来的同一组列
+ * （后端 `models.py` 逐列原样转）。抄一份出来，两边就会各自漂 ——
+ * 而漂的表现是某一页静默渲染 `undefined`，测试照样绿。
+ */
+export type ModelMetricRow = MetricRow
+
+export interface ModelDetailPayload extends ModelRowPayload {
+  /** ⚠️ **标定跑完**的时刻。`saved_at` 才是保存的时刻。 */
+  created_at: string | null
+  tool_version: string
+  feature_groups: string[]
+  trend_kind: string
+  trend_params: Record<string, ParamValue>
+  metric: { lx: number; ly: number; lz: number; power: number }
+  cross_shed: boolean
+  tuned_keys: string[]
+  folds: string[]
+  metrics: ModelMetricRow[]
+  /** ⚠️ 整个块可以是 null；块里三个浮点也可以是 null（同 `CalibrationPayload.ab`）。 */
+  ab: { mae_a: number | null; mae_b: number | null; gap: number | null } | null
+  plateau: PlateauRow[]
+  best: Record<string, ParamValue>
+  n_trials: number
+  seed: number
+}
