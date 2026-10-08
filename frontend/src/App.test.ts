@@ -88,6 +88,8 @@ describe('应用外壳', () => {
     // 按 NAV_ITEMS 推导，不写死清单：写死的清单会在**页面开放的当天过期**，
     // 而"打开一个页面"恰恰就是本任务在做的事。同一个文件第 71 行就是这么写的。
     expect(links).toEqual(NAV_ITEMS.filter((i) => i.enabled).map((i) => i.label))
+    // ⚠️ `/models` 不在 `NAV_ITEMS` 里，所以它不参与上面这条对账，
+    // 到了那一页左栏也不高亮任何一项 —— 那是**有意的**（规格书 D8）。
     for (const item of NAV_ITEMS.filter((i) => !i.enabled)) {
       expect(rail.text()).toContain(item.why)   // 理由看得见，不藏在 title 里
     }

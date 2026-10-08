@@ -6,6 +6,7 @@ import {
 import { NAV_ITEMS } from '../design/copy'
 import DataView from '../views/DataView.vue'
 import FieldView from '../views/FieldView.vue'
+import ModelsView from '../views/ModelsView.vue'
 import TrainView from '../views/TrainView.vue'
 
 /**
@@ -49,6 +50,12 @@ export function createAppRouter(history?: RouterHistory): Router {
         // 收起左侧导航（`App.vue` 按这个 meta 决定）。
         meta: { rail: false },
       },
+      // 模型库（规格书 §6.1）：列表与详情是同一个功能的两态，一个组件两条
+      // 路由。**静态 import** —— 与除 `/live` 外的全部路由一致。
+      // 它不进 `NAV_ITEMS`：入口是标题条右侧那个图标（规格书 D8），
+      // 而左导航那一列有测试钉着「<a> 的数量与次序精确等于已开放项」。
+      { path: '/models', name: 'models', component: ModelsView },
+      { path: '/models/:id', name: 'model-detail', component: ModelsView },
       // `/` 与认不出的路径都落回页①：演示时最怕的是白屏，
       // 一个回到起点的跳转至少还看得见东西。
       { path: '/', redirect: '/data' },

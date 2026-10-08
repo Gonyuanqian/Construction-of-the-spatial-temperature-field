@@ -25,7 +25,7 @@ import { createMemoryHistory } from 'vue-router'
 
 import App from './App.vue'
 import { createAppRouter } from './router'
-import { NAV_ITEMS } from './design/copy'
+import { MODELS, NAV_ITEMS } from './design/copy'
 import { matchPayload } from './test/fixtures'
 
 /**
@@ -142,5 +142,18 @@ describe('路由冒烟', () => {
     // 帧那一块确实渲染出来了（不然这条扫的只是一句标题）。
     expect(w.text()).toContain('棚顶气象')
     assertCleanText(w.text(), '/live')
+  })
+
+  it('模型库列表点得进去', async () => {
+    // `/models` 不在 `NAV_ITEMS` 里（它是标题条上的图标），所以上面那个
+    // 逐页循环扫不到它。与 `/live` 那一条同一个理由，也同一个缺口：
+    // 渲染用的是**替身载荷**，后端真实文案不经过这里。
+    const router = createAppRouter(createMemoryHistory())
+    await router.push('/models')
+    await router.isReady()
+    const w = mount(App, { attachTo: document.body, global: { plugins: [router] } })
+    await flushPromises()
+    expect(w.text()).toContain(MODELS.title)
+    assertCleanText(w.text(), '/models')
   })
 })

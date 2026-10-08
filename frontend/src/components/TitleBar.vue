@@ -22,7 +22,7 @@ import { onMounted } from 'vue'
 
 import { getJson } from '../api/client'
 import { useAsync } from '../composables/useAsync'
-import { SYSTEM_TITLE } from '../design/copy'
+import { MODELS, SYSTEM_TITLE } from '../design/copy'
 
 const health = useAsync(() => getJson<{ status: string; version: string }>('/api/health'))
 
@@ -32,14 +32,32 @@ onMounted(() => void health.run())
 <template>
   <header class="titlebar">
     <h1>{{ SYSTEM_TITLE }}</h1>
-    <p class="backend">
-      <template v-if="health.error.value">后端：{{ health.error.value }}</template>
-      <template v-else-if="health.data.value">
-        后端：{{ health.data.value.status }}，库版本
-        <span class="num">{{ health.data.value.version }}</span>
-      </template>
-      <template v-else>后端：检查中</template>
-    </p>
+    <div class="right">
+      <!-- 模型库的入口。**不进左导航**：那一列有测试钉着「<a> 的数量与
+           次序精确等于已开放项」（App.test.ts），而用户 2026-10-08 指定的
+           位置就是标题条右边、紧挨着「后端：ok」。 -->
+      <RouterLink class="to-models" to="/models"
+                  :title="MODELS.entry" :aria-label="MODELS.entry">
+        <!-- 档案盒。内联 SVG 而不是图标字体 / 图片：它要跟着 `.backend`
+             那行字一起对齐，而且 **`currentColor` 上色** —— 十六进制色
+             在这个仓里只许出现在 tokens.css 与 charts/scale.ts。 -->
+        <svg viewBox="0 0 16 16" width="16" height="16"
+             aria-hidden="true" focusable="false" fill="none"
+             stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+          <path d="M2 3.5h12v2.5H2z" />
+          <path d="M3 6.5h10v7H3z" />
+          <path d="M6.5 9.2h3" />
+        </svg>
+      </RouterLink>
+      <p class="backend">
+        <template v-if="health.error.value">后端：{{ health.error.value }}</template>
+        <template v-else-if="health.data.value">
+          后端：{{ health.data.value.status }}，库版本
+          <span class="num">{{ health.data.value.version }}</span>
+        </template>
+        <template v-else>后端：检查中</template>
+      </p>
+    </div>
   </header>
 </template>
 
@@ -60,11 +78,31 @@ onMounted(() => void health.run())
   font-weight: var(--w-title);
   letter-spacing: 0.01em;
 }
-.backend {
+.right {
   grid-column: 3;
   justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: var(--gap-s);
+  /* ⚠️ `align-self: center` 是承重的，不是顺手加的。外面那条栅格是
+     `align-items: baseline`，而 `.right` 现在是个 flex 盒子 —— 它的基线由
+     **第一个 flex 子项**（那个 `<a>`，里面只有一个 `<svg>`）合成，也就是
+     图标的**下边缘**。不写这一句，图标下沿会跟 26px 的标题基线对齐，
+     整簇往右下坠。 */
+  align-self: center;
+}
+.backend {
   margin: 0;
   color: var(--steel);
   font-size: var(--size-label);
 }
+.to-models {
+  color: var(--paper);
+  display: inline-flex;
+  align-items: center;
+  /* 触摸目标：图标只有 16px，四周补出可点区域 */
+  padding: 2px;
+  border-radius: var(--radius);
+}
+.to-models:hover { color: var(--steel); }
 </style>
