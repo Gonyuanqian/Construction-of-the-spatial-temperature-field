@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { createMemoryHistory } from 'vue-router'
 
 import FieldView from './FieldView.vue'
+import { createAppRouter } from '../router'
+import { FIELD_MODEL } from '../design/copy'
+import { makeModelsPayload } from '../test/fixtures'
 
 /**
  * 与页① 同款的两个环境夹具（Ruling P5）：tokens 读不到就抛错的调色板，
@@ -90,11 +94,24 @@ function stub(routes: Record<string, unknown>) {
   }))
 }
 
-const OK = { '/api/field/curve': CURVE, '/api/field/compare': COMPARE, '/api/field/sections': SECTIONS }
+/**
+ * 三个 field 接口那一份。
+ *
+ * ⚠️ **`/api/models` 必须在这里**（从 Task 10 起）：这一页现在先问库里有
+ * 没有能用的模型，没有就一个场都不画、三个 field 接口一个都不打。
+ * 缺了它，`stub()` 会把 `/api/models` 判成 404，下面那十几条既有用例
+ * 全都掉进空态 —— 而它们一条都没改过，红的理由离「少了一个键」很远。
+ */
+const OK = { '/api/field/curve': CURVE, '/api/field/compare': COMPARE,
+             '/api/field/sections': SECTIONS, '/api/models': makeModelsPayload() }
 
 function mountView() {
   return mount(FieldView, {
     global: {
+      // 空态那一支挂着 `<RouterLink>`（「去模型库挑一个」／「去模型训练训一个」）。
+      // 不给路由的话 Vue 解析不出 `RouterLink`，按未知标签渲染并**打警告** ——
+      // 断言照样绿，但每次跑测试都刷一遍警告。
+      plugins: [createAppRouter(createMemoryHistory())],
       stubs: {
         // 占位必须自称 EChart：findAllComponents({name}) 按名字找。
         EChart: { name: 'EChart', props: ['option'], emits: ['pick'],
@@ -452,5 +469,108 @@ describe('页③ 空间温度场的构建', () => {
     const card = w.findAll('.stat')[0]
     expect(card.find('.label').text()).toBe('时刻')
     expect(card.find('.value').text()).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
+  })
+})
+
+describe('模型库与页③', () => {
+  beforeEach(() => { installEnvironment(); vi.restoreAllMocks() })
+
+  /** 「有一条能用」的那一份：第一行 compatible，且它就是当前。 */
+  const USABLE = makeModelsPayload()
+
+  /** 「一条能用的都没有」：把每一行都标成对不上。 */
+  function noneUsable() {
+    const p = makeModelsPayload()
+    p.rows = p.rows.map((r) => ({ ...r, compatible: false,
+                                  why: '数据来源不同：别人家的棚.xlsx' }))
+    p.current_id = null
+    return p
+  }
+
+  function mountWithModels(payload: unknown) {
+    stub({ ...OK, '/api/models': payload })
+    return mountView()
+  }
+
+  it('页首有一个下拉，列出能用的与对不上的', async () => {
+    const w = mountWithModels(USABLE)
+    await flushPromises()
+    const opts = w.get('#field-model').findAll('option')
+    expect(opts.map((o) => o.text()).join(' ')).toContain('七月下旬那套')
+    expect(opts.map((o) => o.text()).join(' ')).toContain('别人家的棚.xlsx')
+    expect(opts).toHaveLength(2)
+  })
+
+  it('对不上的选项被标出来而且选不了', async () => {
+    // 规格书 §6.4：对不上的也要**列出来**（用户得知道库里有什么、
+    // 为什么用不上），但选不中。
+    const w = mountWithModels(USABLE)
+    await flushPromises()
+    const bad = w.get('#field-model').findAll('option')
+      .find((o) => o.text().includes('别人家的棚.xlsx'))!
+    expect(bad.attributes('disabled'), '对不上的那一项能选中').toBeDefined()
+    expect(bad.text()).toContain('数据来源不同')
+  })
+
+  it('没有可用模型时一个图都不画，而且一个 field 接口都不打', async () => {
+    // ⭐ Review Focus 5，也是整条需求的原点：不给用户一个「看着对的错场」。
+    //
+    // ⚠️ 断言的是 `charts(w)` 与**请求**，不是 `findAll('canvas')`：
+    // 这个文件里 `EChart` 是替身（`<div class="chart-stub" />`），
+    // jsdom 里本来就没有 canvas —— `expect(w.findAll('canvas')).toHaveLength(0)`
+    // 是一条**永远绿**的断言，删掉组件它也绿。
+    const w = mountWithModels({ rows: [], current_id: null,
+                                dataset_file: 'f.xlsx', dataset_sig: 'a' })
+    await flushPromises()
+    expect(w.text()).toContain(FIELD_MODEL.none)
+    expect(w.text()).toContain(FIELD_MODEL.toLibrary)
+    expect(w.text()).toContain(FIELD_MODEL.toTrain)
+    expect(charts(w), '没有可用模型却画了图').toHaveLength(0)
+    // 断面载荷里那句话 —— 它只可能来自 `/api/field/sections`
+    expect(w.text()).not.toContain('三格共享同一个色标范围')
+    // ⭐ 而且**根本没问**：多打三个请求只是白等，还会让后端白算一遍场
+    expect(urls.filter((u) => u.includes('/api/field/')),
+      '没有可用模型却去取了场的数据').toEqual([])
+  })
+
+  it('全都对不上时也走空态，不是半画', async () => {
+    // 上面那条是「一行都没有」，这条是「有两行、一行都用不上」——
+    // 两条分开写，因为它们是两种不同的分支，而后者更容易被写成
+    // 「有模型，那就画吧」。
+    const w = mountWithModels(noneUsable())
+    await flushPromises()
+    expect(w.text()).toContain(FIELD_MODEL.none)
+    expect(charts(w)).toHaveLength(0)
+    expect(urls.filter((u) => u.includes('/api/field/'))).toEqual([])
+  })
+
+  it('有可用模型时照常画场，并且页首有下拉', async () => {
+    // 上面两条的反面。少了它，一个「永远走空态」的实现照样全绿 ——
+    // 而那是这条规则最坏的坏法：页③ 从此什么都画不出来，还不报错。
+    const w = mountWithModels(USABLE)
+    await flushPromises()
+    expect(w.find('#field-model').exists()).toBe(true)
+    expect(w.text()).not.toContain(FIELD_MODEL.none)
+    // 与文件里那条既有的「一开始就挂上」同数：切面场、ΔT，一张不多一张不少
+    // （曲线要等点选）。写成精确值才拦得住「模型对不上也照样把两张画上」。
+    expect(charts(w), '有可用模型却没画').toHaveLength(2)
+    expect(urls.some((u) => u.includes('/api/field/sections'))).toBe(true)
+  })
+
+  it('选另一个模型会把它设成全站当前', async () => {
+    // 页③ 与页⑤ 共用「当前模型」这一个概念（规格书 D3）—— 换一处两处都换。
+    //
+    // ⚠️ 这里**必须**让第二行也可用：`USABLE` 里第二行是对不上的，而下拉里
+    // 对不上的那些是 `disabled` —— 拿它演「换一个模型」等于演一件用户做不到
+    // 的事（`setValue` 是直接写 DOM，绕过 disabled）。对不上那一项的处置
+    // 由上面「对不上的选项被标出来而且选不了」钉着。
+    const p = makeModelsPayload()
+    p.rows[1] = { ...p.rows[1], compatible: true, why: '' }
+    const w = mountWithModels(p)
+    await flushPromises()
+    await w.get('#field-model').setValue('2')
+    await flushPromises()
+    expect(urls.some((u) => u.includes('/api/models/2/current')),
+      '换了一个模型却没有把它设成全站当前').toBe(true)
   })
 })

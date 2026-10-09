@@ -17,6 +17,7 @@ import { computed, defineAsyncComponent, h, onMounted, ref, watch } from 'vue'
 
 import type { ComparePayload, CurvePayload, SectionsPayload } from '../api/types'
 import { getJson } from '../api/client'
+import { fetchModels, setCurrentModel, usableModels } from '../api/models'
 import EChart from '../charts/EChart.vue'
 import { buildConstraintDeltaOption, deltaNote } from '../charts/options/constraintDelta'
 import { buildPointCurveOption, CURVE_NO_MONOTONIC_NOTE } from '../charts/options/pointCurve'
@@ -27,7 +28,7 @@ import Provenance from '../components/Provenance.vue'
 import StatCard from '../components/StatCard.vue'
 import StatRow from '../components/StatRow.vue'
 import { useAsync } from '../composables/useAsync'
-import { FIELD_VIEWS } from '../design/copy'
+import { FIELD_MODEL, FIELD_VIEWS } from '../design/copy'
 import { fmt1, fmtRange, fmtTime } from '../design/format'
 import { readPalette } from '../design/palette'
 
@@ -74,12 +75,57 @@ const curve = useAsync(async () => {
     `/api/field/curve?shed=${p.shed}&x=${s.x[p.ix]}&z=${s.z[p.iz]}`)
 })
 
-function reload() {
+/**
+ * 模型库那一支（规格书 §6.4）。**这一页的场从哪来，由用户在这里点**——
+ * 系统不再自己找一个模型就开始构建。
+ *
+ * ⚠️ 这一行必须**先**完成（见 `onMounted`）：`ready` 是由它算出来的，
+ * 次序反了的话 `ready` 还是 false，下面那三个取数全被挡掉，首屏永远空白。
+ */
+const models = useAsync(fetchModels)
+
+/**
+ * 能用来构场的那些。**空数组 = 什么都不画**（规格书 D4）。
+ *
+ * ⚠️ 条件里**不看** `current_id`：「当前模型对不上当前数据集」与「一个能用的
+ * 都没有」在界面上是同一件事（都要用户去挑一个）。分开处理会长出一个
+ * 半画的状态 —— 画了场、标一句「对不上」，而那个场看着完全正常。
+ */
+const usable = computed(() => usableModels(models.data.value))
+const ready = computed(() => usable.value.length > 0)
+
+/** 下拉的当前值。库里标着当前、且可用的那一行；否则第一行可用的。 */
+const modelId = computed<number | null>(() => {
+  const id = models.data.value?.current_id ?? null
+  if (id !== null && usable.value.some((r) => r.id === id)) return id
+  return usable.value[0]?.id ?? null
+})
+
+async function onPickModel(e: Event): Promise<void> {
+  const id = Number((e.target as HTMLSelectElement).value)
+  if (!Number.isFinite(id) || id === modelId.value) return
+  await setCurrentModel(id)
+  await models.run()
+}
+
+/** 读数印四位。⚠️ 只印后端给的数，null 就印「无值」—— 不补一个 0。 */
+function num(v: number | null): string {
+  return v === null || !Number.isFinite(v) ? '无值' : v.toFixed(4)
+}
+
+function reload(): void {
+  // ⚠️ 没有可用模型时那三个 field 接口一个都不打：打了也拿不到场，
+  // 只是让后端白算一遍，而用户要多等一轮。
+  if (!ready.value) return
   void sections.run()
   void compare.run()
 }
 
-onMounted(reload)
+onMounted(async () => {
+  // 次序：先问库里有什么模型，再决定要不要取场（`ready` 由第一个请求算出来）。
+  await models.run()
+  reload()
+})
 watch(tIndex, reload)
 watch(activeShed, () => void compare.run())
 
@@ -146,6 +192,48 @@ const failure = computed(() =>
   <section>
     <h2>空间温度场的构建</h2>
 
+    <!-- 用哪个模型（规格书 §6.4）。**这是需求的原点**：场由用户挑的模型构出来，
+         不由系统自己找一个就开始构建。
+         ⚠️ 对不上的那些也**列出来**（用户得知道库里有什么、为什么用不上），
+         但它们选不中 —— 半画（画了场再标一句「对不上」）等于把一个看着对的
+         错场端给用户。 -->
+    <div v-if="ready" class="model-pick">
+      <label for="field-model">{{ FIELD_MODEL.pick }}</label>
+      <select id="field-model" :value="modelId ?? ''" @change="onPickModel">
+        <option v-for="row in models.data.value?.rows ?? []" :key="row.id"
+                :value="row.id" :disabled="!row.compatible" :title="row.why">
+          {{ row.name }}　{{ row.data_file }}　MAE {{ num(row.mae) }}
+          <template v-if="!row.compatible">（{{ row.why }}）</template>
+        </option>
+      </select>
+    </div>
+
+    <!-- 空态三支，与「有模型」互斥。⚠️ 取数还没回来那一支**什么都不说**：
+         这一页此刻还不知道库里有没有东西，说错一句比不说坏。 -->
+    <Card v-else-if="models.error.value">
+      <p class="err" role="alert">{{ models.error.value }}</p>
+    </Card>
+
+    <Card v-else-if="!models.data.value" />
+
+    <Card v-else>
+      <h3>{{ FIELD_MODEL.none }}</h3>
+      <!-- ⚠️ `state` 是这一页**此刻**为什么是一片空白的说明，与页② 那句
+           「先做参数优选」同一类。`design/prose.test.ts` 是 spec §十二.11 的
+           判据本身：不带它这一句会被判成「没归类的散文」，而它确实不是
+           口径 —— 口径讲的是这一页怎么读，这一句讲的是这一页现在为什么没有东西。 -->
+      <p class="note state">{{ FIELD_MODEL.noneWhy }}</p>
+      <p>
+        <RouterLink to="/models">{{ FIELD_MODEL.toLibrary }}</RouterLink>
+        　
+        <RouterLink to="/train">{{ FIELD_MODEL.toTrain }}</RouterLink>
+      </p>
+    </Card>
+
+    <!-- ⚠️ 整页（含左栏那几个控件）都在 `ready` 里面：没有能用的模型时
+         连时刻游标、视图切换都不给 —— 它们没有一个能起作用，
+         摆着只会让人以为再点一下就会出来一张场。 -->
+    <template v-if="ready">
     <!-- 左栏控件。App.vue 把整列交给了 NavRail，所以这里投进它留的落点
          （spec §8.3：左栏是窄的仪器侧栏，导航 + 视图切换 + 时刻游标）。
          `defer`：落点 `#rail-extra` 由 NavRail 渲染，与本页同在一棵树里；
@@ -282,11 +370,22 @@ const failure = computed(() =>
 
     <!-- 5. 三维棚体（懒加载的一块）。时刻跟着上面那个钟走，三维不新增时间控件。 -->
     <VolumeView v-else :t-index="tIndex" :clock-time="sections.data.value?.time ?? ''" />
+    </template>
   </section>
 </template>
 
 <style scoped>
 .block { margin-bottom: var(--gap-xl); }
+/* 选模型那一行。它在页首、正文之上 —— 场是它构出来的，先读它再读场。 */
+.model-pick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-s);
+  margin-bottom: var(--gap-m);
+}
+.model-pick label { font-size: var(--size-note); color: var(--ink-muted); }
+.model-pick select { flex: 1 1 320px; min-width: 0; }
 .row { display: flex; gap: var(--gap-s); align-items: center; }
 .head { justify-content: space-between; }
 .alert { color: var(--leaf); border-left: 3px solid var(--leaf); padding-left: var(--gap-s); }
