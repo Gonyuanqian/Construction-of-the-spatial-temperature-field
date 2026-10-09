@@ -25,6 +25,7 @@ import { computed, defineAsyncComponent, h, onMounted, onUnmounted, ref } from '
 
 import type { LiveFramePayload, LiveStatus, PrepareResult } from '../api/types'
 import { getJson, postJson } from '../api/client'
+import { fetchModels, usableModels } from '../api/models'
 import EChart from '../charts/EChart.vue'
 import { buildSectionFieldOption, shedOfSeries } from '../charts/options/sectionField'
 import { interpretPick, pickText } from '../charts/pick'
@@ -32,7 +33,7 @@ import Card from '../components/Card.vue'
 import StatCard from '../components/StatCard.vue'
 import StatRow from '../components/StatRow.vue'
 import { useAsync } from '../composables/useAsync'
-import { FIELD_VIEWS } from '../design/copy'
+import { FIELD_MODEL, FIELD_VIEWS } from '../design/copy'
 import { fmtTime } from '../design/format'
 import { readPalette } from '../design/palette'
 
@@ -49,6 +50,24 @@ const VolumeView = defineAsyncComponent({
 })
 
 const palette = readPalette()
+
+/* ── 模型库：这一屏能不能算，由它定 ─────────────────────── */
+
+const models = useAsync(fetchModels)
+
+/**
+ * 有没有一条能用的模型。**与页③ 读同一个出口**（`api/models.ts` 的
+ * `usableModels`）—— 各判一次不会报错，只会漂成「页③ 有场、页⑤ 说没模型」，
+ * 而两页看的是同一个训练段、同一份库。
+ *
+ * ⚠️ 名字**不能**叫 `ready` —— 下面已经有一个
+ * `const ready = computed(() => status.value?.state === 'ready')`（实时源准备好没）。
+ * 一个说的是「源备好了」，一个说的是「有模型可算」，两件事两个名字。
+ */
+const hasModel = computed(() => usableModels(models.data.value).length > 0)
+
+/** 取数**回来了**。用它把「还不知道」与「知道没有」分开 —— 见模板那一支。 */
+const modelsLoaded = computed(() => models.data.value !== null)
 
 /* ── 状态与三个控件 ─────────────────────────────────────── */
 
@@ -103,9 +122,17 @@ const POLL_MS = 5000
 let timer: ReturnType<typeof setInterval> | undefined
 
 onMounted(async () => {
-  await refreshStatus()
+  // 次序：先问库里有不有能用的模型（`hasModel` 由它算出来），
+  // 再决定要不要去碰实时源 —— 没有模型的实时源开不了，问了也是白问。
+  await models.run()
+  if (hasModel.value) await refreshStatus()
   if (ready.value) void frame.run()
   timer = setInterval(async () => {
+    // ⚠️ 这一句**不靠**下面那句顺带挡住（没跑过 `refreshStatus()` 时
+    // `status` 是 null）。写成显式的一句是为了把意图放在脸上：
+    // 以后谁把 `refreshStatus()` 挪到前面，这一屏就会每 5 秒问一次
+    // 一个没法算的服务端。
+    if (!hasModel.value) return
     // 暂停时不轮询（规格书 §6.3，也是 §8.2 验收清单里的一条）：暂停时服务端
     // 什么都不动，这一问必然什么都没变。控件点完是 `act()` 去问状态，
     // 不走这里 —— 于是「下一帧」在暂停下照样立刻更新。
@@ -162,6 +189,31 @@ const readout = computed(() => {
 
     <p v-if="error" role="alert" class="alert">{{ error }}</p>
 
+    <!-- ⚠️ 整屏都在 `hasModel` 里：没有能用的模型时连状态条、指标卡、
+         那几个控件都不给 —— 它们一个都起不了作用，摆着只会让人以为
+         再点一下就会有一帧出来。
+         ⚠️ 三支空态的**次序不能反**：取数失败时 `data` 也是 `null`，
+         「连不上」与「还没回来」两条都成立，先撞上谁由次序定。
+         把「连不上」说成「还没有可用的模型」是本仓最忌讳的错法
+         （规格书 §七）—— 空库是用户能解决的状态（去训一个），
+         连不上不是；说成空库，他会去训一个，然后保存时再撞一次同样的 500。 -->
+    <Card v-if="models.error.value">
+      <p class="err" role="alert">{{ models.error.value }}</p>
+    </Card>
+
+    <Card v-else-if="!modelsLoaded"><!-- 取数还没回来：什么断言都不下 --></Card>
+
+    <Card v-else-if="!hasModel">
+      <h3>{{ FIELD_MODEL.none }}</h3>
+      <p class="note state">{{ FIELD_MODEL.noneWhy }}</p>
+      <p>
+        <RouterLink to="/models">{{ FIELD_MODEL.toLibrary }}</RouterLink>
+        　
+        <RouterLink to="/train">{{ FIELD_MODEL.toTrain }}</RouterLink>
+      </p>
+    </Card>
+
+    <template v-else>
     <!-- 一行写完，别换行：这一句是要被断言、也是要被读的。 -->
     <p v-if="status" class="note state" role="status">
       实时源{{ ready ? '已就绪' : '还没准备' }}：第 {{ status.cursor }} 帧，共 {{ status.total }} 帧，{{ intervalText }}。帧历史在内存里，重启服务就回到第 0 帧。
@@ -270,6 +322,7 @@ const readout = computed(() => {
         这里一帧一帧把它们接进时间轴。
       </p>
     </details>
+    </template>
   </section>
 </template>
 
