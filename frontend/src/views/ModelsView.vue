@@ -12,7 +12,7 @@
  * ⚠️ 它**不进 `NAV_ITEMS`**：入口是标题条右侧那个图标（规格书 D8），
  * 而左导航那一列有测试钉着「`<a>` 的数量与次序精确等于已开放项」。
  */
-import { computed, onMounted, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { fetchModelDetail, fetchModels, setCurrentModel } from '../api/models'
@@ -33,8 +33,20 @@ const detailId = computed(() => (route.name === 'model-detail' ? Number(route.pa
 
 // ⚠️ 两态各取各的：列表态不该去打 `/api/models/{id}`，详情态也不该去打
 // `/api/models` —— 后者的响应体里那十几行在详情页一个字都用不上。
-onMounted(() => { if (detailId.value === null) void models.run() })
-watch(detailId, (id) => { if (id !== null) void detail.run() }, { immediate: true })
+//
+// ⚠️ **两个方向都要接。** 只接「进详情」那一半会漏掉**回到列表**那一半：
+// 这个组件由两条路由共用（`App.vue` 的 `<RouterView :key="dataset.version…">`
+// 在路由切换时 key 不变），`/models/1` → `/models` **不会重新 mount**，
+// `onMounted` 里那次取数也就不再跑；而 `id` 变成 `null` 又被 `if (id !== null)`
+// 挡掉 —— `models.data` 停在 `null`，列表那三个 `v-else-if` 全不成立，屏上
+// 只剩一个标题。本仓最怕的就是这种白屏：不报错，也不说为什么。在详情地址上
+// 直接刷新浏览器、再点「回模型库」，走的就是这条路。
+//
+// `immediate: true` 顺带把挂载那一次也管了（原来那句 `onMounted` 就是这件事）。
+watch(detailId, (id) => {
+  if (id === null) void models.run()
+  else void detail.run()
+}, { immediate: true })
 
 /** 小数印四位。⚠️ 只印后端给的数，null 就印「无值」—— 不补一个 0。 */
 function num(v: number | null): string {

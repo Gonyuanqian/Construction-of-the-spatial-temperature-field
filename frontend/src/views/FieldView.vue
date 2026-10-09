@@ -106,6 +106,14 @@ async function onPickModel(e: Event): Promise<void> {
   if (!Number.isFinite(id) || id === modelId.value) return
   await setCurrentModel(id)
   await models.run()
+  // ⚠️ **`models.run()` 到这儿还不够。** 它换掉的是「当前模型」这一个标；
+  // 屏上那两张场是 `/api/field/sections` 与 `/api/field/compare` 按**旧模型**
+  // 算好、已经摆在组件里的像素。不重取，下拉与「当前」都指向新模型，图还是
+  // 旧的 —— 而且不报错、不提示，只是端出一张旧模型算的场，正是规格书 D4 说的
+  // 「看着对的错场」。已点选的那条曲线（`/api/field/curve`）同理，后端也是按
+  // 当前模型现算的。
+  reload()
+  if (picked.value) void curve.run()
 }
 
 /** 读数印四位。⚠️ 只印后端给的数，null 就印「无值」—— 不补一个 0。 */

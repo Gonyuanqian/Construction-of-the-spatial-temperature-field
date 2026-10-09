@@ -160,6 +160,29 @@ describe('模型库详情', () => {
     for (const k of ['metric.power', 'trend.max_depth']) expect(text).toContain(k)
   })
 
+  it('从详情回到列表会重新取列表 —— 不是一片空白', async () => {
+    // ⭐ 终审 Important 3。两条路由共用这一个组件实例（`App.vue` 的
+    // `<RouterView :key="dataset.version…">` 在路由切换时 key 不变，实例被
+    // 复用、不会重新 mount），于是从 `/models/1` 回到 `/models` 时
+    // `onMounted` 不再跑。只接「进详情」那一半的话，`models.data` 停在
+    // `null`，列表那三个 `v-else-if` 全不成立，屏上只剩标题 —— 本仓最怕的
+    // 那种白屏：不报错，也不说为什么。在详情地址上直接刷新浏览器、再点
+    // 「回模型库」，走的就是这条路。
+    stub(makeModelsPayload())
+    const router = createAppRouter(createMemoryHistory())
+    await router.push('/models/1')
+    await router.isReady()
+    const w = mount(ModelsView, { global: { plugins: [router] } })
+    await flushPromises()
+    expect(w.text()).toContain('保存于')              // 前提：确实在详情态
+
+    await router.push('/models')
+    await flushPromises()
+
+    expect(w.get('table thead').text()).toContain('模型的名字')
+    expect(w.text()).not.toContain('保存于')
+  })
+
   it('A/B 分开印，而且 gap 说的是「调参带来的乐观偏差」', async () => {
     stub(makeModelsPayload())
     const w = await mountAt('/models/1')

@@ -198,3 +198,65 @@ def test_列表不带包_只有一行字段(db, ds):
     assert set(rows[0].to_dict()) == {
         "id", "name", "saved_at", "dataset_sig", "groups_sig", "data_file",
         "data_start", "data_end", "mae", "rmse", "r2", "is_current"}
+
+
+def _drop_db(name: str) -> None:
+    """删掉一个库。**只服务于下面那条测试**，库名由它自己给。
+
+    走 `with_db=False`：这一步要在库**不存在**的时候也能跑，所以不能依赖
+    `db_name()` 指向的那个库。
+    """
+    conn = models_store.connect(with_db=False)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"DROP DATABASE IF EXISTS `{name}`")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _has_db(name: str) -> bool:
+    """这个库在不在。**问服务端，不问 `connect()`** —— 后者从这一条改完起
+    会自己把库建出来，拿它当判据就成了一根永远为真的探针。"""
+    conn = models_store.connect(with_db=False)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SHOW DATABASES LIKE %s", (name,))
+            return cur.fetchone() is not None
+    finally:
+        conn.close()
+
+
+def test_库还不存在时_第一次连会自建(monkeypatch):
+    """⭐ 终审 Critical 2，也是规格书 §四 那一句的实现：
+    「程序第一次连时 `CREATE DATABASE IF NOT EXISTS` 自建」。
+
+    ⚠️ 为什么这条非有不可：没有它，任何一台还没建过 `tfield_models` 的机器上
+    启动就是 500 —— 而且不止模型库那四条，**每一条走 `get_pipeline` 的
+    field 路由也一起 500**（`deps.current_bundle()` 要读「当前模型」）。
+    报得响是好的，但「第一次连就自建」这条承诺落不了地。
+
+    ⚠️ 用一个**谁都不用的**库名。拿 `tfield_models_test` 演不出来 ——
+    `empty_library` 已经把它建好了，测的是「库在的时候能连上」。也**绝不能**
+    是 `tfield_models`：conftest 的 `_pin_test_library` 当场就把这条拦下
+    （那里写着为什么）。
+    """
+    name = "tfield_models_autocreate_test"
+    assert name != "tfield_models"
+    monkeypatch.setenv("TFIELD_MYSQL_DB", name)
+    _drop_db(name)
+    try:
+        # 前提：库真的不在。否则下面那一步证明不了任何事。
+        assert not _has_db(name), "前提不成立：库本来就在"
+
+        # 生产路径那次连接：不许抛，而且顺手把库与表都建起来。
+        conn = models_store.connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SHOW TABLES LIKE 'model'")
+                assert cur.fetchone() is not None, "库建起来了，表没有"
+        finally:
+            conn.close()
+        assert _has_db(name), "库还是没建起来"
+    finally:
+        _drop_db(name)

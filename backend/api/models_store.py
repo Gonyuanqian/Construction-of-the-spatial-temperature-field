@@ -73,11 +73,27 @@ def db_name() -> str:
     return os.environ.get("TFIELD_MYSQL_DB", "tfield_models")
 
 
+#: MySQL 的「这个库不存在」（`ER_BAD_DB_ERROR`）。第一次连时自建库表就靠认
+#: 这个错号 —— 见 `connect()` 里那一段。
+_ER_BAD_DB_ERROR = 1049
+
+
 def connect(*, with_db: bool = True):
     """开一条连接。**连不上就抛，绝不返回 None。**
 
     这条规则是整个模块的门槛：静默降级成「空库」会让「一条模型都没有」与
     「数据库连不上」在屏上长得一模一样，而这两件事要用户做的事完全不同。
+
+    ⚠️ **唯一的例外是「库还不存在」** —— 那不是故障，是第一次跑（规格书 §四：
+    「程序第一次连时 `CREATE DATABASE IF NOT EXISTS` 自建」）。没有这一步，
+    任何一台还没建过 `tfield_models` 的机器上，模型库那四条路由**以及每一条走
+    `get_pipeline` 的 field 路由**（它们都要读「当前模型」）在第一次启动时
+    全部 500。这里现建、再连一次。
+
+    ⚠️ **只认 1049 这一个错号**，别的错误一律原样抛：MySQL 没起来是 2003、
+    口令不对是 1045 —— 把它们也当成「那就建一个吧」，会去连一个根本连不上的
+    服务端，最后报的还是原来那句，而中间多了一次注定失败的建库尝试。更要紧的
+    是，「连不上」与「还没有库」要用户做的事完全不同，这条线不能糊。
     """
     kw: dict[str, Any] = {
         "host": os.environ.get("TFIELD_MYSQL_HOST", "127.0.0.1"),
@@ -90,6 +106,13 @@ def connect(*, with_db: bool = True):
     }
     if with_db:
         kw["database"] = db_name()
+    try:
+        return pymysql.connect(**kw)
+    except pymysql.err.OperationalError as e:
+        if not (with_db and e.args and e.args[0] == _ER_BAD_DB_ERROR):
+            raise
+    # 库还不存在。`init()` 走的是 `with_db=False`，所以不会绕回这里。
+    init()
     return pymysql.connect(**kw)
 
 

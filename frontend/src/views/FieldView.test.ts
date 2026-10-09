@@ -573,4 +573,27 @@ describe('模型库与页③', () => {
     expect(urls.some((u) => u.includes('/api/models/2/current')),
       '换了一个模型却没有把它设成全站当前').toBe(true)
   })
+
+  it('换了模型会重取场 —— 否则屏上还是上一个模型的像素', async () => {
+    // ⭐ 终审 Critical 1。`setCurrentModel` 改的是**库里那一行**；屏上这两张场
+    // 来自 `/api/field/sections` 与 `/api/field/compare`（后端按「当前模型」
+    // 现算）。不重新取一次，用户看到的是**上一个模型**的像素，而下拉与
+    // 「当前」都指向新的那个 —— 正是规格书 D4 要杜绝的「看着对的错场」：
+    // 它不报错、也不提示，只是端出一张旧模型算的图。
+    //
+    // ⚠️ 与上一条同样要让第二行可用（理由见上）。
+    const p = makeModelsPayload()
+    p.rows[1] = { ...p.rows[1], compatible: true, why: '' }
+    const w = mountWithModels(p)
+    await flushPromises()
+    const before = urls.filter((u) => u.includes('/api/field/sections')).length
+
+    await w.get('#field-model').setValue('2')
+    await flushPromises()
+
+    expect(urls.filter((u) => u.includes('/api/field/sections')).length,
+      '换了模型却没重取场：屏上还是上一个模型算的像素').toBeGreaterThan(before)
+    expect(urls.filter((u) => u.includes('/api/field/compare')).length,
+      '换了模型却没重取对比那一张').toBeGreaterThan(1)
+  })
 })
