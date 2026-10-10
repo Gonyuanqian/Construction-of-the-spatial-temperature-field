@@ -10,6 +10,9 @@ from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException
 
+from tfield import config as C
+from tfield.calibration import groups_signature
+
 from .. import deps, jobs, models_store, ported
 from .calibration import _jsonable
 
@@ -24,23 +27,40 @@ _NAME_HINT = '请求体要长成 {"name": "棚里那套"} 这样。'
 _MAX_NAME = 120
 
 
-def _compat(row: models_store.ModelRow, ds, current_file: str) -> tuple[bool, str]:
-    """这一行能不能拿来给**当前**训练段构场。对不上时说清是两种里的哪一种。
+def _compat(row: models_store.ModelRow, ds, current_file: str) -> deps.ModelFit:
+    """这一行**对得上**当前训练段吗；对不上时说是哪一轴。
 
-    ⚠️ 分两种写不是措辞讲究：签名里掺了文件的 **mtime**，所以「换了一份数据集」
+    ⚠️ **判定只有一处（`deps.model_fit`），这里不许自己比**（2026-10-10 用户
+    裁定「模型不绑数据集」）。原先这一份只看数据集签名与文件名，而构场那条路
+    上的 `deps._usable` **还比特征组** —— 于是一行按别的特征组标出来的模型，
+    列表说「能用」，选它当当前模型却会被丢开、退回兜底参数，屏上一个字不提。
+    两套定义不会报错，只会慢慢漂。
+
+    ⚠️ 比较用的特征组是**当前那一组**（`C.DEFAULT_FEATURE_GROUPS`）而不是行上
+    那一列的名字 —— 库里只有 `groups_sig` 这个 8 字符的签名，名字早就没了。
+    两者本该是同一件事（`models.py:307` 就是把 `bundle.groups_sig` 写进去的）。
+
+    ⚠️ 分两种理由不是措辞讲究：签名里掺了文件的 **mtime**，所以「换了一份数据集」
     与「同一个文件原地重存过一次」都会让签名对不上，而后者用户根本没换数据 ——
     只说「数据来源不同」，他会去重新导入一份，然后发现还是不行。
+
+    返回整个 `ModelFit` 而不是一个布尔：两轴各自是个独立的事实，而屏上要的是
+    **三档**（用不了 / 本地的 / 借来的）。压成一个布尔就只剩两档，第三档要靠
+    前端去猜 `why` 为什么非空 —— 那是把判据搬到另一门语言里重写一遍。
     """
-    if row.dataset_sig == ds.signature:
-        return True, ""
-    if current_file and row.data_file == current_file:
-        return False, "同一个文件被改动过（内容或修改时间变了）"
-    return False, f"数据来源不同：{row.data_file}"
+    return deps.model_fit(
+        dataset_sig=row.dataset_sig, groups_sig=row.groups_sig,
+        ds=ds, current_groups_sig=groups_signature(tuple(C.DEFAULT_FEATURE_GROUPS)),
+        data_file=row.data_file, current_file=current_file)
 
 
 @router.get("/models")
 def list_models() -> dict[str, Any]:
-    """列表。每行附 `compatible` 与 `why`（相对**当前**数据集判定）。
+    """列表。每行附 `compatible` / `borrowed` / `why`（相对**当前**数据集判定）。
+
+    `compatible` = **能拿来构场**，只看特征组那一轴（用户裁定：模型不绑数据集，
+    库里有就能挑）。`borrowed` = 能用、但这一份的参数**不是**为当前这份数据标
+    的 —— 两轴各自的独立事实，屏上因此有三档：用不了 / 本地的 / 借来的。
 
     没有数据集时**走 409**（`get_train_dataset` 抛 `NoDatasetError`，由
     `main.py` 的全局 handler 翻）—— 与页②③⑤ 同一条闸门。没有数据集时
@@ -52,10 +72,13 @@ def list_models() -> dict[str, Any]:
     mid = models_store.current_id()
     rows: list[dict[str, Any]] = []
     for row in models_store.list_models():
-        ok, why = _compat(row, ds, current_file)
+        fit = _compat(row, ds, current_file)
         d = row.to_dict()
-        d["compatible"] = ok
-        d["why"] = why
+        d["compatible"] = fit.same_groups
+        # ⚠️ 用不了的行**不叫借来的**：那是「能借来用、但不是这份数据标的」的
+        # 意思。两轴都不对时两个标一起挂上去，读的人得先自己判哪个说了算。
+        d["borrowed"] = fit.same_groups and not fit.same_data
+        d["why"] = fit.why
         d["is_current"] = row.id == mid          # 以 current_id 为准，不读那一列
         rows.append(d)
     return {"rows": rows, "current_id": mid,

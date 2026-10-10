@@ -231,6 +231,7 @@ def sections_payload(pipe, *, t_index: int, preset: str, monotonic: bool,
         "preset": preset,
         "monotonic": bool(monotonic),
         "calibrated": bool(getattr(pipe, "calibrated", False)),
+        "mismatch_note": str(getattr(pipe, "mismatch_note", "")),
         "vmin": vmin,
         "vmax": vmax,
         "max_measured_z": float(C.MAX_MEASURED_Z),
@@ -247,6 +248,35 @@ def sections_payload(pipe, *, t_index: int, preset: str, monotonic: bool,
             f"{C.MAX_MEASURED_Z:.2f} m 是无测量带，带内是外推值，不报数。"
         ),
     }
+
+
+def _mean_in_arch(fields: list) -> float | None:
+    """这几片里**拱内、且不在无测量带里**那些格子的平均温度。
+
+    ⚠️ 三个坑都在这三行里，少踩一个这个数就是错的，而且屏上没有任何提示：
+
+    1. **拱外那些格子是 NaN**（`build.py` 用 `np.where(arch_mask, values, np.nan)`），
+       所以掩膜必须用 `f.mask`。直接 `f.values.mean()` 得到 NaN —— 而
+       `JSONResponse(allow_nan=False)` 会把 NaN 变成 500，「不画」是一个正常的
+       答案，不是一次故障。
+    2. **z 高于 `C.MAX_MEASURED_Z` 那一条是外推出来的**。`f.outside_measured`
+       已经与 `f.mask` 求过交（`types.py` 的字段注释），所以 `& ~f.outside_measured`
+       一次就把它摘干净。不摘的话这个数会**偏高** —— 拱顶下没有测点，
+       那里是按上下的测点推出来的。
+    3. **平均在软单调投影之后取**。`f.values` 是投影后的场（`field_at(...,
+       monotonic=cfg)` 交出来的），所以这里什么都不用做；但**换序就等于换了一个数**：
+       先平均再投影，与先投影再平均，结果不一样。
+
+    传的是**一串** `Field`（一片也行、整卷也行）：整卷那份要是**合起来**算的，
+    不是各片均值的平均 —— 两者在等权时相等，而「等权」是一个会悄悄失效的前提。
+
+    一片都没有可用格子时返回 `None`（不是 0）：屏上「不报数」与「0 °C」是两件事。
+    """
+    parts = [f.values[f.mask & ~f.outside_measured] for f in fields]
+    parts = [v for v in parts if v.size]
+    if not parts:
+        return None
+    return float(np.concatenate(parts).mean())
 
 
 def _finite_or_none(values: np.ndarray) -> list[float | None]:
@@ -455,6 +485,9 @@ def volume_payload(pipe, *, t_index: int, preset: str, monotonic: bool,
             "measured": measured,
             "shed": shed,
             "values": _grid_or_none(f.values),
+            # 这一片的拱内均温。**后端算**，前端不重算 —— 三个坑（拱外是 NaN、
+            # 无测量带是外推、平均要在投影之后）少踩一个，屏上就是一个偏高的数。
+            "mean": _mean_in_arch([f]),
         })
 
     return {
@@ -464,6 +497,7 @@ def volume_payload(pipe, *, t_index: int, preset: str, monotonic: bool,
         "preset": preset,
         "monotonic": bool(monotonic),
         "calibrated": bool(getattr(pipe, "calibrated", False)),
+        "mismatch_note": str(getattr(pipe, "mismatch_note", "")),
         "y_step": float(y_step),
         "y_min": float(y_min),
         "y_max": float(y_max),
@@ -473,6 +507,8 @@ def volume_payload(pipe, *, t_index: int, preset: str, monotonic: bool,
         "max_measured_z": float(C.MAX_MEASURED_Z),
         "vmin": vmin,
         "vmax": vmax,
+        # 本载荷这些片**合起来**的拱内均温。与逐片的同一口径、同一个函数。
+        "mean": _mean_in_arch(fields),
         "x": [float(v) for v in fields[0].x],
         "z": [float(v) for v in fields[0].z],
         "arch": _arch_polyline(),

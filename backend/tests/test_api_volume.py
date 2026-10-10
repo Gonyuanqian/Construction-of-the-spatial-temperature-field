@@ -48,10 +48,13 @@ def volume(client):
 
 def test_形状与状态码(volume):
     for k in ("t_index", "time", "n_times", "preset", "monotonic", "calibrated",
+              "mismatch_note",
               "y_step", "y_min", "y_max", "x_min", "x_max", "z_max", "max_measured_z",
               "vmin", "vmax", "x", "z", "arch", "sheds", "sensors",
               "available_sheds", "stripes", "planes", "elapsed_ms", "note"):
         assert k in volume, f"载荷少了 {k}"
+    # 库里的那一份是交付的、为这份数据标的 —— 借来的那句话在这里必须是空串。
+    assert volume["mismatch_note"] == "", volume["mismatch_note"]
     assert volume["t_index"] == 12
     assert volume["preset"] == "standard"
     assert volume["monotonic"] is True
@@ -204,6 +207,63 @@ def test_三档网格的_vmin_vmax_是整卷共用的(volume):
         vals = [v for row in p["values"] for v in row if v is not None]
         assert min(vals) >= volume["vmin"] - 1e-9
         assert max(vals) <= volume["vmax"] + 1e-9
+
+
+def test_均温与库自己再算的一遍逐位相等(volume):
+    """`mean` 的对照是**照着库自己再算一遍**，不是把 `_mean_in_arch` 抄一份。
+
+    抄一份的话，两边同时写错也照样绿 —— 而这是屏上唯一一个「看起来就该对」的数。
+    """
+    from api.deps import get_pipeline
+    from tfield.field.build import field_at
+    from tfield.field.constraints import MonotonicConfig
+    from tfield.field.grid import GridSpec
+
+    pipe = get_pipeline()
+    grid = GridSpec.from_preset(volume["preset"])
+    cfg = MonotonicConfig(enabled=True)
+
+    parts = []
+    for p in volume["planes"]:
+        f = field_at(pipe, p["y"], volume["t_index"], grid, monotonic=cfg)
+        good = f.mask & ~f.outside_measured
+        assert good.any(), f"y={p['y']} 一个可用格子都没有"
+        assert p["mean"] == float(f.values[good].mean()), f"y={p['y']} 的均温对不上"
+        parts.append(f.values[good])
+    # ⚠️ 整卷那份是**合起来**算的，不是各片均值的平均。两种算法在等权时相等，
+    # 而「等权」正是一个会悄悄失效的前提 —— 所以断的是合起来那一种。
+    assert volume["mean"] == float(np.concatenate(parts).mean())
+
+
+def test_均温把拱外与外推带都排除在外(volume):
+    """**这条才是 `mean` 存在的理由。**
+
+    同一片上有三个候选的数，只有一个是能报给人的：
+      · `np.nanmean(f.values)` —— 跳过拱外的 NaN，但**把拱顶下那一条外推带算了进去**；
+      · `f.values[f.mask].mean()` —— 拱内全算，同样带着外推带；
+      · `f.values[mask & ~outside_measured].mean()` —— **接口给的是这一个**。
+
+    外推带是画面上那条斜纹、是「这里没有测点」的意思。把它平均进去会让这个数
+    **偏高**，而屏上是一个完全正常的温度，没有任何提示。
+    """
+    from api.deps import get_pipeline
+    from tfield.field.build import field_at
+    from tfield.field.constraints import MonotonicConfig
+    from tfield.field.grid import GridSpec
+
+    pipe = get_pipeline()
+    grid = GridSpec.from_preset(volume["preset"])
+    cfg = MonotonicConfig(enabled=True)
+
+    p = volume["planes"][0]
+    f = field_at(pipe, p["y"], volume["t_index"], grid, monotonic=cfg)
+
+    assert f.outside_measured.any(), "这一卷没有无测量带，下面那条断言证明不了什么"
+    with_stripes = float(f.values[f.mask].mean())
+    assert p["mean"] == float(f.values[f.mask & ~f.outside_measured].mean())
+    assert abs(p["mean"] - with_stripes) > 1e-9, (
+        "带内均温与拱内均温相等 —— 外推带没进过平均，这条测试就白写了"
+    )
 
 
 def test_换时刻真的换帧(client, volume):

@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import conftest
 from api import deps, live
 from tfield import config as C
 from tfield.data.loader import HOLDOUT_CUTOFF, load_dataset, test_data_path
@@ -299,6 +300,10 @@ def test_同一帧走两条路由不重复接帧(client):
     assert f["frame"]["time"] == v["frame"]["time"]
     assert client.get("/api/live/status").json()["cursor"] == 2
     assert live.get_live_source().pipeline.n_live == 3, "同一帧被接了不止一次"
+    # 实时那一支只是转发 `volume_payload`（`routes/live.py::get_volume`），
+    # 所以均温本该白拿。这里钉住它真的过来了 —— 页⑤ 的指标卡与那条曲线
+    # 全靠它，少了它那两个地方只会显示「不报数」，不报错。
+    assert v["mean"] is not None, "体网格载荷没带均温，页⑤ 的指标卡就没了来源"
 
 
 def test_验收折_接口的数与直接调库逐位相等(client):
@@ -307,10 +312,9 @@ def test_验收折_接口的数与直接调库逐位相等(client):
     实时路由只是「校验 + 走帧 + 调 `sections_payload`」—— 它一个数都不许自己算。
     """
     from tfield import config as C
-    from tfield.calibration import load_for
     from tfield.features import build_features
     from tfield.pipeline import FieldPipeline
-    from api import deps, paths
+    from api import deps
     from api.live import LiveSource
     from api.routes.field import sections_payload
 
@@ -320,7 +324,8 @@ def test_验收折_接口的数与直接调库逐位相等(client):
 
     ds = deps.get_train_dataset()
     train_n = len(ds.wide)                     # 训练段长度：实时帧接在它后面
-    cfg = load_for(ds, tuple(C.DEFAULT_FEATURE_GROUPS), paths.CONFIGS).config()
+    # 训练段那一份包（已重签成本机指纹），见 `conftest._delivered_bundle`。
+    cfg = conftest.delivered_train_bundle().config()
     pipe = FieldPipeline(cfg, ds).fit(build_features(ds, C.DEFAULT_FEATURE_GROUPS), ds)
     src = LiveSource()
     for k in range(4):

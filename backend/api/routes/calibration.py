@@ -63,6 +63,9 @@ def get_calibration() -> dict[str, Any]:
             "reason": NO_BUNDLE_REASON,
             "source": None,
             "mismatch": _mismatch(ds.signature),
+            # 没有模型时它是空串而不是缺键：两条路的载荷**同一个形状**，
+            # 前端不必判两种空（与 `ModelRow.why` 同一条房规）。
+            "mismatch_note": "",
             "created_at": None, "tool_version": None,
             "groups_sig": None, "dataset_sig": ds.signature,
             "feature_groups": list(C.DEFAULT_FEATURE_GROUPS),
@@ -97,6 +100,12 @@ def get_calibration() -> dict[str, Any]:
         "reason": None,
         "source": got.source,
         "mismatch": None,
+        # 这一份包**不是为当前训练段标的**时那句人话（2026-10-10 用户裁定
+        # 「模型不绑数据集」）。对得上时是空串。
+        # ⚠️ 与上面那个 `mismatch` **不是一回事**：那个说的是「盘上躺着一份
+        # 别人的旧包」（`present=false` 那条路才走），这个是「**正在用的就是**
+        # 别人的那一份」。两个名字长得像，说的是两件事。
+        "mismatch_note": got.mismatch_note,
         "created_at": bundle.created_at,
         "tool_version": bundle.tool_version,
         "groups_sig": bundle.groups_sig,

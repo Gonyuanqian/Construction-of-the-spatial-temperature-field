@@ -17,8 +17,8 @@ import pytest
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
+import conftest                                               # noqa: E402
 from api import deps, paths                                    # noqa: E402
-from tfield.calibration import load_for                        # noqa: E402
 from tfield import config as C                                  # noqa: E402
 
 pytestmark = pytest.mark.slow      # 一次 oof_table 要 8 折各 fit 一遍，十秒上下
@@ -43,19 +43,19 @@ def _library(library_module):
 def bundle():
     """训练段那一份包 —— 页② 报的就是它。
 
-    ⚠️ **用 `deps.get_train_dataset()` 拿数据集，不自己 `split_holdout`。**
+    ⚠️ **取「训练段」这一档，不自己 `split_holdout`。**
     页② 报的是训练段，而「训练段是哪一段」由 `deps` 说了算（它还要把留出段
     的开销算进去）。这里自己切一遍就等于把那条规则实现了第二遍 ——
     与 `test_api_train.py` 的 `_current_dataset` 夹具是同一套做法。
-    盘上那两份包按数据集签名分：`bundle_6145fa9261e89f1b_d6294c09.json`
-    是全量的，`bundle_6145fa9261e89f1b-h20260727T1200_d6294c09.json`
-    是训练段的（`-h` 后面就是留出切点）。`load_for` 只会捡到后者。
+
+    盘上那两份交付包按数据集签名分：`bundle_6145fa9261e89f1b_d6294c09.json`
+    是**全量**的，`bundle_6145fa9261e89f1b-h20260727T1200_d6294c09.json`
+    是**训练段**的（`-h` 后面就是留出切点）。要的是后者，
+    而 `conftest.delivered_train_bundle()` 顺带把那个指纹重签成本机的
+    —— 它是逐机的（见 `conftest._delivered_bundle` 的说明）。
     """
     deps.set_current_dataset(paths.dataset_path())
-    ds = deps.get_train_dataset()
-    b = load_for(ds, C.DEFAULT_FEATURE_GROUPS, root=BACKEND / "configs")
-    assert b is not None, "本项目 configs/ 下应当有训练段那一份包"
-    return b
+    return conftest.delivered_train_bundle()
 
 
 @pytest.fixture(scope="module")
@@ -497,7 +497,7 @@ def test_诊断的缓存键比管线缓存多一格_因为参数只进诊断那�
     from dataclasses import replace
     deps.set_current_dataset(paths.dataset_path())
     ds = deps.get_train_dataset()
-    b = load_for(ds, C.DEFAULT_FEATURE_GROUPS, root=BACKEND / "configs")
+    b = conftest.delivered_train_bundle()
 
     dk = diagnostics.DiagnosticsCache.key_of(ds, C.DEFAULT_FEATURE_GROUPS, b, "sig")
     pk = deps.PipelineCache.key_of(ds, C.DEFAULT_FEATURE_GROUPS, b)

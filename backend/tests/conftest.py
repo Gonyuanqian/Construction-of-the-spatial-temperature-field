@@ -25,6 +25,7 @@
 """
 from __future__ import annotations
 
+import dataclasses
 import os
 
 import pytest
@@ -97,35 +98,104 @@ def models_db():
     return empty_library()
 
 
-#: 交付数据集训练段那一份包，读一次就够（包是 frozen dataclass，只读）。
+#: 交付数据集那两份包在 `configs/` 里的**文件名**。
+#:
+#: ⚠️ 写死文件名，而不是「按 `dataset_sig` 去认」—— 那个字段是**逐机**的，
+#: 理由在 `_delivered_bundle` 上。这两份是仓库里**跟踪**的文件（本机盘上另外
+#: 那两份 `0066856d…` / `3fbf0c…` 没进仓库），别人的克隆里它们在、指纹却对不上。
+DELIVERED_FULL = "bundle_6145fa9261e89f1b_d6294c09.json"
+DELIVERED_TRAIN = "bundle_6145fa9261e89f1b-h20260727T1200_d6294c09.json"
+
+#: 读过的包按文件名缓存（包是 frozen dataclass，且解一份 794 KB 的 JSON 不便宜）。
 _DELIVERED: dict[str, object] = {}
 
 
-def _delivered_bundle():
-    """盘上那份**与当前训练段对得上**的真包。
+def _load_delivered(name: str):
+    """按**文件名**读 `configs/` 里那份交付包；读不到就**当场报错**。
 
-    ⚠️ 不能图省事写 `sorted(paths.CONFIGS.glob("bundle_*.json"))[0]`。盘上有
-    **四份**历史包，按文件名排序第一的是 `bundle_0066856dc40a8bbc-…`，那是
-    **另一份数据集**标的；当前交付的这一份是 `6145fa9261e89f1b-…`。取错那一
-    份之后 `current_bundle()` 会（**正确地**）判它「与训练段对不上」而当作
-    库里没有模型 —— 于是每一个用 `current_model` 的用例都退到兜底参数那条
-    路上：红/绿都还在，测的东西换了，而没有一个字提示。
+    报错而不是返回 None：这两份包是跟踪进仓库的，少了它就是有人删了不该删的
+    东西 —— 而用它的用例会**静默**退到兜底参数那条路（见 `_delivered_bundle`），
+    红绿都还在、测的东西换了。宁可炸在夹具里。
     """
-    from api import deps, paths
+    from api import paths
     from tfield.calibration import load_bundle
 
-    if "b" not in _DELIVERED:
-        want = deps.get_train_dataset().signature
-        for p in sorted(paths.CONFIGS.glob("bundle_*.json")):
-            b = load_bundle(p)
-            if b is not None and b.dataset_sig == want:
-                _DELIVERED["b"] = b
-                break
-        else:
-            raise AssertionError(
-                f"`configs/` 里没有与训练段 {want} 对得上的包 —— "
-                "这个夹具没有可存的东西，用它的用例一条都验不成")
-    return _DELIVERED["b"]
+    if name not in _DELIVERED:
+        p = paths.CONFIGS / name
+        b = load_bundle(p)
+        assert b is not None, (
+            f"`{p}` 不在或读不动 —— 这两份交付包是**仓库里跟踪的**文件，"
+            "新克隆里它们必须原样在（用它的用例一条都验不成）")
+        _DELIVERED[name] = b
+    return _DELIVERED[name]
+
+
+def _delivered_bundle(full: bool = False):
+    """盘上那份交付包，`dataset_sig` 已**重签成本机的指纹**。
+
+    ⚠️ 为什么必须重签：`dataset_signature(path)` = `sha1(绝对路径 | mtime |
+    大小)[:16]` —— **绝对路径本身就是数据集身份的一部分**（根 `README.md`
+    §「标定包为什么在 `configs/` 里是那个怪名字」整节在讲这件事）。包身上那串
+    指纹是**产出它的那台机器、那个目录**算出来的。于是：
+
+      · 在**本机**（产出这两份包的那台），`want` 与包上那个字段逐位相同，
+        重签是个 no-op；
+      · 在**别人的克隆**里路径变了，`want` 是新指纹。不重签的话，
+        `current_bundle()` 会（**正确地**）判它「与训练段对不上」而当作库里
+        没有模型 —— 于是每一个用 `current_model` 的用例都退到兜底参数那条路
+        上：红/绿都还在，测的东西换了，而没有一个字提示。
+        **2026-10-11 那次「新克隆 92 error + 7 failed」的全部内容就是这个。**
+
+    重签动的只有 `dataset_sig` 这一个**指路**字段，包里的参数、效果、逐折
+    MAE 一个字节都不动 —— 这正是 `scripts/relocate_bundle.py` 对真实项目做的
+    事。⚠️ 唯一少的是那道**逐字节证明**（那份脚本用 sha256 比对新旧数据集，
+    证明内容真是同一份）；这里拿不到原项目的数据集，证不了。它成立的前提是
+    **数据集与这两份包一起跟踪在仓库里**，「同一份文件、不同路径」由 git 保证。
+    真有人把数据集换掉了，是另一件事 —— 那时要重标，而逐折 MAE 那几条用例
+    （`test_api_train.py`）会说话。
+
+    ⚠️ 也不能图省事写 `sorted(paths.CONFIGS.glob("bundle_*.json"))[0]`：本机盘上
+    有**四份**包，排序第一的是 `0066856dc40a8bbc-…`（**另一份数据集**标的，没进
+    仓库）。本机取到它、克隆里取到的是另一份 —— 同一个文件在两台机器上测的是
+    两份不同的包，而画面上什么都看不出来。
+    """
+    from api import deps
+
+    # 「当前数据集」还空着时先指到交付那一份 —— 否则 `get_train_dataset()` 会抛
+    # `NoDatasetError`，而报错地点在一次夹具调用里、离现场很远（见 `_ensure_dataset`）。
+    _ensure_dataset()
+    name = DELIVERED_FULL if full else DELIVERED_TRAIN
+    want = (deps.get_dataset() if full else deps.get_train_dataset()).signature
+    b = _load_delivered(name)
+    if b.dataset_sig == want:
+        return b
+    return dataclasses.replace(b, dataset_sig=want)
+
+
+def delivered_train_bundle():
+    """交付数据集**训练段**那一份包，已重签成本机指纹。见 `_delivered_bundle`。"""
+    return _delivered_bundle()
+
+
+def delivered_full_bundle():
+    """交付数据集**整份文件**那一份包，已重签成本机指纹。见 `_delivered_bundle`。"""
+    return _delivered_bundle(full=True)
+
+
+def bundle_for_another_dataset():
+    """一份**为别的数据集标的**包：拿交付那份换个签名。
+
+    ⚠️ 合成而不是「从盘上找一份别人的」：盘上有没有别的包取决于谁在这台机器上
+    跑过标定（本机那两份就没进仓库），**克隆的人手上根本没有**，于是「用它的
+    用例」在别人那里一条都跑不起来。
+
+    ⚠️ 换的是**这一个对象**，行与包因此一起变：`save_model` 把
+    `bundle.dataset_sig` 抄进行里、又把整包写进 LONGTEXT。只改库里那一行的
+    字段才是不行的 —— `current_bundle()` 从行上读、构场从包上读，那样会造出
+    「行说 A、包说 B」这种线上不存在的状态，测的东西就换了。
+    """
+    return dataclasses.replace(delivered_train_bundle(),
+                               dataset_sig="别的一份数据集")
 
 
 def _ensure_dataset() -> None:
@@ -149,10 +219,11 @@ def _ensure_dataset() -> None:
 
 @pytest.fixture()
 def delivered_bundle():
-    """盘上那份**与当前训练段对得上**的真包。见 `_delivered_bundle` 的说明。
+    """交付数据集训练段那一份真包，**已重签成本机指纹**。见 `_delivered_bundle`。
 
     要它的用例关心的是包里的东西（参数 / 效果 / 搜索区间），与库无关；
-    为什么不是 `sorted(glob)[0]` 那件事写在 `_delivered_bundle` 上。
+    指纹为什么要重签、为什么不是 `sorted(glob)[0]`，那两件事写在
+    `_delivered_bundle` 上。
     """
     _ensure_dataset()
     return _delivered_bundle()

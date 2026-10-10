@@ -20,15 +20,21 @@ from pymysql.err import MySQLError
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
+import conftest                                        # noqa: E402
 from api import deps, models_store, paths              # noqa: E402
-from tfield.calibration import load_bundle             # noqa: E402
 
 
 def _real_bundle():
-    """一份真包。**只读**，不改盘上任何东西。"""
-    real = load_bundle(sorted(paths.CONFIGS.glob("bundle_*.json"))[0])
-    assert real is not None
-    return real
+    """交付数据集训练段那一份真包，**已重签成本机指纹**。**只读**。
+
+    ⚠️ 要的是**训练段**那一份（指纹 31 个字符）。`test_存进去再取出来…` 钉的
+    就是那个长度，拿**全量**那一份（16 个字符）会红在那句话上，而它红起来的
+    样子像「列宽把签名截断了」—— 离真正的原因很远。
+
+    为什么指纹要在夹具里重签、为什么不写 `sorted(glob)[0]`，那两件事写在
+    `conftest._delivered_bundle` 上。
+    """
+    return conftest.delivered_train_bundle()
 
 
 @pytest.fixture(scope="module")

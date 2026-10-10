@@ -24,3 +24,8 @@ frontend/dist/
 .idea/
 .vscode/
 *.swp
+
+# SDD 工作区：superpowers 的账本、交接台架、评审包 —— 本机草稿，不是项目的一部分。
+# 无前导斜杠，所以根下与 backend/ 下的一起盖住（backend/.superpowers/ 本来
+# 只靠没进仓库的 .superpowers/sdd/.gitignore 挡着，换台机器就露出来了）。
+.superpowers/

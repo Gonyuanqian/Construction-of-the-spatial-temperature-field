@@ -158,3 +158,55 @@ def test_没有标注的管线读出来是假而不是抛错():
     """
     from tfield.pipeline import FieldPipeline
     assert getattr(FieldPipeline.__new__(FieldPipeline), "calibrated", False) is False
+
+
+def test_管线自己带着_这一份包是不是为这份数据标的():
+    """第三个状态（2026-10-10 用户裁定「模型不绑数据集」）。
+
+    原先只有两个：**有包** / **没包**。用户裁定之后可以借别的数据上标的包来
+    构场，于是「有包」里分出两档 —— 而屏上今天写的是同一句话「已标定」，说的
+    却可能是另一份数据的参数与误差。这一条钉住那个事实**挂在管线上**，与
+    `calibrated` 同一处赋值（路由不许回头去读缓存的键）。
+    """
+    from api.deps import _mark_calibrated
+    from tfield.pipeline import FieldPipeline
+
+    class FakeBundle:
+        created_at = "2026-10-03T13:22:00+00:00"
+
+    pipe = FieldPipeline.__new__(FieldPipeline)
+    _mark_calibrated(pipe, FakeBundle())
+    assert pipe.mismatch_note == "", "对得上时是空串，不是 None"
+
+    _mark_calibrated(pipe, FakeBundle(), mismatch_note="借来的")
+    assert pipe.mismatch_note == "借来的"
+
+
+def test_没有标注的管线读出来是空串():
+    """第三个状态也要有兜底方向，而且是**空串**。
+
+    兜底成一句话会让屏上给一份本地模型盖上「借来的」的章 —— 与把未标定说成
+    已标定是同一类错，只是方向相反。
+    """
+    from tfield.pipeline import FieldPipeline
+    assert getattr(FieldPipeline.__new__(FieldPipeline), "mismatch_note", "") == ""
+
+
+def test_借没借只由数据集那一轴说了算():
+    """`_borrowed`：`_build_pipeline` 打那个章时看的**唯一**一件事。
+
+    为什么要把它摘出来单测：它唯一的调用点在 `_build_pipeline` 里，而那里
+    一句 `fit()` 就是几十秒 —— 不摘出来，这个判据就只能靠一条 slow 用例
+    捎带着验，而默认那次 `-m "not slow"` 一次都不跑它。判反了的后果是屏上给
+    借来的模型盖「已标定（本地的）」的章：数的来历整个说反，且看不出来。
+    """
+    from api.deps import _borrowed
+
+    class B:
+        def __init__(self, sig):
+            self.dataset_sig = sig
+
+    ds = FakeDs("当前这一份")
+    assert _borrowed(ds, B("当前这一份")) is False, "包就是为这份数据标的"
+    assert _borrowed(ds, B("别人家的")) is True, "包是为别的数据标的"
+    assert _borrowed(ds, None) is False, "没有包时是「未标定」，不是「借来的」"

@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
+import conftest                                          # noqa: E402
 from api import deps, jobs, models_store, paths          # noqa: E402
 from api.main import create_app                          # noqa: E402
 
@@ -216,6 +217,9 @@ def test_同文件名但签名变了_理由是改动过不是来源不同(client
     所以「换了一份数据集」与「同一个文件原地重存过一次」都会让签名对不上。
     只说「数据来源不同」，用户会去重新导入一份，然后发现还是不行 ——
     因为变的根本不是哪一份文件，是那个文件本身。
+
+    ⚠️ 这一行**仍然选得中**（`compatible` 是 true）：2026-10-10 用户裁定之后，
+    拦着选的只剩特征组那一轴。它能用、要标出来 —— 但不再是「用不了」。
     """
     finish_job()
     mid = client.post("/api/models", json={"name": "x"}).json()["id"]
@@ -229,7 +233,8 @@ def test_同文件名但签名变了_理由是改动过不是来源不同(client
     finally:
         conn.close()
     row = client.get("/api/models").json()["rows"][0]
-    assert row["compatible"] is False
+    assert row["compatible"] is True, "数据集那一轴不再拦着选"
+    assert row["borrowed"] is True, "它要带上「借来的」那个标"
     assert row["why"] == "同一个文件被改动过（内容或修改时间变了）"
 
 
@@ -245,7 +250,8 @@ def test_换了一份文件名_理由是来源不同并带上文件名(client, f
     finally:
         conn.close()
     row = client.get("/api/models").json()["rows"][0]
-    assert row["compatible"] is False
+    assert row["compatible"] is True, "数据集那一轴不再拦着选"
+    assert row["borrowed"] is True
     assert row["why"] == "数据来源不同：别人家的棚.xlsx"
 
 
@@ -254,7 +260,78 @@ def test_对得上的那一行_compatible_是_true_且理由是空串(client, fi
     client.post("/api/models", json={"name": "x"})
     row = client.get("/api/models").json()["rows"][0]
     assert row["compatible"] is True
+    assert row["borrowed"] is False, "本地的不是借来的"
     assert row["why"] == ""
+
+
+def test_特征组对不上的那一行_列表也说不兼容(client, finish_job):
+    """⭐ 2026-10-10 用户裁定（模型不绑数据集）揭出来的第一条现有不一致。
+
+    「对得上」这件事原先有**两套定义**：这张列表只看数据集签名与文件名
+    （`routes/models.py::_compat`），而构场那条路上 `deps._usable` **还比
+    特征组**。于是一行按别的特征组标出来的模型，列表说「能用」，选它当当前
+    模型却会被丢开、退回兜底参数 —— 屏上没有一个字提示这件事。
+
+    特征组列**可以**被改到这一格（页② 今天把它写死成 `C.DEFAULT_FEATURE_GROUPS`，
+    所以真实操作里走不到；但构场拒绝的正是这一列所代表的那个东西）。
+
+    ⚠️ 用户裁定放行的是**数据集那一轴**，这一轴照旧硬拦：它不是「哪一份数据」
+    的问题，是**输入类型**的问题 —— 拿另一组特征拟出来的矩阵去配这份参数，
+    要么尺寸对不上当场炸，要么静默画错。
+    """
+    finish_job()
+    mid = client.post("/api/models", json={"name": "x"}).json()["id"]
+    conn = models_store.connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE model SET groups_sig = %s WHERE id = %s",
+                        ("00000000", mid))
+        conn.commit()
+    finally:
+        conn.close()
+    body = client.get("/api/models").json()
+    assert body["rows"], f"存进去的那一行不见了：{body}"
+    row = body["rows"][0]
+    assert row["compatible"] is False, f"列表说它能用，而构场那条路会拒绝它：{row}"
+    assert row["why"], "不兼容必须带一句人话"
+    # 用不了的行**不叫借来的**：那是「能借来用、但不是这份数据标的」的意思，
+    # 给一行选都选不中的东西盖这个标，只是让人多问一句「那我到底能不能点」。
+    assert row["borrowed"] is False
+
+
+def test_借来的那一行选得中_而且真的拿去构场(client):
+    """⭐⭐ 2026-10-10 用户裁定的正面：「只要是模型库中有模型，就能选择模型库
+    中的任意一个模型来构建，而不是绑定数据集。」
+
+    ⚠️ 与上面三条合起来才完整：那三条只说列表**怎么说**（`compatible` /
+    `borrowed` / `why`），这一条说**点下去真的生效** —— 列表说完能选、
+    `post /current` 选完，`current_bundle()` 却不认它，正是这次要拆掉的那个
+    自相矛盾。也钉住 `current_bundle` 与列表用的是**同一个判据**
+    （`deps.model_fit`），不是各写一份。
+
+    ⚠️ 存的是一个**自洽的包**，不是上面那几条「把库里那一行的签名改掉」的手法：
+    那样改，行说 A、包还说 B，而 `current_bundle()` 从行上读、构场从包上读 ——
+    测的是一个线上造不出来的状态。这里换的是**包对象本身**（合成一份为别的
+    数据集标的的，见 `conftest.bundle_for_another_dataset`），`save_model` 把它的
+    签名抄进行里、把整包写进 LONGTEXT —— 行与包一起变。
+    """
+    ds = deps.get_train_dataset()
+    other = conftest.bundle_for_another_dataset()
+    assert other.dataset_sig != ds.signature, "取到的是对得上的那一份，这条白跑"
+    row = models_store.save_model("别人家标的", other, ds, "别人家的棚.xlsx")
+
+    listed = next(r for r in client.get("/api/models").json()["rows"]
+                  if r["id"] == row.id)
+    assert listed["compatible"] is True, "库里有就能挑，数据集那一轴不拦"
+    assert listed["borrowed"] is True
+    assert listed["why"], "借来的也要说得出理由"
+
+    assert client.post(f"/api/models/{row.id}/current").status_code == 200
+    got = deps.current_bundle()
+    assert got.source == "library", "列表说能选，选完却不认它 —— 正是要拆的那个矛盾"
+    assert got.bundle is not None
+    assert got.bundle.dataset_sig == other.dataset_sig, "用的不是用户点的那个模型"
+    assert got.mismatch_note, "借来的必须如实报出来"
 
 
 def test_没有数据集时列表走_409(client, finish_job):

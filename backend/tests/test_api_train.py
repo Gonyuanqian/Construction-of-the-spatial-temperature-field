@@ -18,7 +18,8 @@ from fastapi.testclient import TestClient
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
-from api import deps, paths, routes                      # noqa: E402
+import conftest                                          # noqa: E402
+from api import deps, models_store, paths, routes        # noqa: E402
 from api.main import create_app                          # noqa: E402
 from tfield import config as C                           # noqa: E402
 from tfield.calibration import IDW_SPACE, TREND_SPACE, TUNED_KEYS   # noqa: E402
@@ -118,6 +119,10 @@ def test_两条不加特征的说明在(client):
 def test_标定包在_且报得出参数与指标(client):
     b = client.get("/api/calibration").json()
     assert b["present"] is True, "本项目 configs/ 下应当有迁移过来的标定包"
+    # 第三档：库里的那一份**就是为这个训练段标的**（`library_module` 种的就是
+    # 交付那一份），所以「借来的」那句话是空串，而不是缺这个键。
+    assert b["source"] == "library"
+    assert b["mismatch_note"] == "", b["mismatch_note"]
     # 与旧包（2026-10-03 那一份）的数不可直接比大小：同折族、不同参数。
     # 换口径重标过（留出段 2026-07-27 12:00 起 144 帧只在训练段上标定）。
     assert b["created_at"] == "2026-10-05T13:52:09+00:00"
@@ -179,17 +184,12 @@ def test_逐折与逐点是标定包里的原数_不是现算的(client):
     """
     import json
 
-    from tfield.calibration import load_for
-    from tfield.data.loader import HOLDOUT_CUTOFF, load_dataset, split_holdout, test_data_path
-
     b = client.get("/api/calibration").json()
-    # ⚠️ **必须切训练段**：路由报的是按训练段标出来的那个包。拿整份文件去
-    # `load_for` 会命中**另一个**包（2026-10-03 那一份全量标定），于是这条守卫
-    # 变成「拿 A 包的数比 B 包的数」—— 它想守的「页面上的就是盘上那一份」
-    # 一个字都没验到，却仍然是绿的。**这就是它上一轮红的原因。**
-    ds = split_holdout(load_dataset(test_data_path()), HOLDOUT_CUTOFF).train
-    bundle = load_for(ds, C.DEFAULT_FEATURE_GROUPS, root=BACKEND / "configs")
-    assert bundle is not None
+    # ⚠️ **必须取训练段那一份**：路由报的是按训练段标出来的那个包。拿**整份文件**
+    # 那一份（`conftest.delivered_full_bundle()`）来比会变成「拿 A 包的数比 B 包的
+    # 数」—— 它想守的「页面上的就是盘上那一份」一个字都没验到，却仍然是绿的。
+    # **这就是它上一轮红的原因。**
+    bundle = conftest.delivered_train_bundle()
 
     m = {r["fold"]: r["mae"] for r in b["metrics"]}
     for _, row in bundle.metrics.iterrows():
@@ -220,12 +220,8 @@ def test_某一折_mae_是_NaN_时判最差不_500_而是报_null(monkeypatch):
     import json
     from dataclasses import replace as dc_replace
 
-    from tfield.calibration import load_for
-    from tfield.data.loader import load_dataset, test_data_path
-
-    ds = load_dataset(test_data_path())
-    bundle = load_for(ds, C.DEFAULT_FEATURE_GROUPS, root=BACKEND / "configs")
-    assert bundle is not None
+    # 整份文件那一份包就够：这条要的只是一张**真**的逐折表，好挑一折把它改成 NaN。
+    bundle = conftest.delivered_full_bundle()
 
     # 改的是**内存里的副本**，盘上的包一个字节都不动
     metrics = bundle.metrics.copy(deep=True)
@@ -257,12 +253,8 @@ def test_全折_mae_都是_NaN_时_worst_fold_为_None(monkeypatch):
     在这一页（最容易误读口径的一页）是句谎话。契约扩展：`worst_fold` 现在可为 null。"""
     from dataclasses import replace as dc_replace
 
-    from tfield.calibration import load_for
-    from tfield.data.loader import load_dataset, test_data_path
-
-    ds = load_dataset(test_data_path())
-    bundle = load_for(ds, C.DEFAULT_FEATURE_GROUPS, root=BACKEND / "configs")
-    assert bundle is not None
+    # 同上：整份文件那一份包，要的只是一张真的逐折表。
+    bundle = conftest.delivered_full_bundle()
     metrics = bundle.metrics.copy(deep=True)
     metrics["mae"] = float("nan")
     broken = dc_replace(bundle, metrics=metrics)
@@ -684,6 +676,7 @@ def _current_dataset():
 
 # ── 换数据集之后的标定（规格书 §七）──
 
+@pytest.mark.empty_library
 def test_换了数据集之后报出上一次标定对的是谁(client, tmp_path, monkeypatch):
     """规格书 §七：`present=False` 那条路上要走两种处境分开。
 
@@ -692,13 +685,34 @@ def test_换了数据集之后报出上一次标定对的是谁(client, tmp_path
       · 这份数据集从来没标过（系统的正常起点），
       · 这份数据集是刚换上的，上一次标定对的是**另一份**数据，
     说成了一种。用户要看的是后一句。
+
+    ⚠️ **这条用例的前提 2026-10-10 变过一次**（用户裁定「模型不绑数据集」）。
+    在那之前，换数据集**必然**让 `present` 变 false —— 库里那一份的数据集签名
+    对不上就被丢掉，所以「换数据集」这件事自己就把人送到这条路上，不用额外
+    摆前提。现在库里那一份**照用**（特征组对得上就够），于是换数据集之后
+    页② 会报 `present=true` + `source="library"` + 一句话说这是借来的
+    （那一条由 `test_库里那一份是为别的数据标的时_页二照用并如实报出来` 钉着）。
+
+    走 `present=false` 的**新前提**因此是「库里一份能用的都没有」——
+    这正是 `@pytest.mark.empty_library` 在这里做的事（本文件那条 autouse
+    `_library` 会经 `current_model` → `models_db` 清表，标了就不再种回去，
+    与末尾那三条兄弟用例同一个手法）。**两条用例说的是两件事，不是同一条的
+    新旧两版**：那条说「借来了也照用，但要说出来」，这条说「一份都没有时，
+    页② 报得出上一次标定对的是哪一份数据」。
+
+    ⚠️ 于是原先那句前提断言（「交付数据集有包 → `mismatch` 是 None」）也
+    跟着不成立了：库一空，页② 对**交付数据集自己**就走 `present=false`，
+    而 `_mismatch` 报的是盘上那些**别的数据集**的包（`configs/` 里那两份）。
+    它要证明的东西（换数据集之前报的不是这一次）改由下面 `before` 那两行来证。
     """
     monkeypatch.setattr(paths, "UPLOADS", tmp_path / "uploads")
     deps.set_current_dataset(paths.dataset_path())
     deps.reset_cache()
 
-    # 先确认：交付数据集**有**包（这一条的前提），所以 mismatch 必须是 None
-    assert client.get("/api/calibration").json()["mismatch"] is None
+    # 换之前先记下它报的是谁：库空着，所以这一格已经有值了。
+    before = client.get("/api/calibration").json()
+    assert before["present"] is False
+    assert before["mismatch"] is not None      # 盘上有别人的包，只是没有这一份的
 
     # 换一份（同名不同路径 → 签名不同 → 没有一份包对得上）
     from tfield.data.loader import test_data_path
@@ -714,9 +728,38 @@ def test_换了数据集之后报出上一次标定对的是谁(client, tmp_path
     assert m["dataset_sig"] != body["dataset_sig"]      # 上一次标的是**另一份**
     assert m["created_at"]
     assert m["file"].startswith("bundle_") and m["file"].endswith(".json")
+    # 换数据集**换掉了这一页的答案**：新那份数据集的签名与旧的对不上，
+    # 所以「上一次标定对的是谁」这句问话的答案也跟着换了主语。
+    assert body["dataset_sig"] != before["dataset_sig"]
 
     # 收尾：把交付数据集装回去，别留给后面的模块
     deps.install_dataset(paths.dataset_path())
+
+
+def test_库里那一份是为别的数据标的时_页二照用并如实报出来(client):
+    """⭐ 2026-10-10 用户裁定：「只要是模型库中有模型，就能选择模型库中的任意
+    一个模型来构建，而不是绑定数据集。」
+
+    页② 那一屏数的是**包里那些数**（参数、A/B、逐折 MAE）—— 它照旧报，
+    但要把「这一份不是为当前这份数据标的」说出来。屏上要是只印着这些数字
+    而不提这一句，读的人会以为它们是这份数据的成绩。
+    """
+    ds = deps.get_train_dataset()
+    # ⚠️ 合成的**为别的数据集标的**那一份（`conftest.bundle_for_another_dataset`），
+    # 不是盘上排序第一的那一份 —— 盘上有没有别人的包取决于谁在这台机器上跑过
+    # 标定，别人的克隆里没有。先确认它真的对不上，否则这一条白跑：拿一份对得上
+    # 的包进来，「借来的」那句话本来就该是空串，红绿都不动。
+    other = conftest.bundle_for_another_dataset()
+    assert other.dataset_sig != ds.signature, "取到的是对得上的那一份，这条白跑"
+
+    models_store.save_model("别人家标的", other, ds, "别人家的棚.xlsx")
+    deps.reset_cache()
+
+    b = client.get("/api/calibration").json()
+    assert b["present"] is True, "用户点了它当当前模型，就该用它"
+    assert b["source"] == "library"
+    assert b["dataset_sig"] == other.dataset_sig, "报的不是用户点的那个模型"
+    assert b["mismatch_note"] == deps._BORROWED_NOTE
 
 
 @pytest.mark.empty_library
@@ -734,6 +777,9 @@ def test_从来没有标过的数据集_mismatch_是_null(client, monkeypatch, t
     body = client.get("/api/calibration").json()
     assert body["present"] is False
     assert body["mismatch"] is None
+    # 没有模型时那句话是空串（不是缺键）：前端不必判两种空，与 `ModelRow.why`
+    # 同一条房规。`mismatch` 那个字典说的是另一件事（盘上躺着的旧包）。
+    assert body["mismatch_note"] == ""
 
 
 @pytest.mark.empty_library
@@ -772,13 +818,12 @@ def test_坏包旁边有一份好包时_照旧报出好包那一份(client, monk
     而它红起来的样子像「`_mismatch` 挑包挑错了」，离真正的原因很远。
     """
     from dataclasses import replace
-    from tfield.calibration import load_bundle, save_bundle
+    from tfield.calibration import save_bundle
 
     # 拿交付那份包改成「别的签名」再存回去。**不能用一份手写的两键 JSON**：
     # 那份东西 `from_dict` 会直接拒（它要 `search` 等字段），于是它落在
     # 「坏包」那一类里，这条测试就证不了「好包照旧报得出来」。
-    real = load_bundle(sorted(paths.CONFIGS.glob("bundle_*.json"))[0])
-    assert real is not None
+    real = conftest.delivered_train_bundle()
     save_bundle(replace(real, dataset_sig="别的签名"), root=tmp_path)
     (tmp_path / "bundle_截断的.json").write_text("{ 半份", encoding="utf-8")
 

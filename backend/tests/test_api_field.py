@@ -46,10 +46,14 @@ def sections(client):
 
 def test_形状与状态码(sections):
     for k in ("t_index", "time", "n_times", "preset", "monotonic", "calibrated",
+              "mismatch_note",
               "vmin", "vmax", "max_measured_z", "x_min", "x_max", "z_max",
               "x", "z", "arch", "sensors", "sheds", "note"):
         assert k in sections, f"载荷少了 {k}"
     assert sections["t_index"] == 12
+    # 这个模块的库是交付那一份（`library_module`），也就是**为这份数据标的** ——
+    # 那句「借来的」的话必须是空串（三个状态：没模型 / 本地的 / 借来的）。
+    assert sections["mismatch_note"] == "", sections["mismatch_note"]
     assert [s["shed"] for s in sections["sheds"]] == ["p1", "p2", "p3"]
     assert [s["y"] for s in sections["sheds"]] == [3.0, 9.0, 15.0]
 

@@ -24,10 +24,11 @@ from fastapi.testclient import TestClient
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
+import conftest                                         # noqa: E402
 from api import deps, jobs, paths                       # noqa: E402
 from api.main import create_app                         # noqa: E402
 from api.routes import calibration_jobs as cj           # noqa: E402
-from tfield.calibration import CalibrationAborted, load_bundle   # noqa: E402
+from tfield.calibration import CalibrationAborted       # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -81,10 +82,12 @@ def _current_dataset():
 
 
 def _real_bundle():
-    """一份真包，拿来当替身的返回值。**只读**，不改盘上任何东西。"""
-    real = load_bundle(sorted(paths.CONFIGS.glob("bundle_*.json"))[0])
-    assert real is not None
-    return real
+    """交付数据集训练段那一份真包，**已重签成本机指纹**。当替身的返回值用。**只读**。
+
+    ⚠️ 见 `conftest._delivered_bundle`：指纹是**逐机**的，写
+    `sorted(glob)[0]` 会在本机与别人的克隆里取到**两份不同的包**。
+    """
+    return conftest.delivered_train_bundle()
 
 
 def _wait(pred, timeout=5.0):
@@ -279,7 +282,7 @@ def test_bak_不被_mismatch_捡走(client, tmp_path, monkeypatch):
 
     ⚠️ **2026-10-08 保留这一条**（规格书 §5.6 把它算进了退场名单，那是把
     「跑完不再造 .bak」当成了「不用再防 .bak」）：它这里的 `.bak` 是**自己
-    写上去的**，不依赖 `_work` 写回。盘上四份历史包还在，人手也可能造出
+    写上去的**，不依赖 `_work` 写回。盘上那两份交付包一直在，人手也可能造出
     一个 `.bak` —— 这个 glob 模式的守卫不该跟着写回一起退场。
     """
     from api.routes import calibration as cal_routes

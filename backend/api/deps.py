@@ -87,16 +87,50 @@ PipelineKey = tuple[str, str, str]
 NO_BUNDLE = ""
 
 
-def _mark_calibrated(pipe: FieldPipeline, bundle) -> FieldPipeline:
+#: 借来的那一份模型**在构场这一路上**要报的那句话（2026-10-10 用户裁定
+#: 「模型不绑数据集」）。
+#:
+#: ⚠️ **只此一句**：页③ 那一栏、页⑤ 的图章说明、`/api/calibration` 的那一格，
+#: 读的都是它。同一个事实在两处各写一句措辞，迟早会一处改了一处没改。
+#: 带文件名的详细 why 是**列表行**的事（`model_fit`）—— 那里有 `data_file`，
+#: 而这里手上只有包与数据集，说不出「是换了哪一份」。
+_BORROWED_NOTE = "这一份模型的参数不是用当前这份数据标出来的 —— 参数照用，误差数不算它的成绩。"
+
+
+def _mark_calibrated(pipe: FieldPipeline, bundle, *,
+                     mismatch_note: str = "") -> FieldPipeline:
     """把「配置从哪来」写进管线**自己**身上。
 
     路由层据此照实标注（spec §七 V3：兜底参数「不是最优，只是不在坏角上」，
     与标定后的数**同折族、不同参数，不可直接比大小**）。写成管线的属性而不是
     一个查询函数，是为了让 `_build_pipeline` 的每条返回路径**不可能忘记**设它 ——
     忘记的后果是界面把兜底的数标成「已标定」，而这正是最不能错的一处标注。
+
+    ⚠️ `mismatch_note` 走关键字、带默认空串：它是 2026-10-10 才有的**第三档**
+    （「已标定」里再分「本地的」与「借来的」），原先的两档调用点只有两个位置
+    参数，不该被逼着一起改。
     """
     pipe.calibrated = bundle is not None        # type: ignore[attr-defined]
+    pipe.mismatch_note = mismatch_note          # type: ignore[attr-defined]
     return pipe
+
+
+def _borrowed(ds: Dataset, bundle) -> bool:
+    """这一份包的参数**不是为这个训练段拟的**吗。
+
+    ⚠️ 判据只看**数据集那一轴**（Ruling R1）：特征组那一轴对不上的包在
+    `current_bundle` 就被拦在门外了，走不到这里。
+
+    ⚠️ 比的是**包上**那一列，而 `current_bundle` 比的是**库的那一行上**那一列 ——
+    两者是同一件事的两个副本（行上那份是保存时从包上抄的），只可能被手工改动
+    弄分叉。手上有什么就比什么：这里只有包。
+
+    ⚠️ 摘成函数是为了让这个判据**有一个便宜的落点**：它唯一的调用点在
+    `_build_pipeline` 里，而那里一句 `fit()` 就是几十秒 —— 不摘出来，这个
+    判据就只能靠一条 slow 用例捎带着验。判反了的后果是屏上给借来的模型盖
+    「已标定（本地的）」的章：数的来历整个说反。
+    """
+    return bundle is not None and bundle.dataset_sig != ds.signature
 
 
 def _build_pipeline(ds: Dataset, groups: tuple[str, ...], bundle) -> FieldPipeline:
@@ -107,7 +141,9 @@ def _build_pipeline(ds: Dataset, groups: tuple[str, ...], bundle) -> FieldPipeli
     """
     cfg = bundle.config() if bundle is not None else PipelineConfig.fallback()
     pipe = FieldPipeline(cfg, ds).fit(build_features(ds, groups), ds)
-    return _mark_calibrated(pipe, bundle)       # ← 唯一的返回路径
+    return _mark_calibrated(pipe, bundle,
+                            mismatch_note=_BORROWED_NOTE if _borrowed(ds, bundle)
+                            else "")
 
 
 class PipelineCache:
@@ -218,16 +254,27 @@ def on_dataset_change(fn: Callable[[], None]) -> None:
 
 @dataclass(frozen=True)
 class CurrentBundle:
-    """一次回答的两半：**用哪一份**，以及**它从哪来**。
+    """一次回答的**三**半：**用哪一份**、**它从哪来**、**它是不是为这份数据标的**。
 
     为什么把来源一起返回而不是另开一个函数：来源只有页② 用得上，而另开一个
     函数就得把「挑哪一份」的规则写第二遍 —— 两份实现迟早不一致，表现出来是
     页② 说「未入库」而构场用的是库里的那一份，屏上没有一处提示。
+
+    ⚠️ `mismatch_note` 是 2026-10-10 用户裁定（「模型不绑数据集」）加上来的
+    第三个状态。原先只有两档：**有包** / **没包**，于是「借来的」被塞进「没包」
+    那一档 —— 屏上说的和库里存的对不上，而这是本屏最不能错的一处。
     """
 
     bundle: CalibrationBundle | None
     #: `"unsaved"` / `"library"` / `None`。前两个对应 §5.4 的两条来路。
     source: str | None
+    #: 这一份包**不是**为当前训练段标的时候，那句要报出去的话；对得上时是
+    #: **空串**（不是 None —— 前端不用判两种空，与 `ModelRow.why` 同一条房规）。
+    #: 措辞就是 `_BORROWED_NOTE` 那一句，与构场那一路（管线上的同名属性）
+    #: **同一个常量**。
+    #: ⚠️ 只在 `source == "library"` 时可能非空：「刚跑完那一份」的那道闸门
+    #: 还在（见 `current_bundle`），它过不来。
+    mismatch_note: str = ""
 
 
 def unsaved_bundle() -> CalibrationBundle | None:
@@ -243,6 +290,68 @@ def unsaved_bundle() -> CalibrationBundle | None:
     return job.result
 
 
+@dataclass(frozen=True)
+class ModelFit:
+    """一份模型**对得上**当前训练段吗，对不上的话是哪一轴不对。
+
+    拆成两轴而不是一个布尔，是因为上层对这两轴的处理**不一样**（2026-10-10
+    用户裁定「模型不绑数据集」）：
+
+    · 数据集那一轴对不上 → 它就不是为这份数据标的，但**借来用是用户的事**
+      （库里的模型都可以选），上层把它当**标签**报出去；
+    · 特征组那一轴对不上 → 参数配的不是这套特征，**是输入类型对不上**，
+      上层继续当**闸门**（见 `current_bundle` 第二档）。
+
+    `why` 是给人看的一句话。对得上时是**空串**，不是 `None` —— 与
+    `ModelRow.why` 同一条房规：前端不用判两种空。
+    """
+
+    same_data: bool
+    same_groups: bool
+    why: str
+
+    @property
+    def ok(self) -> bool:
+        """两轴都对得上。**「能借来用」是另一件事**，别拿这个当那个。"""
+        return self.same_data and self.same_groups
+
+
+def model_fit(*, dataset_sig: str, groups_sig: str,
+              ds: Dataset, current_groups_sig: str,
+              data_file: str = "", current_file: str = "") -> ModelFit:
+    """**全站唯一一处**回答「这一份模型对得上当前数据吗」。
+
+    原先有两套口径：`routes/models.py::_compat` 只看数据集签名与文件名，而
+    这里的 `_usable` **还比特征组**。于是一行按别的特征组标出来的模型，列表
+    说「能用」，构场那条路却把它丢开、退回兜底参数 —— 屏上没有一个字提示这
+    件事。两套定义不会报错，只会慢慢漂（这是 2026-10-10 用户裁定「模型不绑
+    数据集」时揭出来的，不是那次改动引入的）。
+
+    两个输入都是**签名**而不是名字：调用方手里有什么就用什么 —— 库那一行只有
+    `groups_sig`（`ModelRow` **不带包**，一屏十行就是 8 MB），而包那一侧只有
+    名字。签名本来就是为了比这一件事而存在的，所以两边都先化成它。
+
+    ⚠️ 签名里掺了文件的 **mtime**（`loader.py:29`），所以「换了一份数据集」与
+    「同一个文件原地重存过一次」都会让数据集那一轴对不上，而后者用户根本没换
+    数据 —— 只说「数据来源不同」，他会去重新导入一份，然后发现还是不行。
+    """
+    same_groups = groups_sig == current_groups_sig
+    if dataset_sig == ds.signature:
+        return ModelFit(same_data=True, same_groups=same_groups,
+                        why="" if same_groups else _GROUPS_WHY)
+    if current_file and data_file == current_file:
+        why = _TOUCHED_WHY
+    else:
+        why = f"数据来源不同：{data_file}" if data_file else "数据来源不同"
+    return ModelFit(same_data=False, same_groups=same_groups, why=why)
+
+
+#: 两条对不上的理由。写成常量是因为它们**逐字出现在测试的断言里**，
+#: 而两处各写一遍必然有一天只改一处。
+_GROUPS_WHY = "这一份是用别的特征组标出来的"
+_TOUCHED_WHY = "同一个文件被改动过（内容或修改时间变了）"
+
+
 def _usable(bundle, ds: Dataset, groups: tuple[str, ...]) -> bool:
     """这一份包能不能拿来给**这一份训练段**构场。
 
@@ -250,9 +359,15 @@ def _usable(bundle, ds: Dataset, groups: tuple[str, ...]) -> bool:
     特征搜出来的）。规格书 §5.5 说只比签名也够 —— 因为库内特征组是个常量，
     而那句话**依赖页② 把特征组写死**（`calibration_jobs.py` 用的是
     `C.DEFAULT_FEATURE_GROUPS`）。多比一个字符串，把那条路堵在门口。
+
+    ⚠️ 特征组那一半比的是**包里的名字**化成签名，不是包上那个 `groups_sig`
+    字段：两者本该相同，但包是可以被造出来的（测试就 `dataclasses.replace`
+    过 `feature_groups` 而不动 `groups_sig`），而**名字才是参数真正要配的
+    那一样东西**。
     """
-    return (bundle.dataset_sig == ds.signature
-            and tuple(bundle.feature_groups) == tuple(groups))
+    return model_fit(dataset_sig=bundle.dataset_sig,
+                     groups_sig=groups_signature(bundle.feature_groups),
+                     ds=ds, current_groups_sig=groups_signature(groups)).ok
 
 
 def current_bundle(groups: tuple[str, ...] | None = None) -> CurrentBundle:
@@ -261,7 +376,7 @@ def current_bundle(groups: tuple[str, ...] | None = None) -> CurrentBundle:
     三档，按次序：
 
     1. 本次会话刚跑完、还没入库的那一份 → `"unsaved"`
-    2. 否则库里的当前模型，与当前训练段对得上 → `"library"`
+    2. 否则库里的当前模型（**特征组对得上就照用**，数据集那一轴只报不拦）→ `"library"`
     3. 都没有 → `(None, None)`
 
     ⚠️ 第 1 条压在第 2 条上面，正是因为「用户刚跑完还没保存」时屏幕该显示
@@ -282,13 +397,32 @@ def current_bundle(groups: tuple[str, ...] | None = None) -> CurrentBundle:
     if b is not None and _usable(b, ds, groups):
         return CurrentBundle(bundle=b, source="unsaved")
 
+    # 第二档：库里的当前模型 —— **用户点了哪个就用哪个**（2026-10-10 用户裁定
+    # 「只要是模型库中有模型，就能选择模型库中的任意一个模型来构建，而不是绑定
+    # 数据集」）。数据集那一轴对不上**不再把它丢掉**，只如实报出去。
+    #
+    # ⚠️ 拦的只剩**特征组**那一轴（Ruling R1）：那不是「哪一份数据」的问题，
+    # 是**输入类型**的问题 —— `_build_pipeline` 用的是传进来的 `groups` 去
+    # `build_features`，拿另一组特征拟出来的矩阵去配这份参数，要么尺寸对不上
+    # 当场炸，要么静默画错。判定一律走 `model_fit`，这里不许自己比。
     mid = models_store.current_id()
     if mid is None:
         return CurrentBundle(bundle=None, source=None)
+    row = models_store.get_model(mid)
     b = models_store.load_bundle(mid)
-    if b is None or not _usable(b, ds, groups):
+    if row is None or b is None:
         return CurrentBundle(bundle=None, source=None)
-    return CurrentBundle(bundle=b, source="library")
+    fit = model_fit(dataset_sig=row.dataset_sig, groups_sig=row.groups_sig,
+                    ds=ds, current_groups_sig=groups_signature(groups),
+                    data_file=row.data_file,
+                    current_file=current_dataset_path().name)
+    if not fit.same_groups:
+        return CurrentBundle(bundle=None, source=None)
+    # 报的是 `_BORROWED_NOTE` 这句**统一措辞**，不是 `fit.why` 那句带文件名的
+    # 详细理由：构场那一路（`_build_pipeline`）手上没有 `data_file`，说不出
+    # 「是换了哪一份」，两处各报各的迟早会分叉。带文件名的细节留给页③ 的列表行。
+    return CurrentBundle(bundle=b, source="library",
+                         mismatch_note="" if fit.same_data else _BORROWED_NOTE)
 
 
 def get_pipeline(groups: tuple[str, ...] | None = None) -> FieldPipeline:
