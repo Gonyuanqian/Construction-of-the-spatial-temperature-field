@@ -14,11 +14,13 @@
  * 现在它从 `route.path` 推出来，写进去就是一次 `router.push`：于是
  * 「开关显示哪个模式」与「现在在哪一页」不可能对不上。
  *
- * 导航按 `route.meta.rail` 收起。实时模式那一屏把导航收起来，因为它
- * 是全程唯一「不提数据」的一列 —— 演示时它只是噪声，而且「实时源的状态」
- * 才是这一屏要说的事。
+ * 左侧导航**每一页都在**，但内容跟着模式换：训练模式那四页是流水线那四项，
+ * 实时模式那一屏是三条演示占位项（`LIVE_NAV_ITEMS`）。原先它是**收起**的，
+ * 2026-10-09 用户裁定改成「换项不收起」—— 用户给的那张参考图左栏是有导航的。
+ *
+ * 实时模式那一屏整屏走深色（见 `tokens.css` 的 `:root.theme-live`）。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import ModeSwitch from './components/ModeSwitch.vue'
@@ -26,6 +28,7 @@ import NavRail from './components/NavRail.vue'
 import NoDataset from './components/NoDataset.vue'
 import TitleBar from './components/TitleBar.vue'
 import { useDataset } from './composables/useDataset'
+import { LIVE_NAV_ITEMS, NAV_ITEMS } from './design/copy'
 
 const route = useRoute()
 const router = useRouter()
@@ -65,14 +68,33 @@ watch(() => route.path, (p) => {
   if (!p.startsWith('/live')) lastTrainPath.value = p
 }, { immediate: true })
 
-const showRail = computed(() => route.meta.rail !== false)
+/**
+ * 训练模式最后停留的那一页在 `lastTrainPath` 上，这里只管导航那一列的内容。
+ */
+const railItems = computed(() => (isLive.value ? LIVE_NAV_ITEMS : NAV_ITEMS))
+
+/**
+ * 实时模式那一屏整屏走深色。
+ *
+ * ⚠️ **挂在 `documentElement` 上，不是挂在模板根上**，两个理由：
+ *   1. `App.vue` 的模板是**片段**，`:class` 没有那一个元素可落；
+ *   2. 更要紧的是 `LiveView` 与 `VolumeScene` 都按 `readPalette()` 读
+ *      `document.documentElement` 上的令牌（ECharts 的 canvas 不认 `var()`）。
+ *      类挂在 `documentElement` 上，CSS、图表、三维才是**同一份颜色**。
+ *
+ * `watchEffect` 在 setup 里**立刻跑一次**，早于任何子组件渲染 —— 所以
+ * 页⑤ 第一次 `readPalette()` 时读到的就已经是深色那一档。
+ */
+watchEffect(() => {
+  document.documentElement.classList.toggle('theme-live', isLive.value)
+})
 </script>
 
 <template>
   <TitleBar />
   <ModeSwitch v-model="mode" />
   <div class="body">
-    <NavRail v-if="showRail" />
+    <NavRail :items="railItems" />
     <main class="page">
       <RouterView v-if="!gate" :key="dataset.version.value" />
       <NoDataset v-else />

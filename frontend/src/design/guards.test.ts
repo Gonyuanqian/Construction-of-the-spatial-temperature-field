@@ -13,7 +13,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
-import { FIELD_VIEWS, MODES, NAV_ITEMS, SYSTEM_TITLE } from './copy'
+import { BORROWED, FIELD_VIEWS, LIVE_NAV_ITEMS, MODES, NAV_ITEMS, SYSTEM_TITLE } from './copy'
 
 // Windows 上 import.meta.url 会把中文目录名百分号编码（%E7%A9%BA…），而 pathname 不解码；
 // 只替换盘符前的斜杠（原写法）在非 ASCII 路径下会指向一个不存在的目录。
@@ -335,10 +335,56 @@ describe('文案只有一个来源', () => {
   it('每个未开放的项都带一句给人看的理由', () => {
     // 三个清单一起管：模式、页面导航、页③ 的视图切换。
     // 少收一个，那个清单里的"未开放"就会退化成一句"本轮不做"。
-    for (const item of [...MODES, ...NAV_ITEMS, ...FIELD_VIEWS]) {
+    for (const item of [...MODES, ...NAV_ITEMS, ...FIELD_VIEWS, ...LIVE_NAV_ITEMS]) {
       if (!item.enabled) {
         expect(item.why.length, `${item.label} 没写为什么未开放`).toBeGreaterThan(10)
       }
     }
+  })
+
+  it('标定图章的三个字面量只在 copy.ts 里，`.vue` 一律走 `calibratedLabel`', () => {
+    // ⚠️ 这是本次（2026-10-10 用户裁定「模型不绑数据集」）最不能错的一处标注：
+    // 三档（未标定 / 已标定 / 已标定（借来的））说错了，用户会把**一份别人的
+    // 参数**算出来的误差当成这份数据的成绩 —— 屏上不会报错，也没有任何地方
+    // 提示。原先三个页面各自写了一遍那个二元三元表达式，所以加了这一档之后
+    // 它们在屏上就会各说各话。
+    //
+    // 扫的是**带引号的字面量**：注释里当然可以提「已标定」这三个字
+    // （读的人正是靠注释才明白这一档在干什么），写死的一句话一定带引号。
+    const quoted = (s: string, t: string) =>
+      t.includes(`'${s}'`) || t.includes(`"${s}"`) || t.includes(`\`${s}\``)
+    const bad: string[] = []
+    for (const p of VUE) {
+      const t = readFileSync(p, 'utf8')
+      if (quoted('已标定', t) || quoted('未标定（兜底参数）', t)) bad.push(p.slice(SRC.length))
+    }
+    expect(bad, '这些 .vue 自己写死了标定图章的话').toEqual([])
+
+    // 正着也钉一遍：**四处**读取点（页③ 的指标卡与图表头、页④ 那一卷、
+    // 页⑤ 这一帧），一个不多一个不少。上面那条只挡得住「自己写死一句话」，
+    // 挡不住「干脆不印图章」（把格子 `v-if` 掉、或者整个删掉）。
+    // ⚠️ 按路径排序再比：`walk()` 吃的是 `readdirSync` 的次序，那是文件系统的
+    // 事，拿它当断言次序等于让这条测试在别人的机器上红。
+    const where = VUE
+      .map((p) => [p.slice(SRC.length),
+                   readFileSync(p, 'utf8').split('calibratedLabel(').length - 1] as const)
+      .filter(([, n]) => n > 0)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+    expect(where).toEqual([
+      ['/scene/VolumeView.vue', 1],
+      ['/views/FieldView.vue', 2],
+      ['/views/LiveView.vue', 1],
+    ])
+  })
+
+  it('「借来的」三个字也只在 copy.ts 里', () => {
+    // 同一个道理：页③ 的选项、模型库那一行的图章、标定图章上的括注，三处
+    // 印的是**同一档**。三处各写一遍不会报错，只会漂成一个说「借来的」、
+    // 一个说「非本地」。
+    const quoted = (t: string) =>
+      t.includes(`'${BORROWED}'`) || t.includes(`"${BORROWED}"`) || t.includes(`\`${BORROWED}\``)
+    const bad = [...VUE, ...TS.filter((p) => !p.endsWith('design/copy.ts'))]
+      .filter((p) => quoted(readFileSync(p, 'utf8')))
+    expect(bad.map((p) => p.slice(SRC.length))).toEqual([])
   })
 })

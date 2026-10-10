@@ -37,6 +37,7 @@ function makePayload(): SectionsPayload {
   return {
     t_index: 7, time: '2026-07-23T11:00:00', n_times: 1308,
     preset: 'standard', monotonic: true, calibrated: true,
+    mismatch_note: '',
     vmin: 0.9, vmax: 5.1, max_measured_z: 2,
     x_min: 0, x_max: 2.1, z_max: 1.3017,
     x: [0, 0.7, 1.4, 2.1], z: [0, 0.7, 1.4, 2.1],
@@ -222,6 +223,28 @@ describe('点选的三种回答在图上都到得了', () => {
     // 顺带把「这一轮真的问过三种回答」也钉住 —— 否则夹具退化成只剩一种 kind 时，
     // 上面的循环仍在跑、却什么都没覆盖到。
     expect([...seen].sort()).toEqual(['outside', 'unmeasured', 'value'])
+  })
+})
+
+describe('轴上的类别名收干净了再印', () => {
+  it('两条轴的印字都过 `tickLabel`，而 `data` 原样不动', () => {
+    // 用户报的：y 轴印出 `1.2000000000000002`、`000001` 这种东西，溢出到
+    // 左边那张温度场上，看着像花屏。根因是类别名本身就带着浮点的长尾巴
+    // （`np.arange` 出来的不是 0.05 的整数倍）。
+    const p = makePayload()
+    p.x = [0, 0.15000000000000002, 2.1]
+    p.z = [0, 1.2000000000000002, 1.3000000000000003]
+    const o = opt(p)
+
+    for (const ax of [...o.xAxis, ...o.yAxis]) {
+      expect(typeof ax.axisLabel.formatter, '这条轴没挂印字格式，长尾巴照印').toBe('function')
+    }
+    expect(o.yAxis[0].axisLabel.formatter('1.2000000000000002')).toBe('1.2')
+
+    // ⚠️ **身份不许被改。** 这两串是测点散点找类别用的键，收了尾巴它们就
+    // 找不着了 —— 实测十字会凭空消失。所以 `data` 一个字不动。
+    expect(o.yAxis[0].data).toEqual(['0', '1.2000000000000002', '1.3000000000000003'])
+    expect(o.xAxis[0].data).toEqual(['0', '0.15000000000000002', '2.1'])
   })
 })
 

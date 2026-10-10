@@ -21,7 +21,7 @@ import Card from '../components/Card.vue'
 import StatCard from '../components/StatCard.vue'
 import StatRow from '../components/StatRow.vue'
 import { useAsync } from '../composables/useAsync'
-import { MODELS } from '../design/copy'
+import { BORROWED, MODELS } from '../design/copy'
 
 const route = useRoute()
 const router = useRouter()
@@ -173,6 +173,13 @@ async function onSetCurrent(row: ModelRowPayload): Promise<void> {
               <td>
                 {{ row.name }}
                 <span v-if="row.is_current" class="stamp">{{ MODELS.current }}</span>
+                <!-- 借来的（2026-10-10 用户裁定「模型不绑数据集」之后的第三档）：
+                     能用，但它的参数不是为**当前**这一份数据标出来的。`title`
+                     上挂的是**这一行自己**那句 `why`（「数据来源不同：…」）——
+                     具体的换成了哪一份是**行**的事，库里这个表有「数据来源」
+                     那一列在讲它；不在这里再写一句通用解释。 -->
+                <span v-if="row.borrowed" class="stamp" :title="row.why">
+                  {{ BORROWED }}</span>
               </td>
               <td>
                 {{ row.data_file }}

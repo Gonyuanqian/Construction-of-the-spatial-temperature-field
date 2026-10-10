@@ -17,6 +17,35 @@ export const SHELL_NOTE =
   '拱壳按拱形截面示意，长度由滑块给出：数据集没有给出棚的实际长度，' +
   '不能读成「测了这么长」。'
 
+/**
+ * 拱肋沿 y 的间距 / m。
+ *
+ * 与壳长同一个性质：**示意**，不是数据 —— 数据集没给棚的肋距，规格书 §5.3 也
+ * 只把棚长定为滑块。它进的是几何，不进场。
+ */
+const RIB_SPACING = 0.5
+
+/**
+ * 一座棚从 `y − L/2` 到 `y + L/2`：**两端各一圈，中间等距**。
+ *
+ * 2026-10-09 用户裁定三维影像「不够形象和具体」。原因之一是原先**只画壳的两端**
+ * 那两圈（就地写在 `VolumeScene` 里的 `[y − L/2, y + L/2]`），而在 18 m 长的一条
+ * 上，那几圈读起来是划痕，不是拱棚 —— 拱棚一眼认得出，靠的正是**等距重复的肋**。
+ *
+ * 末端那一圈是**补上去的**，不是循环里走到的：把「长度一定是 `RIB_SPACING` 的整数
+ * 倍」当成本函数的隐含前提，以后谁把滑块的 `step` 放宽，最后一圈就会**静默**少掉
+ * 半米 —— 棚的两头各缺一点，恰好是最不容易被一眼看出来的坏法。
+ */
+function ribsOf(shellYs: number[], shellLength: number): number[] {
+  const out: number[] = []
+  for (const y of shellYs) {
+    const start = y - shellLength / 2
+    for (let d = 0; d < shellLength; d += RIB_SPACING) out.push(start + d)
+    out.push(y + shellLength / 2)
+  }
+  return out
+}
+
 /** 每远离实测断面一米，混合片多透这么多。 */
 const OPACITY_DROP = 0.22
 /**
@@ -51,6 +80,11 @@ export interface VolumeSpec {
   arch: [number, number][]
   /** 哪几个 y 上立拱壳。载荷给的几座棚各一个，与换折无关。 */
   shellYs: number[]
+  /**
+   * 拱肋铺在哪些 y 上：每座棚两端各一圈、中间等距（见 `ribsOf`）。
+   * 示意，跟着 `shellLength` 缩，不是数据。**屏上「像不像一条棚」靠的就是它。**
+   */
+  ribYs: number[]
   /** 测点只画在 `available_sheds` 里那几座棚上。 */
   sensorSheds: SensorShedSpec[]
   /** 无测量带的格子下标，全片共用。三维里**不填色**（拱顶下留一层看得见的空）。 */
@@ -77,6 +111,7 @@ export function buildVolumeSpec(payload: VolumePayload, shellLength: number): Vo
     Math.min(1, Math.max(OPACITY_FLOOR, 1 - OPACITY_DROP * nearestMeasured(y)))
 
   const avail = new Set(payload.available_sheds)
+  const shellYs = payload.sheds.map((s) => s.y)
 
   return {
     planes: payload.planes.map((p, i) => ({
@@ -88,7 +123,8 @@ export function buildVolumeSpec(payload: VolumePayload, shellLength: number): Vo
     })),
     shellLength,
     arch: payload.arch,
-    shellYs: payload.sheds.map((s) => s.y),
+    shellYs,
+    ribYs: ribsOf(shellYs, shellLength),
     sensorSheds: payload.sheds
       .filter((s) => avail.has(s.id))
       .map((s) => ({

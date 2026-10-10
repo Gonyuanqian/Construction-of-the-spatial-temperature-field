@@ -14,6 +14,7 @@ import type { EChartsOption } from 'echarts'
 
 import type { SectionsPayload } from '../../api/types'
 import type { Palette } from '../../design/palette'
+import { tickLabel } from '../axis'
 import { tempStops } from '../scale'
 import { interpretPick, pickText } from '../pick'
 
@@ -56,7 +57,9 @@ export function buildSectionFieldOption(
     type: 'category' as const,
     axisLine: { lineStyle: { color: p.steel } },
     axisTick: { show: false },
-    axisLabel: { color: p.inkMuted, fontSize: p.chartAxis },
+    // ⚠️ `formatter` 是**印字**，不是数据：类别名本身带着浮点的长尾巴
+    // （见 `charts/axis.ts`），不收就溢出到隔壁那张图上。`data` 一个字不动。
+    axisLabel: { color: p.inkMuted, fontSize: p.chartAxis, formatter: tickLabel },
     splitLine: { show: false },
   }
 

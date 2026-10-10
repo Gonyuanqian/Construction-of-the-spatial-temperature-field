@@ -15,7 +15,7 @@ function row(over: Partial<ModelRowPayload> = {}): ModelRowPayload {
     dataset_sig: 'a', groups_sig: 'b', data_file: 'f.xlsx',
     data_start: '2026-07-23T11:00:00', data_end: '2026-07-27T11:55:00',
     mae: 0.1, rmse: 0.2, r2: 0.99, is_current: true,
-    compatible: true, why: '', ...over,
+    compatible: true, borrowed: false, why: '', ...over,
   }
 }
 
@@ -25,8 +25,19 @@ function payload(rows: ModelRowPayload[]): ModelsPayload {
 
 describe('可用的模型', () => {
   it('只留 compatible 的那些', () => {
-    const p = payload([row(), row({ id: 2, compatible: false, why: '数据来源不同：别人家的棚.xlsx' })])
+    const p = payload([row(), row({ id: 2, compatible: false,
+                                    why: '这一份是用别的特征组标出来的' })])
     expect(usableModels(p).map((r) => r.id)).toEqual([1])
+  })
+
+  it('借来的那一种**是能用的**', () => {
+    // ⭐ 2026-10-10 用户裁定「模型不绑数据集」：`compatible` 只看特征组
+    // 那一轴，数据集签名对不上不再拦着选。这一条钉的正是那个改动 ——
+    // 少了它，把 `filter(r => r.compatible)`
+    // 改回「两轴都对得上」也不会有测试红。
+    const p = payload([row(), row({ id: 2, borrowed: true,
+                                    why: '数据来源不同：别人家的棚.xlsx' })])
+    expect(usableModels(p).map((r) => r.id)).toEqual([1, 2])
   })
 
   it('载荷还没回来（null）时给空数组，不抛', () => {

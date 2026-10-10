@@ -5,13 +5,21 @@
  * **这一页不做任何计算**（硬约束 1）：温度、帧号、时间戳、分级文案全部来自
  * 后端，这里的每一个数都是某条接口原样给的。
  *
+ * ⚠️ 2026-10-09 第二轮（用户按参考图重做这一屏）：**这里也不做任何计算**那条
+ * 仍然成立 —— 新加的「棚内均温」是后端给的（`VolumePayload.mean`，
+ * 口径见 `routes/field.py::_mean_in_arch`），前端一个温度都不重算。
+ * 三个坑（拱外是 NaN、z 高于 1.10 m 那一条是外推、平均要在软单调投影之后取）
+ * 都在后端那一处，前端连碰都不碰。
+ *
  * `cursor` 是**服务端**给的（`GET /api/live/status` 的纯读），不是本地推的 ——
  * 时钟在服务端，是 `(started_at, now)` 的纯函数。本地再维护一个「第几帧」
  * 迟早与服务端漂开，而这一屏最不能错的就是「现在演的是第几帧」。
  *
  * ⚠️ **「实时模式」与图章的 `live` 不是一回事**：前者是这一屏的名字，
- * 后者说的是「这个数是这次请求现算的」。四个指标格子都挂 `live` 图章 ——
- * 它们确实都是 `/api/live/*` 现算的。别把两个词混成一个。
+ * 后者说的是「这个数是这次请求现算的」。
+ * （原先那排四张指标卡都挂 `live` 图章 —— 2026-10-09 按用户裁定撤了，
+ * 这一屏上就再没有挂图章的格子了，但两个词的区别仍然成立：
+ * 断面那张卡里的读数也是 `/api/live/frame/{n}` 现算的。）
  *
  * 控件**在页内**，不走 `Teleport to="#rail-extra"` —— 实时模式收起导航
  * （`App.vue` 的 `route.meta.rail`），而 `#rail-extra` 由 `NavRail` 渲染，
@@ -23,17 +31,18 @@
  */
 import { computed, defineAsyncComponent, h, onMounted, onUnmounted, ref } from 'vue'
 
-import type { LiveFramePayload, LiveStatus, PrepareResult } from '../api/types'
+import type { LiveFramePayload, LiveStatus, PrepareResult, VolumePayload } from '../api/types'
 import { getJson, postJson } from '../api/client'
 import { fetchModels, usableModels } from '../api/models'
 import EChart from '../charts/EChart.vue'
+import { buildLiveMeanCurveOption, MEAN_CURVE_TITLE } from '../charts/options/liveMeanCurve'
 import { buildSectionFieldOption, shedOfSeries } from '../charts/options/sectionField'
 import { interpretPick, pickText } from '../charts/pick'
 import Card from '../components/Card.vue'
 import StatCard from '../components/StatCard.vue'
 import StatRow from '../components/StatRow.vue'
 import { useAsync } from '../composables/useAsync'
-import { FIELD_MODEL, FIELD_VIEWS } from '../design/copy'
+import { calibratedLabel, FIELD_MODEL, FIELD_VIEWS } from '../design/copy'
 import { fmtTime } from '../design/format'
 import { readPalette } from '../design/palette'
 
@@ -94,7 +103,7 @@ async function act(name: 'prepare' | 'start' | 'pause' | 'next') {
     await postJson<LiveStatus | PrepareResult>(`/api/live/${name}`)
     error.value = ''
     await refreshStatus()
-    void frame.run()
+    refetch()
   } catch (e) {
     error.value = (e as Error).message
   } finally {
@@ -113,6 +122,35 @@ const frame = useAsync(async () => {
 })
 
 /**
+ * 摘要那一份体网格。指标行的「棚内均温」与底栏那条沿棚均温曲线都要它。
+ *
+ * ⚠️ **它与三维那一块不是同一次请求，也不该合成一次。** 三维要的是 37 片的
+ * 精细体网格（约 1.2 s），摘要要的是「沿棚长方向的走势」——`y_step = 3.0`
+ * 七片就够，约四分之一秒。合成一次的话摘要要为三维的分辨率付钱；反过来更糟，
+ * 把三维降到 3 m 一片是另一件事。
+ *
+ * ⚠️ 两条请求打的是**同一个**实时源，`advance_to(n)` 是幂等的
+ * （`test_api_live.py::test_同一帧走两条路由不重复接帧` 钉着），
+ * 所以多打一次不会把同一帧接两遍。
+ */
+const SUMMARY_Y_STEP = 3.0
+
+const summary = useAsync(async () => {
+  const s = status.value
+  if (!s || s.state !== 'ready') throw new Error('实时源还没准备好')
+  return getJson<VolumePayload>(`/api/live/volume/${s.cursor}?y_step=${SUMMARY_Y_STEP}`)
+})
+
+/**
+ * 帧与摘要一起重取。**必须一起** —— 它们说的是同一帧，分开取迟早指着两帧：
+ * 屏上左边写着 12:00、右边那条曲线却是 11:55 的，而两边都不报错。
+ */
+function refetch(): void {
+  void frame.run()
+  void summary.run()
+}
+
+/**
  * 轮询对表。**帧号变了才重取** —— 同一帧重取一次，图上什么都没变，
  * 白等一次构场（断面那一半是秒级的，三维那一半约 1.2 s）。
  *
@@ -126,7 +164,7 @@ onMounted(async () => {
   // 再决定要不要去碰实时源 —— 没有模型的实时源开不了，问了也是白问。
   await models.run()
   if (hasModel.value) await refreshStatus()
-  if (ready.value) void frame.run()
+  if (ready.value) refetch()
   timer = setInterval(async () => {
     // ⚠️ 这一句**不靠**下面那句顺带挡住（没跑过 `refreshStatus()` 时
     // `status` 是 null）。写成显式的一句是为了把意图放在脸上：
@@ -139,24 +177,98 @@ onMounted(async () => {
     if (!status.value?.running) return
     const before = status.value?.cursor
     await refreshStatus()
-    if (ready.value && status.value?.cursor !== before) void frame.run()
+    if (ready.value && status.value?.cursor !== before) refetch()
   }, POLL_MS)
 })
 onUnmounted(() => { if (timer) clearInterval(timer) })
 
 /* ── 文案 ───────────────────────────────────────────────── */
 
-const intervalText = computed(() => {
-  const s = status.value?.interval_s ?? 0
-  return s >= 60 ? `${Math.round(s / 60)} 分钟一帧` : `${s} 秒一帧`
-})
-
 /** `null` 就是后端说的「不报数」—— 不翻成 0，也不留空。 */
 const show = (v: number | null): string => (v === null ? '不报数' : v.toFixed(1))
 
+/* ── 指标行与底栏的文案 ─────────────────────────────────── */
+
+/** 棚内均温。`null` 是后端说的「这一卷一个可用格子都没有」—— 不翻成 0。 */
+const meanText = computed(() => {
+  const m = summary.data.value?.mean
+  return m === null || m === undefined ? '不报数' : `${m.toFixed(1)} °C`
+})
+
+/**
+ * 三维那一块现在是什么状态。**三句都要，次序也不能换。**
+ *
+ * ⚠️ 这是这一屏最容易说错的一句话，两个坑各踩一次：
+ *   1. **先把 `data` 判在前面。** `useAsync` 出错时**不清 `data`**（见那个文件），
+ *      所以按下「暂停」之后手里还是上一帧的载荷 —— 那时候屏上确实有场，
+ *      「已生成」是实话。把 `error` 判在前面，屏上明明画着场，卡上却写
+ *      「取数失败」。
+ *   2. **`error` 里那句「实时源还没准备好」不是故障。** 它来自 `frame`/`summary`
+ *      自己那个守卫（`if (!s || s.state !== 'ready') throw`），意思是「还没开始」。
+ *      不判 `ready` 的话，一台正常的机器刚进这一屏就报「取数失败」——
+ *      那是把「等下」说成「坏了」，反过来同样错。
+ */
+const sceneText = computed(() => {
+  if (summary.data.value) return '已生成'
+  if (!ready.value) return '未开始'
+  return summary.error.value ? '取数失败' : '正在构'
+})
+
+/** 本帧时刻。还没取到时说「正在取」，不印一个空的占位。 */
+const frameTimeText = computed(() => (
+  frame.data.value ? fmtTime(frame.data.value.frame.time) : '正在取'
+))
+
+/**
+ * 均温那句口径里要报的那个高度上限（米）。
+ *
+ * ⚠️ 读载荷里的 `max_measured_z`，**不要**在前端另写一个常量。后端那个字段
+ * 就是 `float(C.MAX_MEASURED_Z)`（`field.py:355`）—— 转发过来的同一个数，
+ * 与均温那个掩膜用的截断值天然一致。前端再存一份，就是把后端的一条规则
+ * 实现了第二遍（那条硬规矩的原话在 `field.py:359` 上面）。改常量的那天，
+ * 两处会不一致，而屏上没有任何提示。
+ *
+ * 兜底那个 `'1.10'` 只在载荷还没到的一瞬露脸（那句说明不等取数就挂在页面上）。
+ * 它与后端当前的值一致，但**不是**它的来源 —— 来源永远是载荷。
+ * （测试替身里 `max_measured_z` 是 `2`，与真实常量不同；那不是错，
+ * 替身只需要形状对，别照着它去改这句话。）
+ */
+const zLimitText = computed(() => (
+  summary.data.value ? summary.data.value.max_measured_z.toFixed(2) : '1.10'
+))
+
+/** 底栏那条曲线。摘要还没到时是 null，模板那一支会说明在等什么。 */
+const vCurve = computed(() => (
+  summary.data.value ? buildLiveMeanCurveOption(summary.data.value, palette) : null
+))
+
+/**
+ * 「棚顶气象」那三格。与 `show` 同一条规矩：`null` 就是「不报数」。
+ *
+ * ⚠️ 计划把这三句摆在 `view` 那两行之后，这里改放在这一块 —— 上面那个小节
+ * 标题（「指标行与底栏的文案」）点名的正是它们，摆在一起比夹在点选逻辑里
+ * 读得顺。行为一个字节都没变。
+ */
+const bgTemp = computed(() => {
+  const v = frame.data.value?.frame.bg_temp
+  return v === null || v === undefined ? '不报数' : `${v.toFixed(1)} °C`
+})
+const bgRh = computed(() => {
+  const v = frame.data.value?.frame.bg_rh
+  return v === null || v === undefined ? '不报数' : `${v.toFixed(1)} %`
+})
+const bgLight = computed(() => {
+  const v = frame.data.value?.frame.bg_light
+  return v === null || v === undefined ? '不报数' : `${v.toFixed(0)} lux`
+})
+
 /* ── 断面 + 点选 ────────────────────────────────────────── */
 
-const view = ref<'section' | 'volume'>('section')
+/**
+ * 看哪一块。**默认落在三维**（2026-10-09 用户裁定）：进这一屏先看棚体的样子，
+ * 不必先点一下。与页③ 相反 —— 那一页的入口是断面，它要读的是具体某一片。
+ */
+const view = ref<'section' | 'volume'>('volume')
 const picked = ref<{ shed: string; ix: number; iz: number } | null>(null)
 
 const v5 = computed(() =>
@@ -214,24 +326,26 @@ const readout = computed(() => {
     </Card>
 
     <template v-else>
-    <!-- 一行写完，别换行：这一句是要被断言、也是要被读的。 -->
-    <p v-if="status" class="note state" role="status">
-      实时源{{ ready ? '已就绪' : '还没准备' }}：第 {{ status.cursor }} 帧，共 {{ status.total }} 帧，{{ intervalText }}。帧历史在内存里，重启服务就回到第 0 帧。
-    </p>
-
-    <!-- 指标卡片一排（spec §6.2 页⑤）。
-         挂在 `status` 上、**不挂在 `frame` 上**：状态是纯读、挂载即到，
-         帧要等源准备好了才有。挂在帧上会让这一排在 idle 时整排消失。 -->
-    <StatRow v-if="status">
-      <StatCard label="帧" :value="`第 ${status.cursor} 帧`" prov="live" compact />
-      <StatCard label="共" :value="`${status.total} 帧`" prov="live" compact />
-      <StatCard label="一帧" :value="intervalText" prov="live" compact />
-      <StatCard
-        label="本帧时刻"
-        :value="frame.data.value ? fmtTime(frame.data.value.frame.time) : '—'"
-        prov="live" compact
-      />
-    </StatRow>
+    <!-- ⚠️ 2026-10-09 用户裁定：这一屏**只留温度场**。这里原先有两条东西，
+         整块删掉了 ——
+           · 一条状态句：「实时源已就绪：第 N 帧，共 M 帧，5 分钟一帧。」
+           · 一排四张指标卡（帧 / 共 / 一帧 / 本帧时刻）
+         用户的原话：「实时模式主要就是为了展示构建的温度场，温度场才是重点，
+         要让用户一眼就能观察到全貌，不需要向下滚动就能看到全貌，所以把一些
+         不重要东西都删掉……第几帧，一共多少帧这几个就没必要展示出来，后端
+         系统知道就行」。
+         那两条说的都是帧数，而它们在温度场**上面**占了将近一屏的三分之一。
+         唯一留下的是「本帧时刻」—— 它挪到了三维影像自己的角上（见下面
+         `<VolumeView show-clock>`）。状态句里那句真话（帧历史在内存里）
+         也留着，收进了页脚那个「口径与出处」。
+         同日还在撤：三维画面上方那两行口径说明（「这一段话也没必要展示了」）
+         —— 那是 `VolumeView` 给的，页⑤ 传 `:show-notes="false"` 关掉，页③ 不动；
+         以及「看哪一块」那行控件标签，和常驻在屏上的那一句**分级**
+         （它折进了页脚，见下面 `<details class="why">` 里那段注释 —— 那是
+         有意推翻规格书的一条，不是普通排版）。
+         `LiveView.test.ts` 里几条用例钉着这件事：不报帧数、没有指标卡、
+         那句真话还在 DOM 里、那两行不在而滑块还在、分级句在折叠里且只有一处、
+         以及「看哪一块」没了而分段控件还在。 -->
 
     <div class="row">
       <button
@@ -254,47 +368,14 @@ const readout = computed(() => {
     </p>
 
     <template v-else>
-      <!-- 分级必须在屏上。实时是一帧一帧刷过去的，观众只会记住「它在动」；
-           分级看不见，就等于把「混合出来的」渲染成「测出来的」。 -->
-      <p class="note" data-grading>
-        图上一个格子只有三种回答：拱外无定义、无测量带里不报数、以及一个带出处的实测值。
-      </p>
-
       <p v-if="frame.error.value" role="alert" class="alert">{{ frame.error.value }}</p>
 
-      <Card v-if="frame.data.value" class="block">
-        <div class="row head">
-          <h3>第 {{ frame.data.value.frame.n }} 帧</h3>
-          <span class="tag">
-            {{ frame.data.value.calibrated ? '已标定' : '未标定（兜底参数）' }}
-          </span>
-        </div>
-        <p class="num">{{ fmtTime(frame.data.value.frame.time) }}</p>
-        <p class="note reading">
-          棚顶气象：气温 {{ show(frame.data.value.frame.bg_temp) }} °C，
-          湿度 {{ show(frame.data.value.frame.bg_rh) }} %，
-          光照 {{ show(frame.data.value.frame.bg_light) }} lux。
-        </p>
-        <p class="note reading">
-          这一帧的 24 路实测读数（次序：p1 的 8 个位置，然后 p2、p3）：
-          <span class="num">{{ frame.data.value.frame.sensor_temps.map(show).join('、') }}</span>
-        </p>
-
-        <EChart v-if="v5" :option="v5" height="420px" @pick="onPick" />
-        <p v-else class="note state">正在构这一帧的场…</p>
-
-        <table v-if="readout">
-          <tbody>
-            <tr><th>位置</th><td class="num">{{ readout.where }}</td></tr>
-            <tr><th>回答</th><td>{{ readout.text }}</td></tr>
-          </tbody>
-        </table>
-        <p v-else class="note state">点一个格子看它的读数。</p>
-      </Card>
-      <p v-else-if="frame.loading.value" class="note state">正在取这一帧…</p>
-
+      <!-- 视图切换（2026-10-09 用户裁定）。控件摆在内容**上面** ——
+           它管的就是下面这一块是谁。
+           ⚠️ 用户同日把上面那行 `<legend>看哪一块</legend>` 也圈掉删了 ——
+           底下两个按钮本来就写着「断面」「三维」。撤的是那行标签，不是这个
+           `fieldset`：`fieldset.rail-box .seg` 是两页共用的那条钩子。 -->
       <fieldset class="rail-box rail-switch">
-        <legend>看哪一块</legend>
         <!-- 与页③ 同一条分段控件（spec §九）—— 两页共用一种控件，
              样式各写一份但规则一致，`guards.test.ts` 有一条守卫同时扫这两处。 -->
         <div class="seg">
@@ -306,20 +387,148 @@ const readout = computed(() => {
         </div>
       </fieldset>
 
-      <!-- 三维那一块就是页③ 的那一块，取数口换成实时这条。切过去才懒加载它。 -->
+      <!-- ⚠️ 两块**互斥**、共用一个位子（2026-10-09 用户裁定）：原先断面那张卡
+           没有 `v-if` 拦着，切到三维就成了「断面卡 + 三维块」上下两条 ——
+           用户得往下翻才看得全，这一屏的版面因此没法按「一屏」来设计。
+           页③ 一直是 `v-if` / `v-else`，只有实时这一屏漏了。
+           `LiveView.test.ts` 里那条「切过去是换掉，不是接在下面」两侧都钉着。 -->
+      <!-- ⚠️ 2026-10-09 第二轮（参考图）：指标行回来了。用户原话
+           「本帧时刻挪到指标卡」—— 第一轮把它印到三维影像的角上，
+           这一轮挪回指标行：它落在指标行里，断面与三维**两档都看得见**，
+           而角上那份只有三维那一档有。
+           ⚠️ 三张里一张都不报帧数：「第几帧、一共多少帧没必要展示」那条
+           裁定没被推翻（`LiveView.test.ts` 两侧都钉着）。
+           一律不带 `prov` 图章：三张卡上的数都是这次请求现算的，印三个
+           一模一样的「算」是重复（与页① 同一年的同一条裁定）。 -->
+      <StatRow>
+        <StatCard label="棚内均温" :value="meanText" />
+        <StatCard label="三维温度场" :value="sceneText" />
+        <StatCard label="本帧时刻" :value="frameTimeText" />
+      </StatRow>
+      <p class="note reading">
+        均温只算拱形以内、z 不高于 {{ zLimitText }} m 的那些格子。拱外没有定义，
+        再往上那一条是按外推补出来的，都不进平均。
+      </p>
+
+      <!-- ⚠️ 两块**互斥**、共用一个位子（2026-10-09 第一轮用户裁定）：
+           原先断面那张卡没有 `v-if` 拦着，切到三维就成了上下两条。
+           页③ 一直是 `v-if` / `v-else`，只有实时这一屏漏了。 -->
+      <template v-if="view === 'section'">
+        <Card v-if="frame.data.value" class="block">
+          <div class="row head">
+            <!-- ⚠️ 头不再是「第 N 帧」（2026-10-09 第二轮）：帧号是不报的那几个
+                 数之一。这一块画的是三个断面，头就写它是什么。 -->
+            <h3>断面温度场</h3>
+            <span class="tag">
+              {{ calibratedLabel(frame.data.value) }}
+            </span>
+          </div>
+          <p class="note reading">
+            这一帧的 24 路实测读数（次序：p1 的 8 个位置，然后 p2、p3）：
+            <span class="num">{{ frame.data.value.frame.sensor_temps.map(show).join('、') }}</span>
+          </p>
+
+          <EChart v-if="v5" :option="v5" height="420px" @pick="onPick" />
+          <p v-else class="note state">正在构这一帧的场…</p>
+
+          <table v-if="readout">
+            <tbody>
+              <tr><th>位置</th><td class="num">{{ readout.where }}</td></tr>
+              <tr><th>回答</th><td>{{ readout.text }}</td></tr>
+            </tbody>
+          </table>
+          <p v-else class="note state">点一个格子看它的读数。</p>
+        </Card>
+        <p v-else-if="frame.loading.value" class="note state">正在取这一帧…</p>
+      </template>
+
+      <!-- 三维那一块就是页③ 的那一块，取数口换成实时这条。切过去才懒加载它。
+           三个开关都在这一屏给：
+             · `show-notes` 关掉 —— 2026-10-09 第一轮用户裁定「这一段话也没必要
+               展示了」：画面上方那两行口径说明也撤了，画面顶上去。
+               规格书 §5.3「棚体示意」那条要求没丢，由左栏滑块的标题与读数接着。
+             · `show-view-controls` 打开 —— 第二轮用户裁定「旋转/缩放/平移按钮
+               可以做」。
+             · ⚠️ **不再传 `show-clock`** —— 第二轮把本帧时刻挪进了指标行，
+               角上那份留着就是同一件事印两处。
+             · ⚠️ `clock-time` **仍然要传**：它是 `VolumeView` 的必填 prop，而且
+               不走那枚钟也仍然读它 —— `VolumeView.vue:263` 那句「正在构体…」
+               括号里的时刻、以及 :165 那句「画面仍是 X 的场」，说的都是它。
+               计划给的模板漏了这一个 —— 少了它 `vue-tsc` 当场报
+               TS2345「Property 'clockTime' is missing … but required」
+               （2026-10-09 删掉这一行实测过一次，不是猜的），这里补回来。 -->
       <VolumeView
-        v-if="view === 'volume'"
+        v-else
         source="live" :t-index="status?.cursor ?? 0"
+        show-view-controls :show-notes="false"
         :clock-time="frame.data.value?.frame.time ?? ''"
       />
+
+      <!-- 底栏两块（2026-10-09 第二轮，照参考图下方那两块）。
+           ⚠️ 两块都挂在**帧**这一级，与「看哪一块」无关 —— 第一轮之前
+           「棚顶气象」只写在断面那张卡里，切到三维就没了，而它是帧的属性。 -->
+      <div class="foot">
+        <Card>
+          <h3>棚顶气象</h3>
+          <StatRow>
+            <StatCard compact label="气温" :value="bgTemp" />
+            <StatCard compact label="湿度" :value="bgRh" />
+            <StatCard compact label="光照" :value="bgLight" />
+          </StatRow>
+          <p class="note reading">
+            棚顶那一组气象读数，这一帧的后端原样给的。
+          </p>
+        </Card>
+
+        <Card>
+          <h3>{{ MEAN_CURVE_TITLE }}</h3>
+          <EChart v-if="vCurve" :option="vCurve" height="240px" />
+          <!-- ⚠️ 这一格**不印后端的原话**：它是底栏的次要一块，把一条接口错误
+               原样摊在这里会盖过温度场。而 `routes.smoke.test.ts` 那条禁字形
+               扫描是逐页扫整页文本的，一句来路不明的错误文案正是最容易带进
+               禁字形的地方。 -->
+          <p v-else class="note state">正在取这一帧的沿棚均温…</p>
+          <p class="note reading">
+            沿棚位每 3 m 采一片，每一片取拱形以内、实测带以内的平均。
+            它说的是「这一棚从头到尾哪儿热」，与断面图说的「这一片里哪儿热」不是一回事。
+          </p>
+        </Card>
+      </div>
     </template>
 
     <!-- 口径与出处：一页最多一处（spec §八）。收起来，但内容始终在 DOM 里。 -->
     <details class="why">
       <summary>口径与出处</summary>
+      <!-- ⚠️ 分级句**原先常驻在屏上**（`data-grading`），2026-10-09 用户裁定
+           撤下来折进这里（用户的原话：「这两句也不要」）。
+           这不是一条普通的排版裁定，是**有意推翻规格书**：那一句在 §6.2、
+           §十二.7、页⑤ 规格书 §306 / §308 / §415 被点过五次名，原话是
+           「实时是一帧一帧刷过去的，观众只会记住『它在动』；分级看不见，
+           就等于把『混合出来的』渲染成『测出来的』」。
+           处置是**降级不是删除**：话一个字不丢，但从「常驻」变成「点一下」。
+           再往下删之前，先回到那五处看一眼。
+           `data-grading` 留着当路标 —— 它是这一句的身份，也让
+           `LiveView.test.ts` 钉得住「它在折叠里、且全屏只有一处」。 -->
+      <p class="note" data-grading>
+        图上一个格子只有三种回答：拱外无定义、无测量带里不报数、以及一个带出处的实测值。
+      </p>
       <p class="note">
         数据集末 144 帧留了出（2026-07-27 12:00 起），模型只在其余 1164 帧上标定过一次。
         这里一帧一帧把它们接进时间轴。
+      </p>
+      <!-- 原先挂在顶部那条状态句上。整句说的都是帧数，跟着指标卡一起撤了，
+           但这一句不是帧数、是**用户该知道的口径**：重启服务这一屏就从头演。 -->
+      <p class="note">
+        帧历史只在内存里，服务一重启，就得从头准备一次。
+      </p>
+      <!-- 正在用的那一份包不是为当前这份数据标的时的那句话。**逐字来自后端**
+           （`deps._BORROWED_NOTE` → 载荷的 `mismatch_note`），前端不另写一句
+           —— 与页③ 同一句，同一个来源。对得上时它是空串，这一格不印。
+           ⭐ 这一档 2026-10-10 才有：在那之前「不是为这份数据标的」的模型
+           在这一屏上**根本走不进来**（闸门卡在数据集签名上），而实时模式
+           本来就是拿一份别人标好的模型去套没见过的数据。 -->
+      <p v-if="frame.data.value?.mismatch_note" class="note">
+        {{ frame.data.value.mismatch_note }}
       </p>
     </details>
     </template>
@@ -336,12 +545,26 @@ const readout = computed(() => {
   border: var(--rule); padding: var(--gap-s);
   margin: 0 0 var(--gap-s); font-size: var(--size-note);
 }
-/* 开关那一块：外框去掉，描边交给里面的分段控件（spec §九）。 */
+/* 开关那一块：外框去掉，描边交给里面的分段控件（spec §九）。
+   ⚠️ 没有 `> legend` 那一条了 —— 2026-10-09 用户裁定把「看哪一块」那行标签
+   整个删掉。`fieldset` 留着（`fieldset.rail-box .seg` 是两页共用的钩子），
+   只是这一支不再有 legend。 */
 .rail-switch { border: 0; padding: 0; margin: 0 0 var(--gap-m); }
-.rail-switch > legend { padding: 0; font-size: var(--size-label); color: var(--ink-muted); }
+/* 底栏两块。左边窄、右边宽 —— 气象是三个数，曲线要的是横向地方。 */
+.foot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+  gap: var(--gap-m);
+  margin-top: var(--gap-m);
+}
+/* 窄屏上摞起来：两条轨并排时每块只剩三百来像素，曲线读不出形状。 */
+@media (max-width: 1100px) { .foot { grid-template-columns: minmax(0, 1fr); } }
 .seg {
   display: flex;
   align-items: stretch;
+  /* ⚠️ `margin-top` 原先是「与上面那行 legend 拉开」用的。legend 撤了
+     （2026-10-09 用户裁定）这一条**不能跟着删** —— 它现在拉的是上面那一排
+     播放控件（`.row` 自己没有下边距），删了分段控件就贴到按钮底下。 */
   margin-top: var(--gap-s);
   border: 1px solid var(--steel);
   border-radius: var(--radius);

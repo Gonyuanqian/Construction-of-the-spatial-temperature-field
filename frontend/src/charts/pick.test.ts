@@ -40,6 +40,7 @@ function makePayload(): SectionsPayload {
   return {
     t_index: 0, time: '2026-07-23T11:00:00', n_times: 1,
     preset: 'standard', monotonic: true, calibrated: true,
+    mismatch_note: '',
     vmin: 0, vmax: 5, max_measured_z: 2,
     x_min: 0, x_max: 2.1, z_max: 1.3017,
     x: [0, 0.7, 1.4, 2.1], z: [0, 0.7, 1.4, 2.1],
@@ -54,9 +55,11 @@ function makeVolume(): VolumePayload {
   return {
     t_index: 12, time: '2026-07-23T12:00:00', n_times: 1308,
     preset: 'standard', monotonic: true, calibrated: true,
+    mismatch_note: '',
     y_step: 0.5, y_min: 0, y_max: 18,
     x_min: 0, x_max: 2.1, z_max: 1.3017, max_measured_z: 2,
     vmin: 0, vmax: 5,
+    mean: 26.5,
     x: [0, 0.7, 1.4, 2.1], z: [0, 0.7, 1.4, 2.1],
     arch: [[0, 0], [2.1, 0]],
     sheds: [{ id: 'p1', y: 3 }, { id: 'p2', y: 9 }, { id: 'p3', y: 15 }],
@@ -64,8 +67,8 @@ function makeVolume(): VolumePayload {
     available_sheds: ['p1', 'p2', 'p3'],
     stripes: STRIPES,
     planes: [
-      { y: 3, measured: true, shed: 'p1', values: makeValues() },
-      { y: 3.5, measured: false, shed: null, values: makeValues() },
+      { y: 3, measured: true, shed: 'p1', values: makeValues(), mean: 26.5 },
+      { y: 3.5, measured: false, shed: null, values: makeValues(), mean: 26.5 },
     ],
     elapsed_ms: 1250, note: '',
   }

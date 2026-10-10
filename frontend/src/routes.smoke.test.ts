@@ -139,9 +139,20 @@ describe('路由冒烟', () => {
     await flushPromises()
 
     expect(w.text()).toContain('实时模式')
-    // 帧那一块确实渲染出来了（不然这条扫的只是一句标题）。
-    expect(w.text()).toContain('棚顶气象')
-    assertCleanText(w.text(), '/live')
+
+    // ⚠️ 2026-10-09：这一屏的两块**互斥**，一次渲染只看得到一块（用户裁定
+    // 「断面与三维共用一个位子」），而默认落的是**三维**。所以两块各扫一次 ——
+    // 只扫默认那一块的话，断面那几十个字（气象、24 路读数、分级）就掉出
+    // `assertCleanText` 的射程了，而它们原先正是在这里的。
+    assertCleanText(w.text(), '/live（三维）')
+
+    // 帧那一块确实渲染出来了（不然这不是一次扫描，只是扫了一句标题）。
+    // 由用户走一遍那条路切过去 —— 与真人一样点那个按钮，而不是把默认值
+    // 改回去（默认三维是裁定，不是测试的活）。
+    await w.get('button[data-view="section"]').trigger('click')
+    await flushPromises()
+    expect(w.text(), '切到断面后帧那一块还是没渲染出来').toContain('棚顶气象')
+    assertCleanText(w.text(), '/live（断面）')
   })
 
   it('模型库列表点得进去', async () => {

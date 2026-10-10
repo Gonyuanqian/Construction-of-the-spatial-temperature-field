@@ -39,7 +39,8 @@ export function createAppRouter(history?: RouterHistory): Router {
     history: history ?? createWebHistory(),
     routes: [
       ...routes,
-      // 实时模式**不进 `NAV_ITEMS`**：进了就会出现在左导航里，而这一屏要收起导航。
+      // 实时模式**不进 `NAV_ITEMS`**：它的左栏是另一份清单（`LIVE_NAV_ITEMS`），
+      // 而 `NAV_ITEMS` 那一份被 `App.test.ts` 按「<a> 精确等于已开放项」钉着。
       // 它也不像上面那几页那样从 `NAV_ITEMS` 生成 —— 所以必须显式写一条，
       // 否则会被下面的兜底 `/:rest(.*)*` 吃掉，`/live` 直接落回页①。
       {
@@ -47,8 +48,6 @@ export function createAppRouter(history?: RouterHistory): Router {
         name: 'live',
         // 懒加载：实时模式那一屏（含三维）不该进首屏。
         component: () => import('../views/LiveView.vue'),
-        // 收起左侧导航（`App.vue` 按这个 meta 决定）。
-        meta: { rail: false },
       },
       // 模型库（规格书 §6.1）：列表与详情是同一个功能的两态，一个组件两条
       // 路由。**静态 import** —— 与除 `/live` 外的全部路由一致。

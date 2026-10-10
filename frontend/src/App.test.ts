@@ -4,7 +4,7 @@ import { createMemoryHistory } from 'vue-router'
 
 import App from './App.vue'
 import { createAppRouter } from './router'
-import { NAV_ITEMS, SYSTEM_TITLE } from './design/copy'
+import { LIVE_NAV_ITEMS, NAV_ITEMS, SYSTEM_TITLE } from './design/copy'
 import { useDataset } from './composables/useDataset'
 import { matchPayload, PAGE_PAYLOADS } from './test/fixtures'
 
@@ -102,7 +102,7 @@ describe('应用外壳', () => {
     expect(w.text()).toContain('0.1.0')
   })
 
-  it('实时模式开关点得动，切过去到 /live，导航收起', async () => {
+  it('实时模式开关点得动，切过去到 /live，左栏换成演示屏那一列', async () => {
     stubFetch()
     const w = await mountApp()
     const modes = w.get('nav[aria-label="模式"]')
@@ -119,11 +119,60 @@ describe('应用外壳', () => {
       expect((w.vm as unknown as { $route: { path: string } }).$route.path).toBe('/live')
     })
 
-    // 导航收起了 —— 导航是这一屏唯一「不提数据」的控件，留着它就是噪声。
     // `mountApp()` 把 router 包在 `global.plugins` 里、**没有把它交出来**
     // （同文件好几条用例都用着这个 helper，不动它的签名），所以上面那句从组件
     // 实例上读它挂着的那个 `$route`。
-    expect(w.find('nav[aria-label="页面"]').exists()).toBe(false)
+    //
+    // ⚠️ 2026-10-09 用户裁定：左栏**不再收起**，换成三条演示占位项
+    // （`LIVE_NAV_ITEMS`）。原先这一行断的是 `exists()` 为 false。
+    // `find` 而不是 `get`：`get()` 在找不到时当场抛，返回值那个包装器上
+    // **没有** `exists`（`vue-tsc` 报 TS2339），而这里要的正是「没找到也别抛、
+    // 让断言带着理由说话」。
+    const rail = w.find('nav[aria-label="页面"]')
+    expect(rail.exists(), '左栏没了').toBe(true)
+    expect(rail.findAll('a'), '占位项不该是链接').toEqual([])
+    for (const item of LIVE_NAV_ITEMS) {
+      expect(rail.text(), `${item.label} 不在`).toContain(item.label)
+      expect(rail.text(), `${item.label} 的理由看不见`).toContain(item.why)
+    }
+    // 反面：训练模式那四项**一项都不该出现在这一列**。少了这一条，
+    // 一个「两份清单拼在一起」的实现照样绿。
+    for (const item of NAV_ITEMS) {
+      expect(rail.text(), `训练模式的「${item.label}」漏进来了`).not.toContain(item.label)
+    }
+  })
+
+  it('深色只跟着实时模式走，而且挂在 documentElement 上', async () => {
+    // ⚠️ **挂在哪里是一条硬判据，不是实现细节。** `LiveView` 与 `VolumeScene`
+    // 都用 `readPalette()`（默认读 `document.documentElement`）—— 类若挂在某个
+    // `div` 上，CSS 会变，而 ECharts 的轴标签与三维里的拱壳**停在浅色上**，
+    // 页面照常渲染、控制台一个错都没有。
+    // 而 `App.vue` 的模板是**片段**（`<TitleBar/> <ModeSwitch/> <div class="body">`
+    // 三个并列根），`:class` 写上去根本没有那一个元素可落。
+    stubFetch()
+    const router = createAppRouter(createMemoryHistory())
+    await router.push('/data')
+    await router.isReady()
+    const w = mount(App, { attachTo: document.body, global: { plugins: [router] } })
+    await flushPromises()
+    expect(document.documentElement.classList.contains('theme-live'), '页① 也变暗了').toBe(false)
+
+    const live = w.get('nav[aria-label="模式"]').findAll('button')
+      .find((b) => b.text().includes('实时模式'))!
+    await live.trigger('click')
+    await flushPromises()
+    await vi.waitFor(() => {
+      expect(document.documentElement.classList.contains('theme-live'), '页⑤ 没变暗').toBe(true)
+    })
+
+    // 切回来要摘掉 —— 只加不减的话，去过一次实时模式，训练模式那四页就再也回不来。
+    const train = w.get('nav[aria-label="模式"]').findAll('button')
+      .find((b) => b.text().includes('训练模式'))!
+    await train.trigger('click')
+    await flushPromises()
+    await vi.waitFor(() => {
+      expect(document.documentElement.classList.contains('theme-live')).toBe(false)
+    })
   })
 })
 

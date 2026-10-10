@@ -4,7 +4,7 @@ import { createMemoryHistory } from 'vue-router'
 
 import FieldView from './FieldView.vue'
 import { createAppRouter } from '../router'
-import { FIELD_MODEL } from '../design/copy'
+import { BORROWED, FIELD_MODEL } from '../design/copy'
 import { makeModelsPayload } from '../test/fixtures'
 
 /**
@@ -70,13 +70,6 @@ const COMPARE = {
   note: '',
 }
 
-const CURVE = {
-  shed: 'p1', x: 0.7, y: 3, z: 0.7, label: 'p1  x 0.70  z 0.70',
-  n_times: 4, time: ['t0', 't1', 't2', 't3'],
-  values: [40.1, 43.2, 39.8, 38.5], defined: true,
-  note: '这条曲线没有施加竖直软单调投影：单点没有邻点可投影。',
-}
-
 /** 记下每一次请求的 URL，用来断言"换时刻真的换了一次请求"。 */
 const urls: string[] = []
 
@@ -95,14 +88,18 @@ function stub(routes: Record<string, unknown>) {
 }
 
 /**
- * 三个 field 接口那一份。
+ * field 那两个接口那一份。
  *
  * ⚠️ **`/api/models` 必须在这里**（从 Task 10 起）：这一页现在先问库里有
- * 没有能用的模型，没有就一个场都不画、三个 field 接口一个都不打。
- * 缺了它，`stub()` 会把 `/api/models` 判成 404，下面那十几条既有用例
+ * 没有能用的模型，没有就一个场都不画、一个 field 接口都不打。
+ * 缺了它，`stub()` 会把 `/api/models` 判成 404，下面那几条既有用例
  * 全都掉进空态 —— 而它们一条都没改过，红的理由离「少了一个键」很远。
+ *
+ * ⚠️ 原来这里还有第三个键 `/api/field/curve`（点选之后那条 5 天曲线）。
+ * 2026-10-09 连同点选一起撤了 —— 页③ 不再打它，再挂一个 stub 只是让读的人
+ * 以为屏上还画着一条曲线。
  */
-const OK = { '/api/field/curve': CURVE, '/api/field/compare': COMPARE,
+const OK = { '/api/field/compare': COMPARE,
              '/api/field/sections': SECTIONS, '/api/models': makeModelsPayload() }
 
 function mountView() {
@@ -144,19 +141,18 @@ describe('页③ 空间温度场的构建', () => {
     vi.restoreAllMocks()
   })
 
-  it('切面场与 ΔT 一开始就挂上；曲线要等点选之后才出现', async () => {
-    // **初始是 2 个，不是 3 个。** 曲线画的是「你点中的那一格」——没点过就不知道
-    // 画哪一个点。Task 11 也定过「全 null 时页面负责不画它」。所以曲线是点选的
-    // 结果，不是一进页面就有的东西。断言 3 会永远红。
+  it('断面那一套就两张图：切面场与 ΔT', async () => {
+    // 原来是三张 —— 第三张是「点中一格之后的 5 天曲线」。2026-10-09 连图的
+    // 点选交互一起撤掉了（见 `FieldView.vue` 文件顶）。写成精确的 2，才拦得住
+    // 那两张卡悄悄接回来、或者又长出一张新图。
     stub(OK)
     const w = mountView()
     await flushPromises()
     expect(charts(w).length).toBe(2)          // 切面场、ΔT
     expect(w.text()).toContain('空间温度场的构建')
-
-    charts(w)[0].vm.$emit('pick', { seriesIndex: 1, value: [1, 1] })
-    await flushPromises()
-    expect(charts(w).length).toBe(3)          // 点中之后才多出曲线
+    // 撤掉的那两张卡上的标题不该还在屏上。
+    expect(w.text()).not.toContain('这一格是什么')
+    expect(w.text()).not.toContain('这一点的 5 天')
   })
 
   it('切面图画的是后端送来的那三格', async () => {
@@ -167,150 +163,6 @@ describe('页③ 空间温度场的构建', () => {
     expect(o.series).toHaveLength(15)
     expect(o.visualMap.min).toBe(SECTIONS.vmin)
     expect(o.visualMap.max).toBe(SECTIONS.vmax)
-  })
-
-  it('没点任何格子时：只说怎么点，不提前谈曲线口径', async () => {
-    // 断言的是**那句完整文案**，不是光一个「点」字 —— 页面上常驻的
-    // 「点一个格子看它的读数与 5 天曲线」里也有「点」，只查一个字会恒绿。
-    stub(OK)
-    const w = mountView()
-    await flushPromises()
-    expect(w.text()).toContain('还没点任何格子')
-    // 曲线口径是**那条曲线**的口径。线还没画出来就先说它，
-    // 读者会去找一条不存在的线。
-    expect(w.text()).not.toContain('没有施加竖直软单调投影')
-  })
-
-  it('点在实测格上：报的是格子里那个数，且标明是现场重算', async () => {
-    stub(OK)
-    const w = mountView()
-    await flushPromises()
-    charts(w)[0].vm.$emit('pick', { seriesIndex: 1, value: [1, 1] })
-    await flushPromises()
-    // 落在读数表上：整页文本里那句「现场重算」是**图章的 title**，不进 `text()`；
-    // 而表里这个「现场重算」来自 `charts/pick.ts` 给实测格的分级文案，
-    // 与 `Provenance` 无关 —— 查整页只会白送。
-    const t = w.find('table')
-    expect(t.exists(), '点选之后读数表没出现').toBe(true)
-    expect(t.text()).toContain('43.22')
-    expect(t.text()).toContain('现场重算')
-  })
-
-  it('点在无测量带上：不报数', async () => {
-    stub(OK)
-    const w = mountView()
-    await flushPromises()
-    charts(w)[0].vm.$emit('pick', { seriesIndex: 1, value: [2, 0] })
-    await flushPromises()
-    // **断言必须落在读数表上，不能查整页文本。** 页面上常驻的那句提示语里本来
-    // 就写着「拱外无定义 / 无测量带不报数」—— 查 `w.text()` 会恒绿：点选整个坏掉、
-    // 一个字都不报，它也照过。表只在**点中之后**才存在，所以这一查同时钉住了
-    // 「点选确实产生了读数」。
-    const t = w.find('table')
-    expect(t.exists(), '点选之后读数表没出现').toBe(true)
-    expect(t.text()).toContain('不报数')
-    // 这一格**存着牌面值 3**（见夹具），但它在无测量带里 —— 一个字也不许报。
-    // 写成 `not.toContain('现场重算：3.00')` 会随格式变化悄悄失效（改成「3.0」
-    // 就恒真），所以直接查「现场重算」这四个字在不在。
-    // **必须在读数表上查，不能查整页**：页面标题那一行挂着
-    // `<Provenance kind="live" />`，只要载荷到了它就恒在 —— 查整页这条就永远红，
-    // 与上面那两条"永远绿"同源。而表里这四个字来自 `charts/pick.ts`：
-    // 不报数的那一格根本不产出它。
-    expect(t.text()).not.toContain('现场重算')
-  })
-
-  it('点在拱外：无定义', async () => {
-    // 拱外那批格子走的是遮罩系列（下标 0），不是热力场。
-    stub(OK)
-    const w = mountView()
-    await flushPromises()
-    charts(w)[0].vm.$emit('pick', { seriesIndex: 0, value: [0, 2] })
-    await flushPromises()
-    // 同上：常驻提示语里就带着「拱外无定义」四个字，只查整页文本等于什么都没断言。
-    const t = w.find('table')
-    expect(t.exists(), '点选之后读数表没出现').toBe(true)
-    expect(t.text()).toContain('无定义')
-  })
-
-  it('点选只从已有载荷里读，**不**再打一次接口', async () => {
-    // spec §七 V5：「点选是拾取，不是重跑」。这样屏幕上的数必然等于图上的格子，
-    // 而且点一下是秒回的。
-    stub(OK)
-    const w = mountView()
-    await flushPromises()
-    const before = urls.filter((u) => u.includes('/api/field/sections')).length
-    charts(w)[0].vm.$emit('pick', { seriesIndex: 1, value: [1, 1] })
-    await flushPromises()
-    expect(urls.filter((u) => u.includes('/api/field/sections')).length).toBe(before)
-  })
-
-  it('点中之后才去取那一格的曲线', async () => {
-    stub(OK)
-    const w = mountView()
-    await flushPromises()
-    expect(urls.some((u) => u.includes('/api/field/curve'))).toBe(false)
-    charts(w)[0].vm.$emit('pick', { seriesIndex: 1, value: [1, 1] })
-    await flushPromises()
-    const req = urls.find((u) => u.includes('/api/field/curve'))!
-    expect(req).toContain('shed=p1')
-    expect(req).toContain('x=0.7')     // 载荷里 x[1] = 0.7
-    expect(req).toContain('z=0.7')
-  })
-
-  it('曲线旁边写着它没有竖直软单调投影', async () => {
-    stub(OK)
-    const w = mountView()
-    await flushPromises()
-    charts(w)[0].vm.$emit('pick', { seriesIndex: 1, value: [1, 1] })
-    await flushPromises()
-    expect(w.text()).toContain('没有施加竖直软单调投影')
-  })
-
-  it('载荷没带口径时，兜底文案顶上', async () => {
-    // Task 11 专门造了 `CURVE_NO_MONOTONIC_NOTE`，为的就是这一刻：载荷的
-    // `note` 一缺，曲线上「没有施加竖直软单调投影」会**无声消失**，看图的人
-    // 于是以为它经过了投影。兜底不是装饰品 —— 页面必须真的接住它。
-    stub({ ...OK, '/api/field/curve': { ...CURVE, note: '' } })
-    const w = mountView()
-    await flushPromises()
-    charts(w)[0].vm.$emit('pick', { seriesIndex: 1, value: [1, 1] })
-    await flushPromises()
-    expect(w.text()).toContain('没有施加竖直软单调投影')
-  })
-
-  it('该点无定义时不画曲线，也不谈曲线口径', async () => {
-    // `vCurve` 上的 `c.defined` 与 `curveNote` 上的同一个判断，都在**没有任何测试**
-    // 的情况下活着（评审者的破坏性探针：把 `c.defined` 去掉，15 条全绿）。
-    // 真断了会是这样：后端明说这一点无定义，页面上却照画一条线，而那句
-    // 「该点无定义…不画曲线」**无声消失** —— 看图的人于是以为那条线是真的。
-    // 这与 Review Focus 第 3 条（曲线被说成施加了投影）是同一类撒谎。
-    stub({ ...OK, '/api/field/curve': { ...CURVE, defined: false } })
-    const w = mountView()
-    await flushPromises()
-    charts(w)[0].vm.$emit('pick', { seriesIndex: 1, value: [1, 1] })
-    await flushPromises()
-    expect(charts(w).length).toBe(2)                    // 第三条（曲线）不该出现
-    expect(w.text()).toContain('该点无定义（拱外或在无测量带里），不画曲线。')
-    expect(w.text()).not.toContain('没有施加竖直软单调投影')   // 别去谈一条不存在的线
-  })
-
-  it('点中别棚的格子，ΔT 面板跟着换棚', async () => {
-    // `activeShed` 的注释写着「点中别棚的格子就跟着走」—— 没有这条测试，它就只是
-    // 一句注释。真断了会是这样：读数报的是 p2，ΔT 面板画的还是 p1，两块面板
-    // 各说各的，谁都不报错。与 Review Focus 第 1 条「两条路径漂了不报错」同源。
-    // 下标 6 是 p2 的热力场：每棚占连续 5 个系列（`SERIES_PER_SHED`），
-    // 块内偏移 1 才是热力场（偏移 0 是拱外遮罩），所以 p2 是 1*5+1。
-    // 发 5 也能走到 p2 —— `shedOfSeries` 只看块号 —— 但那模拟的是「点拱外遮罩」，
-    // 不是点热力场上的格子；这里要的是后者。
-    stub(OK)
-    const w = mountView()
-    await flushPromises()
-    charts(w)[0].vm.$emit('pick', { seriesIndex: 6, value: [1, 1] })
-    await flushPromises()
-    expect(w.text()).toContain('p2')                    // 读数认的是 p2
-    expect(
-      urls.some((u) => u.includes('/api/field/compare') && u.includes('shed=p2')),
-    ).toBe(true)                                        // ΔT 也真的按 p2 重取了
   })
 
   it('换时刻会重新取场', async () => {
@@ -416,24 +268,19 @@ describe('页③ 空间温度场的构建', () => {
     expect(band.find('.prov').exists(), '第四格不该挂出处图章').toBe(false)
   })
 
-  it('指标卡不是表格，所以第一张表仍然是读数表（spec §十三.1）', async () => {
+  it('页面不再有读数表，散文折进唯一一处「口径与出处」', async () => {
+    // 撤掉「点选读数」那张卡之后，页③ 上**一张表都没有了**（页顶那排指标卡
+    // 不是表）。原来这条钉的是「第一张表仍然是读数表」—— 现在钉它的反面：
+    // 读数表没了。留着「第一张表是读数表」就等于在讲一个屏上不存在的东西。
     stub(OK)
     const w = mountView()
     await flushPromises()
-    charts(w)[0].vm.$emit('pick', { seriesIndex: 1, value: [1, 1] })
-    await flushPromises()
-    const t = w.find('table')
-    expect(t.text(), '第一张表不再是读数表').toContain('回答')
-    expect(t.text()).toContain('43.22')
-  })
+    expect(w.find('table').exists(), '读数表又回来了').toBe(false)
 
-  it('散文折进唯一一处「口径与出处」', async () => {
-    stub(OK)
-    const w = mountView()
-    await flushPromises()
     const why = w.findAll('details.why')
     expect(why.length).toBe(1)
-    expect(why[0].text()).toContain('三种回答')
+    // 折在里面那句读图口径还在：三个断面共用同一个色标范围。
+    expect(why[0].text()).toContain('共用同一个色标范围')
   })
 
   it('视图切换是一条分段控件，不是一排带圆角边框的按钮（spec §九 / 终审 I-1）', async () => {
@@ -481,8 +328,8 @@ describe('模型库与页③', () => {
   /** 「一条能用的都没有」：把每一行都标成对不上。 */
   function noneUsable() {
     const p = makeModelsPayload()
-    p.rows = p.rows.map((r) => ({ ...r, compatible: false,
-                                  why: '数据来源不同：别人家的棚.xlsx' }))
+    p.rows = p.rows.map((r) => ({ ...r, compatible: false, borrowed: false,
+                                  why: '这一份是用别的特征组标出来的' }))
     p.current_id = null
     return p
   }
@@ -492,13 +339,30 @@ describe('模型库与页③', () => {
     return mountView()
   }
 
-  it('页首有一个下拉，列出能用的与对不上的', async () => {
+  it('页首有一个下拉，库里的三档都列出来', async () => {
     const w = mountWithModels(USABLE)
     await flushPromises()
     const opts = w.get('#field-model').findAll('option')
-    expect(opts.map((o) => o.text()).join(' ')).toContain('七月下旬那套')
-    expect(opts.map((o) => o.text()).join(' ')).toContain('别人家的棚.xlsx')
-    expect(opts).toHaveLength(2)
+    const all = opts.map((o) => o.text()).join(' ')
+    expect(all).toContain('七月下旬那套')
+    expect(all).toContain('别人家的棚.xlsx')
+    // 三档各在：本地的、借来的、用不了的。少一档这条就红 ——
+    // 「库里有的都能挑」这句话，靠的正是每一行都列在这儿。
+    expect(opts).toHaveLength(3)
+  })
+
+  it('借来的那一项**选得中**，而且标着「借来的」', async () => {
+    // ⭐ 2026-10-10 用户裁定「模型不绑数据集」在屏上的落点：库里有就能挑。
+    // 这一条不能省 —— 少了它，`compatible` 回到「两轴都对得上」照样全绿，
+    // 而用户看到的还是「明明库里有模型、页③ 就是不给用」。
+    const w = mountWithModels(USABLE)
+    await flushPromises()
+    const borrowed = w.get('#field-model').findAll('option')
+      .find((o) => o.text().includes('别人家的棚.xlsx'))!
+    expect(borrowed.attributes('disabled'), '借来的那一项选不了').toBeUndefined()
+    expect(borrowed.text()).toContain(BORROWED)
+    // 借来的**不是**用不了的：理由那一栏不该印在它身上。
+    expect(borrowed.text()).not.toContain('特征组')
   })
 
   it('对不上的选项被标出来而且选不了', async () => {
@@ -507,9 +371,39 @@ describe('模型库与页③', () => {
     const w = mountWithModels(USABLE)
     await flushPromises()
     const bad = w.get('#field-model').findAll('option')
-      .find((o) => o.text().includes('别人家的棚.xlsx'))!
+      .find((o) => o.text().includes('另一个特征组标的'))!
     expect(bad.attributes('disabled'), '对不上的那一项能选中').toBeDefined()
-    expect(bad.text()).toContain('数据来源不同')
+    expect(bad.text()).toContain('这一份是用别的特征组标出来的')
+  })
+
+  it('借来的那一份：图章说「借来的」，口径里逐字印着后端那句话', async () => {
+    // ⭐ 2026-10-10 用户裁定「模型不绑数据集」的另一半：借来用的**必须说出来**。
+    // 图上那张场是拿别人的参数算的，误差数不算这份数据的成绩 —— 不说，用户
+    // 就会把它当本地模型的结果读。
+    //
+    // ⚠️ 印的是载荷里那句 `mismatch_note`**本身**（后端 `deps._BORROWED_NOTE`
+    // 那唯一一句），不是前端另写的一句解释 —— 同一个事实两份措辞，迟早
+    // 一处改了另一处没改。所以这里断的是「载荷里那串字原样在屏上」。
+    const NOTE = '这一份模型的参数不是用当前这份数据标出来的'
+    stub({ ...OK, '/api/field/sections': { ...SECTIONS, mismatch_note: NOTE } })
+    const w = mountView()
+    await flushPromises()
+    expect(w.text()).toContain(`已标定（${BORROWED}）`)
+    // ⚠️ 在「口径与出处」里，不是常驻在屏上：它是解释，不是读数。
+    // `design/prose.test.ts`（spec §十二.11）判的正是这件事。
+    const why = w.findAll('details.why')
+    expect(why).toHaveLength(1)
+    expect(why[0].text()).toContain(NOTE)
+  })
+
+  it('本地的那一份：图章是「已标定」，口径里没有借来那句', async () => {
+    // 上面那条的反面。少了它，一个「永远说借来的」的实现照样能全绿 ——
+    // 而那是这条标注最坏的坏法：本地模型也被标成来路不明。
+    stub(OK)                                    // `SECTIONS.mismatch_note` 缺省
+    const w = mountView()
+    await flushPromises()
+    expect(w.text()).toContain('已标定')
+    expect(w.text()).not.toContain(`已标定（${BORROWED}）`)
   })
 
   it('没有可用模型时一个图都不画，而且一个 field 接口都不打', async () => {
@@ -560,13 +454,13 @@ describe('模型库与页③', () => {
   it('选另一个模型会把它设成全站当前', async () => {
     // 页③ 与页⑤ 共用「当前模型」这一个概念（规格书 D3）—— 换一处两处都换。
     //
-    // ⚠️ 这里**必须**让第二行也可用：`USABLE` 里第二行是对不上的，而下拉里
-    // 对不上的那些是 `disabled` —— 拿它演「换一个模型」等于演一件用户做不到
-    // 的事（`setValue` 是直接写 DOM，绕过 disabled）。对不上那一项的处置
-    // 由上面「对不上的选项被标出来而且选不了」钉着。
-    const p = makeModelsPayload()
-    p.rows[1] = { ...p.rows[1], compatible: true, why: '' }
-    const w = mountWithModels(p)
+    // ⚠️ 这里挑的是**第二行（借来的那一份）**：2026-10-10 之前它选不中，
+    // 所以这条用例得先在载荷里把它改成 `compatible: true` 才演得下去 ——
+    // 那个改动本身就是当时「数据集签名拦着选」的一个反证。现在夹具里它
+    // 本来就是能用的（`ModelRowPayload.compatible` 只看特征组），所以
+    // 那两行补丁连同它们的注释一起去掉了：拿默认载荷直接演。
+    // 对不上那一项的处置由上面「对不上的选项被标出来而且选不了」钉着。
+    const w = mountWithModels(USABLE)
     await flushPromises()
     await w.get('#field-model').setValue('2')
     await flushPromises()
@@ -581,10 +475,8 @@ describe('模型库与页③', () => {
     // 「当前」都指向新的那个 —— 正是规格书 D4 要杜绝的「看着对的错场」：
     // 它不报错、也不提示，只是端出一张旧模型算的图。
     //
-    // ⚠️ 与上一条同样要让第二行可用（理由见上）。
-    const p = makeModelsPayload()
-    p.rows[1] = { ...p.rows[1], compatible: true, why: '' }
-    const w = mountWithModels(p)
+    // ⚠️ 与上一条同样挑第二行（借来的那一份）；夹具有它可用，不用再打补丁。
+    const w = mountWithModels(USABLE)
     await flushPromises()
     const before = urls.filter((u) => u.includes('/api/field/sections')).length
 

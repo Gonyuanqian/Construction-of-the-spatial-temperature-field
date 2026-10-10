@@ -8,6 +8,11 @@
  * `charts/scale.ts`（有测试）。剩下的是建几何与贴纹理 —— 而它拿不到任何
  * 自动证据（jsdom 没有 canvas/WebGL，规格书 §8.2）。
  * 所以这里越薄越好，**任何一个能被搬进纯函数的判断都该搬走**。
+ *
+ * ⚠️ 2026-10-09：**剖切刀搬走了**（连它的状态一起），现在住在 `VolumeView`。
+ * 那一块的版面改成三栏之后，刀要摆到左栏去，而左栏是这一层画不出来的地方。
+ * 这也与上面那句一致：一个**带状态的用户控件**住在这儿本来就不对。这一层现在
+ * 只收一个 `cutY`、把它写进裁剪面，画完把结果用 `ready` 报回页级。
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as THREE from 'three'
@@ -16,7 +21,10 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { VolumePayload } from '../api/types'
 import { tempStops } from '../charts/scale'
 import { readPalette } from '../design/palette'
+import { FIT_FOV_DEG, boxOf, fitCamera, type WorldBox } from './fit'
 import { markerPoint, solveHover, type HoverHit, type HoverPick } from './hover'
+import { PAN_FRAC, YAW_STEP_DEG, ZOOM_STEP, panBy, yawAround, zoomBy,
+         type Vec3 } from './orbit'
 import { rasterPlane, stripeIndexSet } from './raster'
 import type { VolumeSpec } from './volumeView'
 
@@ -25,11 +33,28 @@ const props = defineProps<{
   payload: VolumePayload
   /** 面板当前要显示的那个格点（钉住的优先）。记号画在它上面。 */
   picked: HoverPick | null
+  /**
+   * 剖切刀切到哪个 y 为止（米）。**由页级给** —— 刀已经搬到 `VolumeView`
+   * （见文件头），这一层只把它写进裁剪面，不自己存也不自己改。
+   */
+  cutY: number
+  /**
+   * 画不画那一组视角按钮（旋转 / 缩放 / 平移）。
+   *
+   * **默认关**：页③ 不传，那一页与改动前逐字相同（用户裁定「训练模式不用动」）。
+   * 只有实时模式那一屏传（见 `LiveView.vue`）。
+   */
+  showViewControls?: boolean
 }>()
 
 const emit = defineEmits<{
   hover: [p: HoverPick | null]
   pick: [p: HoverPick | null]
+  /**
+   * 这一块有结果了。`ok = false` 就是「这台机器画不出来」（没有 WebGL）——
+   * 页级据此决定挂不挂剖切刀：**一个对自己无效的控件比没有更难看**。
+   */
+  ready: [ok: boolean]
 }>()
 
 const palette = readPalette()
@@ -38,11 +63,42 @@ const host = ref<HTMLDivElement | null>(null)
 /** 没有 WebGL 时说清楚为什么画不出来 —— 白屏是最坏的一种「正常」。 */
 const unavailable = ref('')
 
+/**
+ * 场景真的建起来了没有。
+ *
+ * ⚠️ 它管的是按钮**灰不灰**，不是**画不画**（判据见模板那段注释）。
+ * 与 `emit('ready', …)` 是同一个判据，只是那个是往外报的、这个是往里用的。
+ */
+const sceneReady = ref(false)
+
 const NO_WEBGL =
   '这台机器或浏览器没有可用的 WebGL 上下文，画不出三维棚体。二维断面视图不受影响。'
 
-/** 剖切刀切到哪个 y 为止（米）。初值在载荷到位后设成最远的那一片，即不切。 */
-const cutY = ref(0)
+/**
+ * 拱壳的膜、拱肋，各多实。
+ *
+ * ⚠️ 2026-10-09 用户裁定三维影像「不够形象和具体」。壳这一块原本两条原因叠在
+ * 一起，光调一个数治不好：
+ *
+ * 1. **肋只有壳的两端各一圈**（`[y − L/2, y + L/2]`，就地写死在 `buildShells`
+ *    里）。棚一眼认得出靠的是**等距重复的肋**；18 m 上只画六圈，那是划痕。
+ *    现在摆在哪儿由 `spec.ribYs` 说（`volumeView.ts` 的纯函数，有测试）。
+ * 2. **膜的不透明度是 0.16**。0.16 有多看不见 —— 膜用的 `steel` 与纸底 `paper`
+ *    在亮度上只差二十个数上下（两个色号见 `tokens.css`，这一处不重复写死它们：
+ *    全仓只许 `tokens.css` 与 `scale.ts` 出现十六进制色值）；**哪怕给到 1.0 也
+ *    只是根发丝**。`tokens.css` 里 `steel` 的角色注释正是「线、分隔、表格框」：
+ *    它是 2D 里 1px 那条线的色号，不是往画布上建一个面用的。
+ *
+ * 所以肋**换色**：改用 `ink`。这不是我挑的 —— 是**跟着页③ 走**：断面视图里
+ * 同一条拱线的 `lineStyle` 就是 `p.ink`、宽 1.1（`sectionField.ts`）。
+ * 同一条拱在两个视图里两个颜色，本来就没道理。
+ *
+ * 膜留在 `steel` 上：它是一大片面，用 `ink` 会把温度场压掉 —— 而**场才是主角**。
+ * 肋给 0.6 而不是 1.0：肋是 1px 线，LineBasicMaterial 不随距离变淡，二十几圈
+ * 全用满黑会糊成一片，反倒把纵深压平。
+ */
+const SHELL_OPACITY = 0.3
+const RIB_OPACITY = 0.6
 
 /**
  * 数据坐标 `(x, y, z)` → Three 的世界坐标。
@@ -77,6 +133,8 @@ let marker: THREE.Mesh | null = null
 let teardown: (() => void) | null = null
 /** 最近一次悬停解出的格点。点击钉住的就是它 —— 与面板上正显示的那个同源。 */
 let lastHover: HoverPick | null = null
+/** 用户自己转过镜头没有。转过之后取景就不再自动重摆（见 `autoframe`）。 */
+let orbited = false
 const owned: { dispose: () => void }[] = []
 
 function track<T extends { dispose: () => void }>(x: T): T {
@@ -93,6 +151,20 @@ function archShape(arch: [number, number][]): THREE.Shape {
   s.lineTo(arch[0][0], 0)
   s.closePath()
   return s
+}
+
+/**
+ * 拱肋的轮廓：与 `archShape` 是同一条闭合路径（拱形折线 + 沿底边封口），
+ * 只是做成点列 —— 肋画成 `LineLoop`（见 `buildShells`）。
+ *
+ * 关键在于这些点的 **z 全是 0**：肋是**一圈**，它自己在 z 上不横跨任何长度，
+ * 摆到哪个 z 就只在哪个 z 上。
+ */
+function ribPoints(arch: [number, number][]): THREE.Vector3[] {
+  const pts = arch.map(([x, z]) => new THREE.Vector3(x, z, 0))
+  pts.push(new THREE.Vector3(arch[arch.length - 1][0], 0, 0))
+  pts.push(new THREE.Vector3(arch[0][0], 0, 0))
+  return pts
 }
 
 /**
@@ -118,7 +190,7 @@ function clearShells(): void {
 }
 
 function buildShells(): void {
-  const { arch, shellYs, shellLength } = props.spec
+  const { arch, shellYs, ribYs, shellLength } = props.spec
   if (!scene || arch.length < 2) return
   clearShells()
   const group = new THREE.Group()
@@ -130,7 +202,7 @@ function buildShells(): void {
   const mat = new THREE.MeshBasicMaterial({
     color: new THREE.Color(palette.steel),
     transparent: true,
-    opacity: 0.16,
+    opacity: SHELL_OPACITY,
     side: THREE.DoubleSide,
     depthWrite: false,
   })
@@ -139,19 +211,37 @@ function buildShells(): void {
     // 几何从本地 z=0 拉到 z=shellLength，而壳要**居中**在棚位上 ——
     // 数据集说的是「这棚在 y = 3」，不是「这棚从 1 米开始铺 4 米」。
     mesh.position.z = y - shellLength / 2
+    // 壳压在温度场**底下**。
+    //
+    // ⚠️ 这里有个坑：`renderOrder` 是**逐个可渲染对象**读的（Three 的
+    // `projectObject` 只看对象自己那个字段，`Group` 上设它一点用没有），所以
+    // 得一件一件标。而两边都是 `depthWrite: false` —— **谁压谁全看画的先后**。
+    // 不写死的话，同为 renderOrder 0 的壳会跟 0 号场片并列，交给 Three 按距离
+    // 排序去决定；场片的 renderOrder 是 0…36（见 `buildPlanes`），于是「场盖不盖
+    // 得住壳」变成一个随视角变的巧合。给个负数，场永远在上面。
+    mesh.renderOrder = -1
     group.add(mesh)
   }
-  // 棚肋：每个壳两端各一圈，让「长度」看得出来。
+  // 棚肋：每个壳两端各一圈**拱形轮廓**，让「长度」看得出来。
+  //
+  // ⚠️ 2026-10-09：这里原来拿 `EdgesGeometry(geo)` 当肋 —— 那是**整条壳的线框**，
+  // 而它自己也横跨 `shellLength`。于是「摆到 z 上的那一圈」实际从 z 铺到
+  // z + shellLength：shed 15 那根摆在 17，一路伸到 21，而这一卷棚体到 18 就没了。
+  // 实机截图里近端外那一小截挂着的淡网就是它（把每一件投影到 NDC 量过，
+  // 那一件是 **1.46**，画面之外）。肋要的是**一圈**，所以几何取拱形折线本身。
   const edgeMat = new THREE.LineBasicMaterial({
-    color: new THREE.Color(palette.steel), transparent: true, opacity: 0.5,
+    color: new THREE.Color(palette.ink), transparent: true, opacity: RIB_OPACITY,
   })
-  const edgeGeo = new THREE.EdgesGeometry(geo)
-  for (const y of shellYs) {
-    for (const z of [y - shellLength / 2, y + shellLength / 2]) {
-      const line = new THREE.LineSegments(edgeGeo, edgeMat)
-      line.position.z = z
-      group.add(line)
-    }
+  const ribGeo = new THREE.BufferGeometry().setFromPoints(ribPoints(arch))
+  // ⚠️ 摆在哪几个 z 上**不在这里算**：`spec.ribYs` 是 `volumeView.ts` 的纯函数
+  // 给的（两端各一圈、中间等距）。原先这儿就地写着 `[y − L/2, y + L/2]` ——
+  // 一个「一排肋」的判断落在画的那一半里，既没人测得到，也就一直没人发现
+  // 它只画了两圈。这一层只照着摆。
+  for (const z of ribYs) {
+    const line = new THREE.LineLoop(ribGeo, edgeMat)
+    line.position.z = z
+    line.renderOrder = -1          // 与壳同理，见上面那段
+    group.add(line)
   }
 }
 
@@ -250,18 +340,36 @@ function syncMarker(): void {
   marker.visible = true
 }
 
-function fitCamera(): void {
+/**
+ * 摆相机：把整卷框进画面。**算术全在 `scene/fit.ts`**（那一条有测试），
+ * 这里只把载荷翻成世界坐标下的一个盒子 —— 世界是 `(数据 x, 数据 z, 数据 y)`。
+ */
+function placeCamera(): void {
   if (!camera || !controls) return
   const { payload } = props
-  const cx = (payload.x[0] + payload.x[payload.x.length - 1]) / 2
-  const cz = (payload.z[0] + payload.z[payload.z.length - 1]) / 2
-  const cy = (payload.planes[0].y + payload.planes[payload.planes.length - 1].y) / 2
-  const span = payload.planes[payload.planes.length - 1].y - payload.planes[0].y
-  controls.target.set(cx, cz, cy)
-  // 距离按整卷的长度给，保证一开始整卷都在画面里。
-  camera.position.set(cx + span * 0.45, cz + span * 0.35, cy + span * 0.75)
+  const nx = payload.x.length
+  const nz = payload.z.length
+  const ny = payload.planes.length
+  const box: WorldBox = boxOf(
+    [payload.x[0], payload.z[0], payload.planes[0].y],
+    [payload.x[nx - 1], payload.z[nz - 1], payload.planes[ny - 1].y],
+  )
+  const { position, target } = fitCamera(box, camera.aspect)
+  controls.target.set(...target)
+  camera.position.set(...position)
   camera.updateProjectionMatrix()
   controls.update()
+}
+
+/**
+ * 取景跟着画布尺寸与载荷走，**直到用户自己动过镜头为止**。
+ *
+ * 那半句是有意的：转过之后再把他刚调好的视角一把拽回正面，比构图不完美更烦人。
+ * 而反过来（只在挂载时取一次景）就是这一次要修的那个 bug —— 窗口一改宽窄，
+ * 中栏的宽高比就变了，画面可能又被裁，而相机还停在上一次的答案上。
+ */
+function autoframe(): void {
+  if (!orbited) placeCamera()
 }
 
 function resize(): void {
@@ -272,6 +380,9 @@ function resize(): void {
   renderer.setSize(w, h, false)
   camera.aspect = w / h
   camera.updateProjectionMatrix()
+  // 宽高比刚变，取景可能就不成立了（见 `autoframe`）。放在这一行之后 ——
+  // `fitCamera` 解距离要用的是**新的** `aspect`。
+  autoframe()
 }
 
 function onPointerMove(e: PointerEvent): void {
@@ -316,17 +427,67 @@ function onPointerLeave(): void {
   emit('hover', null)
 }
 
+/** 按钮能做的事。文字是屏上的字，键是接线用的。 */
+type ViewCmd =
+  | 'yaw-left' | 'yaw-right' | 'zoom-in' | 'zoom-out'
+  | 'pan-left' | 'pan-right' | 'pan-up' | 'pan-down' | 'reset'
+
+/**
+ * 按一下按钮，把相机挪一格。
+ *
+ * ⚠️ **算术全在 `scene/orbit.ts`**（有测试），这里只负责「把 Three 的对象
+ * 读成数组、算完再写回去」。任何一句能被断言的判断都不许写在这里。
+ *
+ * ⚠️ 调过之后 `orbited = true` —— 与拖一下鼠标同一条规矩（`controls` 的
+ * `'start'` 事件就是这个标记的唯一来源，这里补一条同义的路）。不置的话，
+ * 下一次载荷刷新会把用户刚调好的视角一把拽回正面。
+ */
+function nudge(kind: ViewCmd): void {
+  const cam = camera
+  const ctl = controls
+  if (!cam || !ctl) return
+
+  if (kind === 'reset') {
+    // 复位就是「回到自动取景」：把标记摘掉，`placeCamera` 会重新按包围盒解距离。
+    orbited = false
+    placeCamera()
+    return
+  }
+
+  const t: Vec3 = [ctl.target.x, ctl.target.y, ctl.target.z]
+  const p: Vec3 = [cam.position.x, cam.position.y, cam.position.z]
+
+  let nextPos = p
+  let nextTarget = t
+  if (kind === 'yaw-left') nextPos = yawAround(t, p, YAW_STEP_DEG)
+  else if (kind === 'yaw-right') nextPos = yawAround(t, p, -YAW_STEP_DEG)
+  else if (kind === 'zoom-in') nextPos = zoomBy(t, p, ZOOM_STEP)
+  else if (kind === 'zoom-out') nextPos = zoomBy(t, p, 1 / ZOOM_STEP)
+  else {
+    const dx = kind === 'pan-right' ? PAN_FRAC : kind === 'pan-left' ? -PAN_FRAC : 0
+    const dy = kind === 'pan-up' ? PAN_FRAC : kind === 'pan-down' ? -PAN_FRAC : 0
+    const r = panBy(t, p, dx, dy)
+    nextTarget = r.target
+    nextPos = r.position
+  }
+
+  orbited = true
+  ctl.target.set(nextTarget[0], nextTarget[1], nextTarget[2])
+  cam.position.set(nextPos[0], nextPos[1], nextPos[2])
+  ctl.update()
+}
+
 onMounted(() => {
   const el = host.value
   if (!el || !hasWebGL()) {
     unavailable.value = NO_WEBGL
+    // 报上去：页级据此不挂剖切刀（见 `ready` 的注释）。
+    emit('ready', false)
     return
   }
-  const last = props.payload.planes.length - 1
-  cutY.value = props.payload.planes[last].y
 
   scene = new THREE.Scene()
-  camera = new THREE.PerspectiveCamera(38, 1, 0.01, 500)
+  camera = new THREE.PerspectiveCamera(FIT_FOV_DEG, 1, 0.01, 500)
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1))
   // 材质级的 `clippingPlanes` 要它，默认是关的。
@@ -335,18 +496,22 @@ onMounted(() => {
 
   controls = new OrbitControls(camera, renderer.domElement)
   controls.enableDamping = true
+  // 用户一动过镜头，取景就归他（见 `autoframe`）。
+  controls.addEventListener('start', () => { orbited = true })
 
   raycaster = new THREE.Raycaster()
   // 世界 Z 是棚位 y；法向朝 −Z、常数是 cutY，于是 `distanceToPoint(p) < 0`
   // 恰好等价于「p 的棚位 y 大于 cutY」—— 切掉的那一侧就是刀面之外。
-  clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), cutY.value)
+  clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), props.cutY)
 
   buildShells()
   buildPlanes()
   buildSensors()
   buildMarker()
-  fitCamera()
   syncMarker()
+  // 取景与量尺寸一起做：**`fitCamera` 要按画布的宽高比解距离**，所以先量画布，
+  // 再由 `resize` 顺手摆相机。原来是先取景、再 resize —— 那一次取景用的是
+  // 构造相机时那个占位的 `aspect = 1`。
   resize()
 
   const ro = new ResizeObserver(resize)
@@ -367,16 +532,24 @@ onMounted(() => {
     renderer?.dispose()
     renderer?.domElement.remove()
   }
+  // 场景真的建起来了 —— 到这一步才敢让页级挂剖切刀。
+  sceneReady.value = true
+  emit('ready', true)
 })
 
 /**
  * 载荷一换就重建那叠平面。**`cutY` 它不动** —— 剖切刀切到哪里是用户设的，
  * 与换了个时刻无关；而 `clipPlane` 是同一个对象，改 `constant` 就够。
+ *
+ * 顺手 `autoframe()`：换模型库里的另一个模型时，这一卷的**尺度可能就不一样了**
+ * （页③ 现在能从库里挑模型构场）。同一卷数据换时刻时盒子不变、解出来的距离
+ * 也不变，所以这一行是白跑的，不白写。
  */
 watch(() => props.payload, () => {
   if (!scene) return
   buildPlanes()
   syncMarker()
+  autoframe()
 })
 
 /**
@@ -394,7 +567,7 @@ watch(() => [props.payload, props.spec.shellLength], () => {
 
 watch(() => props.picked, syncMarker, { deep: true })
 
-watch(cutY, (v) => {
+watch(() => props.cutY, (v) => {
   if (clipPlane) clipPlane.constant = v
 })
 
@@ -413,18 +586,46 @@ onBeforeUnmount(() => {
       @pointerleave="onPointerLeave"
       @click="onClick"
     />
+    <!-- 视角那一组按钮（2026-10-09 用户裁定「旋转/缩放/平移按钮可以做」）。
+         ⚠️ **为什么住在这一层，而不是 `VolumeView`。** 那里有同类覆盖层的先例
+         （`.stage-clock` 压在同一个画面上），看上去更顺手 —— 但相机与
+         `OrbitControls` 是**这一层**的模块级变量，`nudge()` 要直接读写它们。
+         搬出去就得为「按一下按钮」新开一条属性或事件的通道，而那条通道
+         除了这里没有第二个用处。
+
+         ⚠️ **判据只有 `showViewControls`，不许再加 `sceneReady`。**
+         加了它，jsdom 里（`hasWebGL()` 恒假）这一组就永远不渲染 ——
+         于是「属性收到了没有」在**任何**自动测试里都看不见；而
+         `LiveView` → `VolumeView` → `VolumeScene` 三处属性名里错一个，
+         正是这里最可能出、也最难发现的错（不报错，只是按钮永远不出现）。
+         建不起来的那一档由 `:disabled` 说，不由整组消失说。
+
+         ⚠️ 它压在画布上，而画布那片区域要接悬停读数（`.scene` 上的
+         `@pointermove`）—— 所以只占右上角一小块。这与 `.stage-clock` 的
+         `pointer-events: none` 正好相反：那一枚只读，这一组要能点。 -->
+    <div v-if="showViewControls" class="view-ctl" role="group" aria-label="视角">
+      <div class="ctl-row">
+        <span class="ctl-tag">旋转</span>
+        <button type="button" data-view-act="yaw-left" :disabled="!sceneReady" title="绕竖直轴左转" @click="nudge('yaw-left')">左转</button>
+        <button type="button" data-view-act="yaw-right" :disabled="!sceneReady" title="绕竖直轴右转" @click="nudge('yaw-right')">右转</button>
+      </div>
+      <div class="ctl-row">
+        <span class="ctl-tag">缩放</span>
+        <button type="button" data-view-act="zoom-in" :disabled="!sceneReady" title="相机靠近棚体" @click="nudge('zoom-in')">拉近</button>
+        <button type="button" data-view-act="zoom-out" :disabled="!sceneReady" title="相机远离棚体" @click="nudge('zoom-out')">推远</button>
+      </div>
+      <div class="ctl-row">
+        <span class="ctl-tag">平移</span>
+        <button type="button" data-view-act="pan-left" :disabled="!sceneReady" title="画面向左移" @click="nudge('pan-left')">左</button>
+        <button type="button" data-view-act="pan-right" :disabled="!sceneReady" title="画面向右移" @click="nudge('pan-right')">右</button>
+        <button type="button" data-view-act="pan-up" :disabled="!sceneReady" title="画面向上移" @click="nudge('pan-up')">上</button>
+        <button type="button" data-view-act="pan-down" :disabled="!sceneReady" title="画面向下移" @click="nudge('pan-down')">下</button>
+      </div>
+      <div class="ctl-row">
+        <button type="button" data-view-act="reset" :disabled="!sceneReady" title="回到自动取景" @click="nudge('reset')">复位</button>
+      </div>
+    </div>
     <p v-if="unavailable" class="note">{{ unavailable }}</p>
-    <fieldset v-else class="cut">
-      <legend>剖切刀（沿棚长 y）</legend>
-      <input
-        v-model.number="cutY" type="range"
-        :min="payload.planes[0].y"
-        :max="payload.planes[payload.planes.length - 1].y"
-        :step="payload.y_step"
-        aria-label="剖切刀"
-      >
-      <p class="num">切到 y = {{ cutY.toFixed(2) }} m 为止</p>
-    </fieldset>
   </div>
 </template>
 
@@ -432,6 +633,41 @@ onBeforeUnmount(() => {
 .scene-wrap { position: relative; }
 .scene { width: 100%; height: 460px; cursor: crosshair; }
 .scene :deep(canvas) { display: block; width: 100%; height: 100%; }
-.cut { border: var(--rule); padding: var(--gap-s); margin: var(--gap-s) 0 0; font-size: var(--size-note); }
-.cut input { width: 100%; }
+/* 视角按钮：压在画面**右上角**。
+   锚点是**画布盒子**自己（`.scene-wrap` 是 `position: relative`，画布铺满它），
+   所以缩进取 `--gap-s` 就到画面里侧了 —— `VolumeView` 那个 `.stage-clock`
+   是从**卡片内边距**里再缩一个 `--gap-s`，两者起点不同，别照抄那个数。
+   底色走 `card` 而不是半透明黑：半透明在深浅两档下都对不上，
+   而 `card` 两档都跟着走。
+   ⚠️ **不许学 `.stage-clock` 写 `pointer-events: none`** —— 那一枚只读，
+   这一组要能点。代价是画布右上角那一小块接不到悬停读数（换来按钮压在画面上
+   而不是另起一行），所以这一组只占一个小方块，不铺出去。 */
+.view-ctl {
+  position: absolute;
+  z-index: 1;
+  top: var(--gap-s);
+  right: var(--gap-s);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--gap-s);
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.ctl-row { display: flex; align-items: center; gap: 4px; }
+.ctl-tag { font-size: var(--size-label); color: var(--ink-muted); width: 2.6em; }
+.view-ctl button {
+  font: inherit;
+  font-size: var(--size-note);
+  cursor: pointer;
+  padding: 2px 8px;
+  color: var(--ink);
+  background: transparent;
+  border: var(--rule);
+  border-radius: var(--radius);
+}
+/* 场景没建起来时（没有 WebGL）九颗都灰着。灰而不是消失，是让「这一组存在、
+   只是现在用不了」看得出来 —— 与旁边那句「画不出来」的说明是一个意思。 */
+.view-ctl button:disabled { cursor: default; opacity: 0.4; }
 </style>

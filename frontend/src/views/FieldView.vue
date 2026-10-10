@@ -2,12 +2,17 @@
 /**
  * 页③ 空间温度场的构建（V5 切面场）。
  *
- * 三块：切面场（旗舰）→ 点选读数 → 单点曲线 → ΔT 第四格。
+ * 两块：切面场（旗舰）→ ΔT 第四格。
  * 左栏经 `#rail-extra` 投进去的是视图切换与时刻游标（spec §8.3 的版式）。
  *
- * **这一页不做任何计算**（硬约束 1）。连"这一格是多少度"都是从**已经拿到的**
- * 载荷里读的 —— 点选是拾取，不是重跑（spec §七 V5）。所以点一下是秒回的，
- * 而且屏幕上显示的数和图上那个格子必然相等。
+ * ⚠️ 2026-10-09：原来这里还有「点选读数」与「单点 5 天曲线」两张卡（点一格看
+ * 它是什么、看它 5 天怎么变）。用户看过实机后判定这两张在「空间温度场的构建」
+ * 这一页上没必要，连同图上那套点选交互一并撤掉 —— 这一页要讲的是**场**，
+ * 某一格的读数与它的单点曲线是另一件事，不该跟三张场挤在同一页。
+ *
+ * 撤掉的是**这一页的用法**，不是那套能力：后端的 `/api/field/curve` 与
+ * `charts/options/pointCurve.ts` 都原样留着（一个字没删），`charts/pick.ts`
+ * 的判定仍被三维那一块与实时屏用着。只是页③ 不再有入口。
  *
  * 2026-10-06（spec §6.2 页③）：页顶加一排四张指标卡，四块面板各套一层 `Card`，
  * 散文折进页尾「口径与出处」。第四格是全套界面长在这个题目上的证据：
@@ -15,20 +20,18 @@
  */
 import { computed, defineAsyncComponent, h, onMounted, ref, watch } from 'vue'
 
-import type { ComparePayload, CurvePayload, SectionsPayload } from '../api/types'
+import type { ComparePayload, SectionsPayload } from '../api/types'
 import { getJson } from '../api/client'
 import { fetchModels, setCurrentModel, usableModels } from '../api/models'
 import EChart from '../charts/EChart.vue'
 import { buildConstraintDeltaOption, deltaNote } from '../charts/options/constraintDelta'
-import { buildPointCurveOption, CURVE_NO_MONOTONIC_NOTE } from '../charts/options/pointCurve'
-import { buildSectionFieldOption, shedOfSeries } from '../charts/options/sectionField'
-import { interpretPick, pickText } from '../charts/pick'
+import { buildSectionFieldOption } from '../charts/options/sectionField'
 import Card from '../components/Card.vue'
 import Provenance from '../components/Provenance.vue'
 import StatCard from '../components/StatCard.vue'
 import StatRow from '../components/StatRow.vue'
 import { useAsync } from '../composables/useAsync'
-import { FIELD_MODEL, FIELD_VIEWS } from '../design/copy'
+import { BORROWED, calibratedLabel, FIELD_MODEL, FIELD_VIEWS } from '../design/copy'
 import { fmt1, fmtRange, fmtTime } from '../design/format'
 import { readPalette } from '../design/palette'
 
@@ -55,25 +58,19 @@ const VolumeView = defineAsyncComponent({
 const palette = readPalette()
 
 const tIndex = ref(0)
-/** 「你正在看哪一棚」。初始 p1；点中别棚的格子就跟着走。 */
-const activeShed = ref('p1')
-/** 点中的格子。`null` = 还没点过。 */
-const picked = ref<{ shed: string; ix: number; iz: number } | null>(null)
+/**
+ * ΔT 那一格画哪一棚。**固定 `p1`。**
+ *
+ * 它原来是跟着「点中的格子」走的（点别棚的格子，ΔT 面板就换棚）。点选撤掉
+ * 之后，页面上没有第二处能改它了 —— 再挂一个 `ref` 加一条永远不触发的
+ * `watch`，只是给读的人出一道「这还会变吗」的谜题。
+ */
+const SHED = 'p1'
 
 const sections = useAsync(
   () => getJson<SectionsPayload>(`/api/field/sections?t_index=${tIndex.value}`))
 const compare = useAsync(
-  () => getJson<ComparePayload>(
-    `/api/field/compare?shed=${activeShed.value}&t_index=${tIndex.value}`))
-const curve = useAsync(async () => {
-  const p = picked.value
-  const s = sections.data.value
-  // `run()` 只在点中之后被调用，所以走到这里就是 bug —— 抛出去，
-  // 别拿 `!` 把问题盖住。
-  if (!p || !s) throw new Error('还没点选任何格子，不该去取曲线')
-  return getJson<CurvePayload>(
-    `/api/field/curve?shed=${p.shed}&x=${s.x[p.ix]}&z=${s.z[p.iz]}`)
-})
+  () => getJson<ComparePayload>(`/api/field/compare?shed=${SHED}&t_index=${tIndex.value}`))
 
 /**
  * 模型库那一支（规格书 §6.4）。**这一页的场从哪来，由用户在这里点**——
@@ -110,19 +107,17 @@ async function onPickModel(e: Event): Promise<void> {
   // 屏上那两张场是 `/api/field/sections` 与 `/api/field/compare` 按**旧模型**
   // 算好、已经摆在组件里的像素。不重取，下拉与「当前」都指向新模型，图还是
   // 旧的 —— 而且不报错、不提示，只是端出一张旧模型算的场，正是规格书 D4 说的
-  // 「看着对的错场」。已点选的那条曲线（`/api/field/curve`）同理，后端也是按
-  // 当前模型现算的。
+  // 「看着对的错场」。
   reload()
-  if (picked.value) void curve.run()
 }
 
-/** 读数印四位。⚠️ 只印后端给的数，null 就印「无值」—— 不补一个 0。 */
+/** 数印四位（下拉里那个 MAE）。⚠️ 只印后端给的数，null 就印「无值」—— 不补一个 0。 */
 function num(v: number | null): string {
   return v === null || !Number.isFinite(v) ? '无值' : v.toFixed(4)
 }
 
 function reload(): void {
-  // ⚠️ 没有可用模型时那三个 field 接口一个都不打：打了也拿不到场，
+  // ⚠️ 没有可用模型时那两个 field 接口一个都不打：打了也拿不到场，
   // 只是让后端白算一遍，而用户要多等一轮。
   if (!ready.value) return
   void sections.run()
@@ -135,7 +130,6 @@ onMounted(async () => {
   reload()
 })
 watch(tIndex, reload)
-watch(activeShed, () => void compare.run())
 
 /** 视图切换。两项都开着：「断面」是入口，「三维」懒加载（见上面的 defineAsyncComponent）。 */
 const view = ref('section')
@@ -149,51 +143,16 @@ function onSeek(e: Event) {
   tIndex.value = Number((e.target as HTMLInputElement).value)
 }
 
-/**
- * 点选。**只从已经拿到的载荷里读**，不再打接口 —— 见文件顶部那段。
- * 认不出的系列（装饰性的拱线、测点、斜纹都是 silent，本来也不会来）直接忽略。
- */
-function onPick(ev: { seriesIndex: number; value: unknown }) {
-  const s = sections.data.value
-  if (!s) return
-  const shed = shedOfSeries(s, ev.seriesIndex)
-  if (!shed || !Array.isArray(ev.value) || ev.value.length < 2) return
-  picked.value = { shed, ix: Number(ev.value[0]), iz: Number(ev.value[1]) }
-  activeShed.value = shed
-  void curve.run()
-}
-
 const v5 = computed(() =>
   sections.data.value ? buildSectionFieldOption(sections.data.value, palette) : null)
 const vDelta = computed(() =>
   compare.data.value ? buildConstraintDeltaOption(compare.data.value, palette) : null)
-const vCurve = computed(() => {
-  const c = curve.data.value
-  return c && c.defined ? buildPointCurveOption(c, palette) : null
-})
 
-/** 点选读数：位置 + 三种回答里的一种（判定在 `charts/pick.ts`，只有那一处）。 */
-const readout = computed(() => {
-  const s = sections.data.value
-  const p = picked.value
-  if (!s || !p) return null
-  return {
-    where: `${p.shed}　x ${s.x[p.ix].toFixed(2)} m　z ${s.z[p.iz].toFixed(2)} m`,
-    text: pickText(interpretPick(s, p.shed, p.ix, p.iz), s.max_measured_z),
-  }
-})
-
-// 载荷的 `note` 为空就用兜底 —— 这句「没有施加竖直软单调投影」一旦无声消失，
-// 看图的人会以为曲线经过了投影。是 `||` 不是 `??`：空串也算「没带」。
-// 只在**有曲线可谈**的时候说它：还没点过格子、或该点无定义（不画线）时，
-// 这句是在讲一条不存在的线，读者会去找那条线。
-const curveNote = computed(() =>
-  curve.data.value?.defined ? (curve.data.value.note || CURVE_NO_MONOTONIC_NOTE) : '')
 const dNote = computed(() => compare.data.value ? deltaNote(compare.data.value) : '')
 
 // 任何一路挂了都要报出**是哪一路**（后端的 detail 原话），不许吞成一片空白。
 const failure = computed(() =>
-  [sections.error.value, compare.error.value, curve.error.value].filter(Boolean).join('；'))
+  [sections.error.value, compare.error.value].filter(Boolean).join('；'))
 </script>
 
 <template>
@@ -202,16 +161,21 @@ const failure = computed(() =>
 
     <!-- 用哪个模型（规格书 §6.4）。**这是需求的原点**：场由用户挑的模型构出来，
          不由系统自己找一个就开始构建。
-         ⚠️ 对不上的那些也**列出来**（用户得知道库里有什么、为什么用不上），
-         但它们选不中 —— 半画（画了场再标一句「对不上」）等于把一个看着对的
-         错场端给用户。 -->
+         ⚠️ 库里的**每一行都列出来**（用户得知道库里有什么、以及为什么某一行
+         用不上），三档各有各的样子：
+           · 本地的    —— 光一个名字就是它；
+           · 借来的    —— 加一个「（借来的）」（2026-10-10 用户裁定：库里有就能
+                          挑，不为数据集签名所限；`why` 里有是换了哪一份文件）；
+           · 用不了的  —— `disabled`，并把理由印在选项上。
+         半画（画了场再标一句「用不了」）等于把一个看着对的错场端给用户。 -->
     <div v-if="ready" class="model-pick">
       <label for="field-model">{{ FIELD_MODEL.pick }}</label>
       <select id="field-model" :value="modelId ?? ''" @change="onPickModel">
         <option v-for="row in models.data.value?.rows ?? []" :key="row.id"
                 :value="row.id" :disabled="!row.compatible" :title="row.why">
           {{ row.name }}　{{ row.data_file }}　MAE {{ num(row.mae) }}
-          <template v-if="!row.compatible">（{{ row.why }}）</template>
+          <template v-if="row.borrowed">（{{ BORROWED }}）</template>
+          <template v-else-if="!row.compatible">（{{ row.why }}）</template>
         </option>
       </select>
     </div>
@@ -301,7 +265,7 @@ const failure = computed(() =>
       />
       <StatCard
         label="标定"
-        :value="sections.data.value.calibrated ? '已标定（随包参数）' : '未标定（兜底参数）'"
+        :value="calibratedLabel(sections.data.value)"
         prov="live" compact
       />
       <StatCard
@@ -317,39 +281,16 @@ const failure = computed(() =>
         <div class="row head">
           <h3>三个断面的温度场</h3>
           <span v-if="sections.data.value" class="tag">
-            {{ sections.data.value.calibrated ? '已标定' : '未标定（兜底参数）' }}
+            {{ calibratedLabel(sections.data.value) }}
             <Provenance kind="live" />
           </span>
         </div>
-        <EChart v-if="v5" :option="v5" height="420px" @pick="onPick" />
+        <EChart v-if="v5" :option="v5" height="420px" />
         <p v-else-if="sections.error.value" class="note state">场没取到，见上方提示。</p>
         <p v-else class="note state">正在取场…（第一次要训练模型，可能要等一会儿）</p>
       </Card>
 
-      <!-- 2. 点选读数 -->
-      <Card class="block">
-        <h3>这一格是什么</h3>
-        <p v-if="!readout" class="note state">还没点任何格子。上图里点一下。</p>
-        <table v-else>
-          <tbody>
-            <tr><th>位置</th><td class="num">{{ readout.where }}</td></tr>
-            <tr><th>回答</th><td>{{ readout.text }}</td></tr>
-          </tbody>
-        </table>
-      </Card>
-
-      <!-- 3. 单点 5 天曲线 -->
-      <Card class="block">
-        <h3>这一点的 5 天</h3>
-        <EChart v-if="vCurve" :option="vCurve" height="300px" />
-        <p v-else-if="curve.loading.value" class="note state">正在取曲线…</p>
-        <p v-else-if="curve.data.value && !curve.data.value.defined" class="note state">
-          该点无定义（拱外或在无测量带里），不画曲线。
-        </p>
-        <p v-else class="note state">点一个格子看它在整个时间轴上怎么变。</p>
-      </Card>
-
-      <!-- 4. ΔT 第四格 -->
+      <!-- 2. ΔT 第四格 -->
       <Card class="block">
         <h3>竖直软单调投影改了多少</h3>
         <EChart v-if="vDelta" :option="vDelta" height="320px" />
@@ -366,11 +307,14 @@ const failure = computed(() =>
             fmtRange(sections.data.value.vmin, sections.data.value.vmax, '°C')
           }}），并排看才成立。
         </p>
-        <p class="note">
-          点一个格子看它的读数与 5 天曲线。一共只有三种回答：拱外无定义 /
-          无测量带不报数 / 一个带出处的数。
+        <!-- **借来的那一句逐字来自后端**（`deps._BORROWED_NOTE`，跟着载荷的
+             `mismatch_note` 过来）。前端不另写一句解释 —— 同一个事实两份措辞，
+             迟早一处改了另一处没改。空串（＝这份包就是为这份数据标的）时不印。
+             ⚠️ 它在 `details.why` 里：`design/prose.test.ts` 是 spec §十二.11 的
+             判据本身，一个裸的 `<p class="note">` 会被判成「没归类的散文」。 -->
+        <p v-if="sections.data.value?.mismatch_note" class="note">
+          {{ sections.data.value.mismatch_note }}
         </p>
-        <p v-if="curveNote" class="note">{{ curveNote }}</p>
         <p v-if="dNote" class="note">{{ dNote }}</p>
         <p v-if="compare.data.value" class="note">{{ compare.data.value.note }}</p>
       </details>

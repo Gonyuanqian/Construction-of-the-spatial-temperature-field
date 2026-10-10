@@ -5,7 +5,7 @@ import { createMemoryHistory } from 'vue-router'
 import ModelsView from './ModelsView.vue'
 import { createAppRouter } from '../router'
 import { makeModelDetailPayload, makeModelsPayload } from '../test/fixtures'
-import { MODELS } from '../design/copy'
+import { BORROWED, MODELS } from '../design/copy'
 import type { ModelDetailPayload, ModelsPayload } from '../api/types'
 
 enableAutoUnmount(afterEach)
@@ -98,12 +98,26 @@ describe('模型库列表', () => {
     expect(marked[0].text()).toContain('七月下旬那套')
   })
 
-  it('对不上的那一行看得见理由，而且它的「设为当前」是禁用的', async () => {
+  it('借来的那一行能用，而且标着「借来的」', async () => {
+    // ⭐ 2026-10-10 用户裁定「模型不绑数据集」：库里的模型**不按数据集绑**，
+    // 借来的那一份照样能设为当前。⚠️ 这一条与下面那条是一对 —— 少了它，
+    // 把 `compatible` 改回「两轴都对得上」不会有任何测试红。
     stub(makeModelsPayload())
     const w = await mountAt('/models')
-    const rows = w.findAll('tbody tr')
-    const bad = rows.find((r) => r.text().includes('别人家的棚.xlsx'))!
-    expect(bad.text()).toContain('数据来源不同：别人家的棚.xlsx')
+    const row = w.findAll('tbody tr').find((r) => r.text().includes('上一份数据训的'))!
+    expect(row.text()).toContain(BORROWED)
+    const btn = row.findAll('button').find((b) => b.text() === MODELS.setCurrent)!
+    expect(btn.attributes('disabled'), '借来的那一行设不了当前').toBeUndefined()
+  })
+
+  it('对不上的那一行看得见理由，而且它的「设为当前」是禁用的', async () => {
+    // ⚠️ 这原来是**第二行**（数据集对不上）在演。改档之后第二行能用了，
+    // 这个角色换到第三行（特征组对不上）—— 它是三档里唯一真的用不了的一种。
+    stub(makeModelsPayload())
+    const w = await mountAt('/models')
+    const bad = w.findAll('tbody tr')
+      .find((r) => r.text().includes('另一个特征组标的'))!
+    expect(bad.text()).toContain('这一份是用别的特征组标出来的')
     const btn = bad.findAll('button').find((b) => b.text() === MODELS.setCurrent)!
     expect(btn.attributes('disabled')).toBeDefined()
   })

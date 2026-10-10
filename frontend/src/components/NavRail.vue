@@ -2,21 +2,35 @@
 /**
  * 左侧导航。
  *
- * 2026-10-06（spec §5.2）：后端版本那一行**搬去了标题条** —— `/live` 收起导航，
- * 导航不在时那一行也跟着没了，而实时那一屏最需要确认「后端是哪一个」。
+ * 2026-10-06（spec §5.2）：后端版本那一行**搬去了标题条** —— 它一度是因为
+ * `/live` 会把导航收起来才搬的，而 2026-10-09 起左栏**每一屏都在**（见下），
+ * 搬去标题条这个位置仍然对：那一行说的是「后端是哪一个」，不属于某一列。
  * 未开放项的理由不再堆在栏底：演示时没人会往栏底看，挪到紧贴那一项的地方。
+ *
+ * 2026-10-09 用户裁定：左栏**不再收起**，而是**换项** —— 训练模式那四页画
+ * 流水线那四项（`NAV_ITEMS`），实时模式那一屏画三条演示占位项
+ * （`LIVE_NAV_ITEMS`）。所以这一列有了 `items` 属性，默认仍是 `NAV_ITEMS`。
  *
  * ⚠️ 形状不许动：仍是 `nav[aria-label="页面"]`，导航项仍是 `<a>`。
  * `App.test.ts` 断言 `rail.findAll('a')` **精确等于**已开放项，且次序一致
  * （spec §十三.2）——「把导航做成按钮」是这次唯一不能做的控件化改动。
  * 未开放项的理由必须**仍在这个 nav 里**，`App.test.ts:74` 按 `rail.text()` 找它。
  */
-import { NAV_ITEMS } from '../design/copy'
+import { NAV_ITEMS, type RailItem } from '../design/copy'
+
+/**
+ * 这一列画哪几项。**默认 `NAV_ITEMS`** —— 页①②③④ 一个属性都不传，
+ * 所以那四页的左栏与改动前逐字相同。
+ * 实时模式那一屏传 `LIVE_NAV_ITEMS`（见 `App.vue`）。
+ */
+const props = withDefaults(defineProps<{ items?: readonly RailItem[] }>(), {
+  items: () => NAV_ITEMS,
+})
 </script>
 
 <template>
   <nav class="rail" aria-label="页面">
-    <template v-for="item in NAV_ITEMS" :key="item.key">
+    <template v-for="item in props.items" :key="item.key">
       <RouterLink v-if="item.enabled" class="item" :to="item.to">{{ item.label }}</RouterLink>
       <template v-else>
         <span class="item off">{{ item.label }}</span>

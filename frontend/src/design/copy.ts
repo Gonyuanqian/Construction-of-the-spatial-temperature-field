@@ -43,6 +43,35 @@ export const NAV_ITEMS = [
 ] as const
 
 /**
+ * 实时模式那一屏左栏里的三条（2026-10-09 用户裁定）。
+ *
+ * 用户的原话是「左侧导航栏留下首页，历史数据，系统设置」。这三条**都还没有页面**，
+ * 所以三条一律 `enabled: false`，与 `NAV_ITEMS` 里「影响分析」同一套形状：
+ * 留位、写明理由、不做成空页（`spec 2026-10-04 §二.4`）。
+ *
+ * ⚠️ **不是把 `NAV_ITEMS` 改掉**：训练模式那四页的左栏仍然是流水线那四项，
+ * 标签、次序、`enabled` 一个都不动（`App.test.ts` 按 `NAV_ITEMS` 推导着断言）。
+ * 这一份只走 `App.vue` → `NavRail` 的 `items`。
+ *
+ * ⚠️ 三句 `why` 的长度都要大于 10 个字符 —— `guards.test.ts` 有一条守卫
+ * 扫「未开放项必带理由」，`LIVE_NAV_ITEMS` 也在它扫的名单里。
+ */
+export const LIVE_NAV_ITEMS = [
+  {
+    key: 'home', label: '首页', to: '/', enabled: false,
+    why: '演示屏上留的位置。这一屏在演示什么，就由这一屏自己说。',
+  },
+  {
+    key: 'history', label: '历史数据', to: '/history', enabled: false,
+    why: '演示屏上留的位置。先把这一屏演示完，再谈回看与追溯。',
+  },
+  {
+    key: 'settings', label: '系统设置', to: '/settings', enabled: false,
+    why: '演示屏上留的位置。这一屏的控件都在页面上，没有要设的东西。',
+  },
+] as const
+
+/**
  * 「断面 / 三维」这两块。**次序是信息**：先切面（快，先让人看懂场），再三维。
  * 两项都开着 —— 三维由 `FieldView` 与实时那一屏各自懒加载，切过去才下载 Three，
  * 所以断面那一边的首屏不为它付钱。
@@ -143,21 +172,75 @@ export const MODELS = {
 } as const
 
 /**
- * 页③ 的选模型块（规格书 §6.4）。
+ * 页③ 的选模型块（规格书 §6.4）。页⑤ 的空态也用它。
  *
  * ⚠️ `none` 出现在**一整页什么都没有**的时候 —— 不画断面、不画三维、
- * 不画点选曲线。半画（画了但标一句「对不上」）等于把一个看着对的错场
+ * 不画点选曲线。半画（画了但标一句「用不了」）等于把一个看着对的错场
  * 端给用户（规格书 D4）。
+ *
+ * ⚠️ 这句理由 2026-10-10 改过一次。原先写的是「要有一个**能对得上当前数据集**
+ * 的模型才算得出场」—— 用户裁定「模型不绑数据集」之后，那句话把**一半**的
+ * 用法说成了不合法：库里有模型、只是不是为这份数据标的（借来的），照样构得了场
+ * （`ModelRowPayload.borrowed`）。现在这一句只说**真正**缺的那样东西：库里
+ * 一份都没有。
  */
 export const FIELD_MODEL = {
   pick: '用哪个模型',
-  none: '还没有可用的模型',
-  noneWhy: '空间温度场的构建要有一个能对得上当前数据集的模型才算得出场。',
+  none: '还没有能用的模型',
+  noneWhy: '这一页的场要拿模型库里的一份标定过的模型来构 —— 库里现在还没有。',
   toLibrary: '去模型库挑一个',
   toTrain: '去模型训练训一个',
 } as const
+
+/**
+ * 「借来的」这三个字。**只此一处。**
+ *
+ * ⚠️ 页③ 选模型那一行的选项、模型库列表里的图章、下面 `calibratedLabel`
+ * 那个图章，三处都印它。三处各写一遍不会报错，只会漂 —— 而这三个字正是
+ * 用户判断「屏上这些数是不是这份数据的成绩」时唯一的抓手。
+ *
+ * ⚠️ 它只是**那三个字**。完整的解释是后端 `deps._BORROWED_NOTE` 那一句，
+ * 跟着载荷的 `mismatch_note` 到屏上（页③ 与页⑤ 的「口径与出处」里逐字印它）。
+ * 前端**不另写一句解释** —— 那就是同一个事实的第二份措辞，正是
+ * `deps.py` 里那句注释要挡的事。
+ */
+export const BORROWED = '借来的'
+
+/**
+ * 标定那一个图章的话。**三档，只此一处。**
+ *
+ * ⚠️ 页③ 的指标卡与图表头、页④ 那一卷、页⑤ 这一帧，四处**都**读它。
+ * 四处各写一遍那个三元表达式不会报错，只会漂成「同一个模型，一页说本地的、
+ * 一页说借来的」。这是本次最不能错的一处标注：说错了，用户会把一份别人的参数
+ * 算出来的误差当成这份数据的成绩。
+ *
+ * ⚠️ 判「借来的」用的是载荷里那句**话在不在**（`mismatch_note`），不是再比一遍
+ * 签名 —— 判据在后端一处（`deps.model_fit`），前端只读结果。
+ */
+export function calibratedLabel(p: {
+  calibrated: boolean
+  mismatch_note: string
+}): string {
+  if (!p.calibrated) return '未标定（兜底参数）'
+  return p.mismatch_note ? `已标定（${BORROWED}）` : '已标定'
+}
 
 export type ProvKind = keyof typeof PROV
 
 export type ModeItem = (typeof MODES)[number]
 export type NavItem = (typeof NAV_ITEMS)[number]
+
+/**
+ * 一条导航项。**`NavRail` 的 `items` 收的是它，不是 `NavItem`。**
+ *
+ * `NavItem` 是 `NAV_ITEMS` 四个字面量的联合（`(typeof NAV_ITEMS)[number]`），
+ * `LIVE_NAV_ITEMS` 里一行都套不进去 —— 拿它当属性类型会让那一份传不进来，
+ * 而报错落在 `App.vue` 的模板上，离现场很远。
+ */
+export interface RailItem {
+  readonly key: string
+  readonly label: string
+  readonly to: string
+  readonly enabled: boolean
+  readonly why: string
+}

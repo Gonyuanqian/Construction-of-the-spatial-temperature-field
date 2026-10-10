@@ -11,12 +11,16 @@
  * 已经算好的格点上的，两者都不插值。插值就是在前端把 R2 重算一遍 ——
  * 两条路径漂了不报错。
  */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch, withDefaults } from 'vue'
 
 import type { VolumePayload } from '../api/types'
 import { getJson } from '../api/client'
 import { interpretVolumePick, pickText } from '../charts/pick'
+// 三栏各是一张卡片（2026-10-09 用户裁定）。用全站那一档，不自己写圆角与阴影 ——
+// 各写一遍，`guards.test.ts` 守着的「一处圆角、一处阴影」就名存实亡了。
+import Card from '../components/Card.vue'
 import { useAsync } from '../composables/useAsync'
+import { calibratedLabel } from '../design/copy'
 import { fmtTime } from '../design/format'
 import { markerPoint, snapIndex, type HoverPick } from './hover'
 import VolumeScene from './VolumeScene.vue'
@@ -24,7 +28,7 @@ import {
   SHELL_LENGTH_DEFAULT, SHELL_LENGTH_MAX, SHELL_LENGTH_MIN, buildVolumeSpec,
 } from './volumeView'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** 全系统唯一的那个钟（页③ 的时刻游标），三维只跟随、不新增控件。 */
   tIndex: number
   /** 那个钟现在指着的时刻。**由二维那一侧给**，三维不自己算也不自己问。 */
@@ -40,7 +44,56 @@ const props = defineProps<{
    * 它在这里只当「换个号就重取一次」的触发量。
    */
   source?: 'field' | 'live'
-}>()
+  /**
+   * 画面上要不要挂一枚时刻（2026-10-09 用户裁定）。
+   *
+   * 实时那一屏把指标卡整排撤了（「第几帧，一共多少帧……后端系统知道就行」），
+   * 但「手上这一屏画的是哪一刻」得一直看得见 —— 用户的话是「这个时间可以放到
+   * 生成的三维影像图中的左上角或者右上角就行了」。
+   *
+   * ⚠️ **默认关**：页③ 的时刻在上面那条滑块那一路上一直写着，同一个数在同一屏
+   * 里说两遍不是澄清。这一块是两页共用的 —— 要不要这枚读数由**页**来定。
+   */
+  showClock?: boolean
+  /**
+   * 画面上方那两行口径说明要不要摆出来。
+   *
+   * 两行是**两个来路**：头一行是**后端给的**（载荷的 `note`，前端只负责摆
+   * 上去，不重写它），第二行是 `volumeView.ts` 的 `SHELL_NOTE`。
+   *
+   * ⚠️ **默认开**：与 `showClock` 一样，两个开关的默认值取的都是「页③ 现在
+   * 是什么样」—— 这一块两页共用，改哪一页由**页**说，不由这一块替两页一起定。
+   *
+   * 实时那一屏 2026-10-09 用户裁定关掉（「这一段话也没必要展示了」）：那一屏
+   * 只留温度场，画面顶上去。`SHELL_NOTE` 挂着的规格书 §5.3「图上必须标明
+   * 『棚体示意』、不允许读成『测了这么长』」**撤了它仍然成立** —— 滑块的标题
+   * 就叫「棚体示意长度」，底下读数写着「只改几何，不改场」。
+   * `VolumeView.test.ts` 最后那一组把这件事两面都钉着。
+   *
+   * ⚠️ 不复用 `source`：那个说的是「这份数从哪条取数口来」，这个说的是
+   * 「这一屏要不要那几行字」。绑在一起，以后哪一页想换个摆法就得先动取数口。
+   */
+  showNotes?: boolean
+  /**
+   * 画不画「旋转 / 缩放 / 平移」那一组按钮（2026-10-09 用户裁定「旋转/缩放/平移
+   * 按钮可以做」）。**默认关** —— 与 `showClock` / `showNotes` 同一条规矩：
+   * 默认值取「页③ 现在什么样」，页③ 因此一个字符都不用改（用户裁定
+   * 「训练模式不用动」）。只有实时模式那一屏传真。
+   *
+   * ⚠️ 只负责**转发**：这一层不做这个开关的判断，画不画由 `VolumeScene` 说。
+   * 这一层存在的理由是接力 —— `LiveView` 说 `show-view-controls`、
+   * 这里的 props 键是 `showViewControls`、转发给 `VolumeScene` 的键也是它,
+   * 三处名字里错一个**不报错**，只是按钮永远不出现（`VolumeView.test.ts`
+   * 那条透传用例钉的就是这个）。
+   */
+  showViewControls?: boolean
+}>(), {
+  // 默认**摆**：页③ 一直摆着，页⑤ 显式关掉。默认值取「页③ 现在什么样」，
+  // 于是页③ 一个字符都不用改 —— 这次裁定动的是页⑤。
+  showNotes: true,
+  // 同上：默认关，页③ 与改动前逐字相同。
+  showViewControls: false,
+})
 
 const volume = useAsync(() => getJson<VolumePayload>(
   props.source === 'live'
@@ -129,6 +182,34 @@ const stale = computed(() => {
   return `画面仍是 ${fmtTime(p.time)} 的场，正在构 ${fmtTime(props.clockTime)} 的场。`
 })
 
+/* ── 剖切刀 ───────────────────────────────────────────────── */
+
+/**
+ * 刀口的位置（米）。**由页级管**：刀原来住在 `VolumeScene` 里，2026-10-09 版面
+ * 改成三栏、它要摆到左栏去，就搬上来了 —— 那一层的文件头写着的正是「只做 Three
+ * 的调用，不做任何判断」。它现在只收这个数、写进裁剪面。
+ *
+ * **`null` = 还没被人动过 = 不切**（切到最远的那一片）。写成 `null` 而不是
+ * 「一拿到载荷就把最远那片填进来」，是因为填初值要挑一个「载荷到了、画的那一半
+ * 还没挂」的时刻 —— 那只能靠 watch 的刷新次序去凑。`null` 没有这个问题：它自己
+ * 的含义就是「不切」，`cutAt` 随时算得出。
+ */
+const cutY = ref<number | null>(null)
+const cutMin = computed(() => volume.data.value?.planes[0]?.y ?? 0)
+const cutMax = computed(() => {
+  const ps = volume.data.value?.planes
+  return ps && ps.length > 0 ? ps[ps.length - 1].y : 0
+})
+const cutAt = computed(() => cutY.value ?? cutMax.value)
+
+/** 场景那一半报上来的：它到底画出来没有。没画出来就不挂剖切刀。 */
+const sceneOk = ref(false)
+function onSceneReady(ok: boolean) { sceneOk.value = ok }
+
+function onCut(e: Event) {
+  cutY.value = Number((e.target as HTMLInputElement).value)
+}
+
 /* ── 坐标查询 ─────────────────────────────────────────────── */
 
 const query = ref<{ x: number | ''; y: number | ''; z: number | '' }>({ x: '', y: '', z: '' })
@@ -189,7 +270,7 @@ function runQuery() {
     <div class="row head">
       <h3>棚体三维温度场</h3>
       <span v-if="volume.data.value" class="tag">
-        {{ volume.data.value.calibrated ? '已标定' : '未标定（兜底参数）' }}
+        {{ calibratedLabel(volume.data.value) }}
       </span>
     </div>
 
@@ -198,62 +279,108 @@ function runQuery() {
     <p v-if="volume.loading.value" class="note">正在构体…（{{ clockTime ? fmtTime(clockTime) : '…' }}）</p>
 
     <template v-if="spec && volume.data.value">
-      <p class="note">{{ volume.data.value.note }}</p>
-      <p class="note">{{ spec.shellNote }}</p>
+      <!-- 这两行是这一块的「图例」：头一行是**后端的原话**，第二行说明滑块
+           动的只是几何。哪一屏要不要它们由页面说（`showNotes`，见 props）。
+           ⚠️ 第二行撤掉时规格书 §5.3 那条要求**由左栏的滑块接管** ——
+           它的标题就叫「棚体示意长度」，读数写着「只改几何，不改场」。 -->
+      <p v-if="showNotes" class="note">{{ volume.data.value.note }}</p>
+      <p v-if="showNotes" class="note">{{ spec.shellNote }}</p>
 
-      <VolumeScene
-        :spec="spec" :payload="volume.data.value" :picked="shown"
-        @hover="onHover" @pick="onPick"
-      />
+      <!-- 三栏（2026-10-09 用户裁定）：**左＝改几何/切法，中＝看场，右＝问数**。
+           原来是从上到下一条：画布 `width:100%` 横铺整页，剖切刀、棚体示意长度、
+           读数表、坐标查询在下面各占一整行 —— 宽屏上画布占满整幅而三维内容只是
+           它中间的一条，几块控件又拉得老长。分栏之后画布被限制在中栏那一个区域里。
 
-      <fieldset class="rail-box">
-        <legend>棚体示意长度</legend>
-        <input
-          v-model.number="shellLength" type="range"
-          :min="SHELL_LENGTH_MIN" :max="SHELL_LENGTH_MAX" step="0.5"
-          aria-label="棚体示意长度"
-        >
-        <p class="num">{{ shellLength.toFixed(1) }} m（只改几何，不改场）</p>
-      </fieldset>
+           ⚠️ 三栏各是一张 `<Card>`（同日第二次裁定）：分栏之后三个部分直接浮在
+           纸底上，只靠栏里那几个 `<fieldset>` 的细线互相区分，而同一页的
+           「三个断面的温度场」「ΔT」都是 `<Card class="block">` ——
+           **三维这一块是唯一一块没套卡片的**。补上它，页③ 才是一条一致的卡片列。 -->
+      <div class="vol-grid">
+        <Card class="vol-side">
+          <!-- 剖切刀。⚠️ **只在场景报「画得出来」之后才挂** —— 没有 WebGL 时
+               刀切的是一个不存在的画面，一个对自己无效的控件比没有更难看。
+               （这条不变量原先挂在 `VolumeScene.test.ts` 上，控件搬上来，
+               守它的测试也跟着搬上来了。） -->
+          <fieldset v-if="sceneOk" class="rail-box">
+            <legend>剖切刀（沿棚长 y）</legend>
+            <input
+              :value="cutAt" type="range"
+              :min="cutMin" :max="cutMax" :step="volume.data.value.y_step"
+              aria-label="剖切刀" @input="onCut"
+            >
+            <p class="num">切到 y = {{ cutAt.toFixed(2) }} m 为止</p>
+          </fieldset>
 
-      <table v-if="readout">
-        <tbody>
-          <tr><th>时刻</th><td class="num">{{ readout.time }}</td></tr>
-          <tr><th>位置</th><td class="num">{{ readout.where }}</td></tr>
-          <tr><th>这一片</th><td>{{ readout.layer }}</td></tr>
-          <tr><th>回答</th><td>{{ readout.text }}</td></tr>
-          <tr v-if="readout.pinned">
-            <th>已钉住</th>
-            <td>
-              读数不跟鼠标跑。
-              <button type="button" @click="pinned = null">取消钉住</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <p v-else class="note">把鼠标移到棚体上，读最近格点的温度；点一下把读数钉住。</p>
+          <fieldset class="rail-box">
+            <legend>棚体示意长度</legend>
+            <input
+              v-model.number="shellLength" type="range"
+              :min="SHELL_LENGTH_MIN" :max="SHELL_LENGTH_MAX" step="0.5"
+              aria-label="棚体示意长度"
+            >
+            <p class="num">{{ shellLength.toFixed(1) }} m（只改几何，不改场）</p>
+          </fieldset>
+        </Card>
 
-      <fieldset class="rail-box">
-        <legend>查一个坐标</legend>
-        <div class="row">
-          <label>x <input v-model="query.x" type="number" step="0.01"></label>
-          <label>y <input v-model="query.y" type="number" step="0.01"></label>
-          <label>z <input v-model="query.z" type="number" step="0.01"></label>
-        </div>
-        <p class="note">
-          三格划分出来的是格点，不是连续场。查询<strong>吸附到最近的格点</strong>，不插值；
-          吸附后的坐标会在下面写出来。
-        </p>
-        <button type="button" :disabled="!parsed" @click="runQuery">查询</button>
-        <p v-if="queryError" role="alert" class="alert">{{ queryError }}</p>
-        <table v-if="queryAnswer">
-          <tbody>
-            <tr><th>时刻</th><td class="num">{{ queryAnswer.time }}</td></tr>
-            <tr><th>位置</th><td class="num">{{ queryAnswer.where }}</td></tr>
-            <tr><th>回答</th><td>{{ queryAnswer.text }}</td></tr>
-          </tbody>
-        </table>
-      </fieldset>
+        <Card class="vol-stage">
+          <!-- 画面角上那枚时刻（2026-10-09 用户裁定）。它读的是**载荷自己的**
+               `time`，不是外面传进来的 `clockTime`：这枚读数回答的是「画面上
+               这一屏是哪一刻」，而两者错开的那一秒（正在构体）正是它最该说话
+               的时候 —— 那时候载荷还是旧的，印出来就该是旧的，与上面那句
+               「画面仍是…的场」说的是同一件事。
+               `v-if` 里那个 `volume.data.value` 不能省：`fmtTime(null)` 会拼出
+               个坏值，而那一瞬间屏上本来就写着「正在构体…」。 -->
+          <p v-if="showClock && volume.data.value" class="stage-clock num">
+            {{ fmtTime(volume.data.value.time) }}
+          </p>
+          <VolumeScene
+            :spec="spec" :payload="volume.data.value" :picked="shown" :cut-y="cutAt"
+            :show-view-controls="showViewControls"
+            @hover="onHover" @pick="onPick" @ready="onSceneReady"
+          />
+        </Card>
+
+        <Card class="vol-side">
+          <table v-if="readout">
+            <tbody>
+              <tr><th>时刻</th><td class="num">{{ readout.time }}</td></tr>
+              <tr><th>位置</th><td class="num">{{ readout.where }}</td></tr>
+              <tr><th>这一片</th><td>{{ readout.layer }}</td></tr>
+              <tr><th>回答</th><td>{{ readout.text }}</td></tr>
+              <tr v-if="readout.pinned">
+                <th>已钉住</th>
+                <td>
+                  读数不跟鼠标跑。
+                  <button type="button" @click="pinned = null">取消钉住</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="note">把鼠标移到棚体上，读最近格点的温度；点一下把读数钉住。</p>
+
+          <fieldset class="rail-box">
+            <legend>查一个坐标</legend>
+            <div class="row">
+              <label>x <input v-model="query.x" type="number" step="0.01"></label>
+              <label>y <input v-model="query.y" type="number" step="0.01"></label>
+              <label>z <input v-model="query.z" type="number" step="0.01"></label>
+            </div>
+            <p class="note">
+              三格划分出来的是格点，不是连续场。查询<strong>吸附到最近的格点</strong>，不插值；
+              吸附后的坐标会在下面写出来。
+            </p>
+            <button type="button" :disabled="!parsed" @click="runQuery">查询</button>
+            <p v-if="queryError" role="alert" class="alert">{{ queryError }}</p>
+            <table v-if="queryAnswer">
+              <tbody>
+                <tr><th>时刻</th><td class="num">{{ queryAnswer.time }}</td></tr>
+                <tr><th>位置</th><td class="num">{{ queryAnswer.where }}</td></tr>
+                <tr><th>回答</th><td>{{ queryAnswer.text }}</td></tr>
+              </tbody>
+            </table>
+          </fieldset>
+        </Card>
+      </div>
     </template>
   </div>
 </template>
@@ -264,10 +391,50 @@ function runQuery() {
 .head { justify-content: space-between; }
 .alert { color: var(--leaf); border-left: 3px solid var(--leaf); padding-left: var(--gap-s); }
 .tag { font-size: var(--size-note); color: var(--ink-muted); }
-.rail-box {
-  border: var(--rule); padding: var(--gap-s);
-  margin: var(--gap-s) 0; font-size: var(--size-note);
+/* 三栏：左＝改几何/切法，中＝看场，右＝问数（2026-10-09 用户裁定）。
+   中栏写 `minmax(0, 1fr)` 而不是 `1fr` —— 与页① 那条左右分栏同一条理由：
+   写成 `1fr` 时格子的下限是**内容宽度**，画布会先把页宽撑破，而不是自己缩。
+   `align-items: start`：三栏各按自己的高度，硬拉齐只会在短的那栏底下留白。 */
+.vol-grid {
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr) 18rem;
+  gap: var(--gap-l);
+  align-items: start;
+  margin-top: var(--gap-m);
 }
+/* 两栏都是内容可能比格子宽的那种（右边那三个坐标框尤其），允许格子窄于内容。 */
+.vol-side { min-width: 0; }
+/* `position: relative` 是给角上那枚时刻当落点的（画布铺满这一栏的内容盒）。 */
+.vol-stage { min-width: 0; position: relative; }
+/* 画面右上角那枚时刻。落点是 `--gap-m`（卡片自己的内边距）再加一点点 ——
+   画布铺满内容盒，所以这个位置正好是画面右上角往里缩一个 `--gap-s`。
+   ⚠️ `pointer-events: none` 不能省：它压在画布上，挡住的正是鼠标悬停读温
+   的那一片区域。 */
+.stage-clock {
+  position: absolute; z-index: 1;
+  top: calc(var(--gap-m) + var(--gap-s));
+  right: calc(var(--gap-m) + var(--gap-s));
+  margin: 0;
+  pointer-events: none;
+  font-size: var(--size-note);
+  color: var(--ink-muted);
+}
+/* 栏里那几个 `<fieldset>`（剖切刀 / 棚体示意长度 / 查一个坐标）**不再自己画线**：
+   一栏一张卡片已经给了界限，里面再套一道细线就成了框中框
+   （2026-10-09 用户裁定）。legend 留着 —— 它还是这一组的名字，
+   现在读作小标题而不是压在框线上的一行字。
+   ⚠️ 这几条只落在本文件：类是 `rail-box`，页③/页⑤ 那两个视图切换的
+   `fieldset.rail-box` 有自己的 scoped 规则（它们真的是表单，仍要框）。 */
+.rail-box {
+  border: 0; padding: 0;
+  /* 各组之间只靠间距分 —— 上边距仍是 0（它们各自住在一栏里，不是竖着排的两行）。 */
+  margin: 0 0 var(--gap-m); font-size: var(--size-note);
+}
+.rail-box:last-child { margin-bottom: 0; }
+.rail-box legend { padding: 0; font-weight: var(--w-strong); }
 .rail-box input[type='number'] { width: 6.5em; font: inherit; }
 .rail-box button { font: inherit; cursor: pointer; }
+/* 右栏比原来那一整行窄得多，三个坐标框放不下就折行 —— 不折的话它们会把
+   右栏撑破（`min-width: 0` 只保证格子不撑破，格子里的内容还是会溢出来）。 */
+.vol-side .row { flex-wrap: wrap; }
 </style>

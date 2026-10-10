@@ -12,6 +12,7 @@ import type { EChartsOption } from 'echarts'
 
 import type { ComparePayload } from '../../api/types'
 import type { Palette } from '../../design/palette'
+import { tickLabel } from '../axis'
 import { deltaStops, tempStops } from '../scale'
 
 /** 每个面板占连续 4 个下标：热力场 / 测点 / 拱线 / 斜纹。 */
@@ -59,7 +60,9 @@ export function buildConstraintDeltaOption(
     type: 'category' as const,
     axisLine: { lineStyle: { color: p.steel } },
     axisTick: { show: false },
-    axisLabel: { color: p.inkMuted, fontSize: p.chartAxis },
+    // 与切面场同一处收法（见 `charts/axis.ts`）：这一格就在它正下方，
+    // 不收的话两处一起花屏。
+    axisLabel: { color: p.inkMuted, fontSize: p.chartAxis, formatter: tickLabel },
     splitLine: { show: false },
   }
 

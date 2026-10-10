@@ -50,6 +50,24 @@ function makePayload(over: Partial<ComparePayload> = {}): ComparePayload {
 
 const opt = (p: ComparePayload) => buildConstraintDeltaOption(p, PALETTE) as any
 
+describe('轴上的类别名收干净了再印', () => {
+  it('两条轴的印字都过 `tickLabel`，而 `data` 原样不动', () => {
+    // 与页③ 上面那张切面场同一个根因、同一处收法：ΔT 面板就在它正下方，
+    // 不收的话两处一起花屏。
+    const p = makePayload({ x: [0, 0.15000000000000002], z: [0, 1.2000000000000002] })
+    const o = opt(p)
+
+    for (const ax of [...o.xAxis, ...o.yAxis]) {
+      expect(typeof ax.axisLabel.formatter, '这条轴没挂印字格式，长尾巴照印').toBe('function')
+    }
+    expect(o.yAxis[0].axisLabel.formatter('1.2000000000000002')).toBe('1.2')
+
+    // 身份不许被改（测点散点按这个字符串找类别）。
+    expect(o.yAxis[0].data).toEqual(['0', '1.2000000000000002'])
+    expect(o.xAxis[0].data).toEqual(['0', '0.15000000000000002'])
+  })
+})
+
 describe('ΔT 第四格的骨架', () => {
   it('三个面板各占连续 4 条系列，共 12 条', () => {
     const o = opt(makePayload())

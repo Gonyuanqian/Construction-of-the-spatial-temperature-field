@@ -36,9 +36,14 @@ const rec = vi.hoisted(() => ({
 
 vi.mock('three', () => {
   class Vec {
-    x = 0
-    y = 0
-    z = 0
+    x: number
+    y: number
+    z: number
+    constructor(x = 0, y = 0, z = 0) {
+      this.x = x
+      this.y = y
+      this.z = z
+    }
     set(x: number, y: number, z: number) {
       this.x = x
       this.y = y
@@ -61,6 +66,8 @@ vi.mock('three', () => {
   }
   class Geo {
     kind = ''
+    /** 这块几何**自己**在 z 上横跨多少 —— 与它被摆在哪里是两回事。 */
+    spanZ = 0
     dispose() {}
   }
   class Mat {
@@ -92,13 +99,27 @@ vi.mock('three', () => {
       super()
       this.kind = 'extrude'
       this.depth = opts.depth
+      this.spanZ = opts.depth
       rec.depths.push(opts.depth)
     }
   }
   class EdgesGeometry extends Geo {
-    constructor(_base: unknown) {
+    constructor(base: Geo) {
       super()
       this.kind = 'edges'
+      // 整条壳的线框**跟着壳一起横跨** —— 摆到 z 上时它从 z 铺到 z + spanZ。
+      this.spanZ = base.spanZ
+    }
+  }
+  class BufferGeometry extends Geo {
+    constructor() {
+      super()
+      this.kind = 'line'
+    }
+    setFromPoints(pts: { x: number; y: number; z: number }[]) {
+      const zs = pts.map((p) => p.z)
+      this.spanZ = Math.max(...zs) - Math.min(...zs)
+      return this
     }
   }
   class PlaneGeometry extends Geo {
@@ -122,7 +143,7 @@ vi.mock('three', () => {
   }
 
   return {
-    Scene, Group, Mesh, Vec,
+    Scene, Group, Mesh, Vec, BufferGeometry,
     ExtrudeGeometry, EdgesGeometry, PlaneGeometry, SphereGeometry, DataTexture, Color,
     Vector2: Vec,
     Vector3: Vec,
@@ -156,6 +177,7 @@ vi.mock('three', () => {
     MeshBasicMaterial: Mat,
     LineBasicMaterial: Mat,
     LineSegments: Mesh,
+    LineLoop: Mesh,
     RGBAFormat: 1023,
     SRGBColorSpace: 'srgb',
     LinearFilter: 1006,
@@ -167,6 +189,9 @@ vi.mock('three/examples/jsm/controls/OrbitControls.js', () => ({
   OrbitControls: class {
     target = { x: 0, y: 0, z: 0, set() {} }
     enableDamping = false
+    // 组件用 `'start'` 记「用户自己转过镜头没有」（转过了就别再自动重摆取景）。
+    // 这个假件不需要真的发事件 —— 这一批测的是拱壳。
+    addEventListener() {}
     update() {}
     dispose() {}
   },
@@ -217,15 +242,20 @@ function parts(scene: unknown): any[] {
 }
 
 /** 拱壳那一批：壳体 + 棚肋。 */
+/** 拱壳那一批：壳体 + 棚肋（肋是 `LineLoop`，在假件里认作 `'line'`）。 */
 function shells(scene: unknown): any[] {
   return parts(scene).filter((o) =>
-    o.geometry?.kind === 'extrude' || o.geometry?.kind === 'edges')
+    o.geometry?.kind === 'extrude' || o.geometry?.kind === 'line')
 }
 
 async function mountScene(shellLength: number) {
   const payload = makeVolumePayload()          // 三座棚：y = 3 / 9 / 15
   const w = mount(VolumeScene, {
-    props: { payload, spec: buildVolumeSpec(payload, shellLength), picked: null },
+    props: {
+      payload, spec: buildVolumeSpec(payload, shellLength), picked: null,
+      // 剖切刀搬到页级之后，刀口位置也从上面传下来（这一批测的是拱壳，不切）。
+      cutY: payload.planes[payload.planes.length - 1].y,
+    },
   })
   await nextTick()
   return { w, payload }
@@ -253,11 +283,15 @@ describe('拱壳跟着「棚体示意长度」走（C1）', () => {
     await dragSliderTo(m, 6)
 
     expect(rec.depths, '壳长从 4 换到 6，拱壳没有重建（滑块是死的）').toEqual([6])
-    // 旧的摘掉了：场景里只剩一批壳体（3 座棚）+ 六个棚肋端圈。
-    // 没摘的话这里是 6 和 12 —— 拖几下就叠出一摞壳。
+    // 旧的摘掉了：场景里只剩一批壳体（3 座棚）+ 3 × 13 圈棚肋。
+    // 没摘的话这里是 6 和 78 —— 拖几下就叠出一摞壳。
+    //
+    // ⚠️ 肋从 6 圈涨到 39 圈是 2026-10-09 用户裁定「三维影像不够形象和具体」
+    // 之后的**应有之变**（原先只画壳的两端）：这一条数的不是「几圈才好看」，
+    // 是「旧的摘干净了没有」—— 所以增长只会让这条断言更强。
     const bodies = parts(rec.scene).filter((o) => o.geometry?.kind === 'extrude')
     expect(bodies).toHaveLength(3)
-    expect(shells(rec.scene)).toHaveLength(9)
+    expect(shells(rec.scene)).toHaveLength(3 + 39)
     expect(
       bodies.every((mesh) => mesh.geometry.depth === 6),
       '场景里还留着按 4 m 拉伸的壳',
@@ -267,11 +301,46 @@ describe('拱壳跟着「棚体示意长度」走（C1）', () => {
   it('棚肋端圈跟着挪：6 m 的壳从棚位两侧各伸出 3 m', async () => {
     const m = await mountScene(4)
     await dragSliderTo(m, 6)
-    // 3 m 那座从 0 到 6，9 m 那座从 6 到 12，15 m 那座从 12 到 18。
     // 读的是**场景里现存的**那些，不是「造过几个」—— 旧的没摘掉就会多出一倍。
-    expect(
-      parts(rec.scene).filter((o) => o.geometry?.kind === 'edges').map((o) => o.position.z),
-    ).toEqual([0, 6, 6, 12, 12, 18])
+    const zs = parts(rec.scene)
+      .filter((o) => o.geometry?.kind === 'line')
+      .map((o) => o.position.z)
+    // 三座棚各一组肋，每组首尾两圈就是壳的两端：3 m 那座从 0 到 6，
+    // 9 m 那座从 6 到 12，15 m 那座从 12 到 18。
+    //
+    // 一组**几圈**由肋距决定，那个数在 `volumeSpec.test.ts` 里钉着 ——
+    // 这一条只关心两端挪没挪，所以按「三等分」切，不把 13 写死；
+    // 肋距以后要是调了，这一条不该跟着红。
+    const group = zs.length / 3
+    for (const [i, y] of [3, 9, 15].entries()) {
+      const one = zs.slice(i * group, (i + 1) * group)
+      expect(one[0], `棚位 ${y} 那组肋没有往负方向伸出 3 m`).toBe(y - 3)
+      expect(one[one.length - 1], `棚位 ${y} 那组肋没有往正方向伸出 3 m`).toBe(y + 3)
+    }
+  })
+
+  it('棚肋是**一圈**，不许自己横跨一段 z —— 更不许伸出棚体之外', async () => {
+    // 2026-10-09 实机截图里，近端棚体之外挂着一小截淡网。用**活的场景图**量过
+    // （把每一件投影到 NDC，最大那个是 1.46，也就是跑到画面外去了），
+    // 那一件世界坐标是 z 17 → 21：这一卷棚体到 18 就没了。
+    //
+    // 根因是肋的几何取错了：`EdgesGeometry(壳)` 是**整条壳的线框**，它自己也
+    // 横跨 `shellLength`。于是「摆到 z 上的那一圈」实际是从 z 铺到 z + shellLength ——
+    // shed 15 那根摆在 17，一路伸到 21。肋要的是**一圈**。
+    //
+    // 这一条以前测不出来：上一版只断言 `position.z`（那六个位置确实是对的），
+    // 而假件里的 `EdgesGeometry` 没有大小。现在它记下自己横跨多少。
+    await mountScene(4)
+    const ribs = parts(rec.scene).filter((o) => o.geometry?.kind === 'line')
+    // 3 座棚 × 9 圈（壳长 4、肋距 0.5）。原先这里是 6 —— 只画两端那两圈，
+    // 而**每多一圈就多一处可以横跨 z 的地方**：这条断言现在比过去更值。
+    expect(ribs).toHaveLength(27)
+    for (const rib of ribs) {
+      expect(
+        rib.geometry.spanZ,
+        `摆在 z = ${rib.position.z} 的肋自己横跨了 ${rib.geometry.spanZ} m`,
+      ).toBe(0)
+    }
   })
 
   it('**只动壳长时，那叠场平面不重画**（一片一张纹理）', async () => {
@@ -290,6 +359,6 @@ describe('拱壳跟着「棚体示意长度」走（C1）', () => {
     await m.w.setProps({ payload: next, spec: buildVolumeSpec(next, 4) })
     await nextTick()
     expect(rec.depths, '换了载荷却没重建壳').toEqual([4])
-    expect(shells(rec.scene), '新旧两批壳叠在场景里').toHaveLength(9)
+    expect(shells(rec.scene), '新旧两批壳叠在场景里').toHaveLength(3 + 27)
   })
 })

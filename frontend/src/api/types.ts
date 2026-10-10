@@ -280,6 +280,15 @@ export interface CalibrationPayload {
    */
   mismatch: { dataset_sig: string; created_at: string | null; file: string } | null
   /**
+   * **正在用的这一份**不是为当前这份数据标的时候，那句要说的话；对得上时是
+   * **空串**（不是 null —— 前端不用判两种空，与 `ModelRow.why` 同一条房规）。
+   *
+   * ⚠️ 与上面那个 `mismatch` **不是一回事**：那个说的是「盘上躺着一份别人的
+   * 旧包」（只在没有模型那一路），这个是「**正在用的就是**别人的那一份」。
+   * 名字像，说的是两件事。
+   */
+  mismatch_note: string
+  /**
    * ⚠️ 三个都是 `string | null`。它们来自标定包自身（生成时刻、工具版本、
    * 分组签名）；**没有包时整组都不存在**，线上就是 null，不是空串 ——
    * 空串会被读成「有包但字段是空的」。
@@ -364,6 +373,12 @@ export interface SectionsPayload {
   monotonic: boolean
   /** 配置来自标定包（true）还是 `FALLBACK_*` 兜底（false）。两者不可直接比大小。 */
   calibrated: boolean
+  /**
+   * `calibrated` 为 true 时再分两档：**空串** = 这一份就是为当前数据标的；
+   * 有话 = **借来的**（参数不是为这份数据标的，数照出，但不能当它的成绩）。
+   * 未标定时恒为空串。与 `VolumePayload` / `CalibrationPayload` 同一个名字。
+   */
+  mismatch_note: string
   /** 三格**共享**的色标范围。前端不许各算各的。 */
   vmin: number
   vmax: number
@@ -446,6 +461,15 @@ export interface VolumePlane {
   shed: string | null
   /** 拱外是 `null`（后端送不了 NaN —— `allow_nan=False` 会变成 500）。 */
   values: (number | null)[][]
+  /**
+   * 这一片**拱内、且不在无测量带里**那些格子的平均温度。`null` = 这一片一个
+   * 可用格子都没有（不是 0，也不是 NaN —— `allow_nan=False` 送不出 NaN）。
+   *
+   * ⚠️ **后端算的，前端不重算。** 三个坑（拱外是 NaN、z > 1.10 m 那一条是外推、
+   * 平均必须在软单调投影之后取）少踩一个这个数就是错的，而屏上没有任何提示。
+   * 口径的唯一来源是 `backend/api/routes/field.py::_mean_in_arch`。
+   */
+  mean: number | null
 }
 
 /* ------------------------------------------------------------------ *
@@ -517,6 +541,8 @@ export interface VolumePayload {
   preset: string
   monotonic: boolean
   calibrated: boolean
+  /** 与 `SectionsPayload.mismatch_note` 同一个东西、同一个名字。 */
+  mismatch_note: string
   y_step: number
   y_min: number
   y_max: number
@@ -527,6 +553,11 @@ export interface VolumePayload {
   /** 整卷**共用**的色标范围，与页③ 的切面图同一个口径。前端不许各算各的。 */
   vmin: number
   vmax: number
+  /**
+   * 本载荷这些片**合起来**的拱内均温。**不是各片均值的平均** ——
+   * 两者在等权时相等，而「等权」是一个会悄悄失效的前提。
+   */
+  mean: number | null
   x: number[]
   z: number[]
   arch: [number, number][]
@@ -670,9 +701,21 @@ export interface ModelRowPayload {
   rmse: number | null
   r2: number | null
   is_current: boolean
-  /** 能不能拿来给**当前**训练段构场。 */
+  /**
+   * 能不能拿来给**当前**训练段构场 —— **只看特征组那一轴**。
+   *
+   * ⚠️ 它**不**表示「这一份就是为当前数据标的」（那是 `borrowed` 的事）。
+   * 2026-10-10 用户裁定「模型不绑数据集」之后，数据集签名对不上**不再**
+   * 拦着选：库里有就能挑。屏上因此是三档 —— 用不了 / 本地的 / 借来的。
+   */
   compatible: boolean
-  /** 对不上时那一句人话；对得上时是空串（不是 null —— 前端不用判两种空）。 */
+  /**
+   * 能用、但这一份的参数**不是**为当前这份数据标出来的（借来的）。
+   * 用不了的行（`compatible === false`）恒为 false。
+   */
+  borrowed: boolean
+  /** 说得出理由时那一句人话（借来的与用不了的都有）；两轴都对得上时是空串
+   *  （不是 null —— 前端不用判两种空）。 */
   why: string
 }
 
