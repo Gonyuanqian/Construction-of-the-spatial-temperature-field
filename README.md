@@ -20,6 +20,19 @@
 
 ## 跑起来
 
+**前置：一个活着的 MySQL** —— `127.0.0.1:3306`，`root` / `123456`。
+2026-10-08 起「这次用哪一份模型」存在库里，页②③⑤ 与**每一条走 `get_pipeline`
+的路由**（`/api/field*`、`/api/calibration*`、`/api/live*`）都要读它。MySQL 不在时
+接口报 **500 并带上原始报错**：静默答成「一个模型都没有」会让「库里空着」与
+「数据库连不上」在屏上长得一模一样，而这两件事要人做的事完全不同。
+库与表在**第一次连接时自建**，不用手工 `CREATE DATABASE`。
+连别的机器用 `TFIELD_MYSQL_HOST` / `TFIELD_MYSQL_PORT` / `TFIELD_MYSQL_USER` /
+`TFIELD_MYSQL_PASSWORD` / `TFIELD_MYSQL_DB` 覆盖。
+
+⚠️ `root` / `123456` 是**本机演示**的默认值（明文也写在
+`backend/api/models_store.py` 里），是个明知故犯的取舍 —— 换到别人连得到的
+机器上先改掉。
+
 ```bash
 # 后端（终端 1）
 cd backend
@@ -89,6 +102,12 @@ npm run dev
 cd backend  && python -m pytest -q -m "not slow"    # 后端
 cd frontend && npm run build && npm test             # 前端
 ```
+
+后端的测试**同样要 MySQL**，用的是另一个库 `tfield_models_test`
+（`tests/conftest.py` 里钉死：谁把它指到 `tfield_models` 上会**当场报错**，不会去清
+用户攒下来的模型）。连不上时**不 skip** —— 让「这台机器上 MySQL 没了」长得跟
+「全都通过」一样，正是要避免的那件事。`-m "not slow"` 会略掉 104 条慢的
+（含 `test_api_diagnostics.py` 整个文件）。
 
 前端**要先构建再测**：`scene/lazy.test.ts` 断的是构建产物（入口 chunk 里不许有
 Three），读的是 `dist/`。产物比源码旧、或 `dist/` 不存在时它**红**，不是 skip ——
