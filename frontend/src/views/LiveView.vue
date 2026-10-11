@@ -530,6 +530,13 @@ const readout = computed(() => {
       <p v-if="frame.data.value?.mismatch_note" class="note">
         {{ frame.data.value.mismatch_note }}
       </p>
+      <!-- ⚠️ 页⑤ 有 `frame` 与 `volume` 两个载荷，后端两处都带这一格（同一句）。
+           只印 `frame` 那一份：一帧只有一个结论，印两遍是同一个数字说两次。
+           ⚠️ 与上面那句**各是一个格**：合成一句会让一份本地的模型自称
+           「借来的」（`copy.ts` 的 `calibratedLabel` 就是拿那一格判的）。 -->
+      <p v-if="frame.data.value?.artifact_note" class="note">
+        {{ frame.data.value.artifact_note }}
+      </p>
     </details>
     </template>
   </section>

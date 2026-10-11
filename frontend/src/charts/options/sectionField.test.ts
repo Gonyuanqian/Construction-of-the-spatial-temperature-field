@@ -38,6 +38,7 @@ function makePayload(): SectionsPayload {
     t_index: 7, time: '2026-07-23T11:00:00', n_times: 1308,
     preset: 'standard', monotonic: true, calibrated: true,
     mismatch_note: '',
+    artifact_note: '',
     vmin: 0.9, vmax: 5.1, max_measured_z: 2,
     x_min: 0, x_max: 2.1, z_max: 1.3017,
     x: [0, 0.7, 1.4, 2.1], z: [0, 0.7, 1.4, 2.1],

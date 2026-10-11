@@ -289,6 +289,15 @@ export interface CalibrationPayload {
    */
   mismatch_note: string
   /**
+   * 「这一条的成品读不动，已退回现训」那一句。空串表示没这回事。
+   *
+   * ⚠️ **是另一个字段，不是 `mismatch_note` 的第二种用法。**
+   * `copy.ts` 的 `calibratedLabel` 用「`mismatch_note` 里有没有话」判
+   * 「已标定（借来的）」—— 两件事共用一格，会让一份**本地**的模型在屏上
+   * 自称「借来的」，把数的来历整个说反。
+   */
+  artifact_note: string
+  /**
    * ⚠️ 三个都是 `string | null`。它们来自标定包自身（生成时刻、工具版本、
    * 分组签名）；**没有包时整组都不存在**，线上就是 null，不是空串 ——
    * 空串会被读成「有包但字段是空的」。
@@ -379,6 +388,15 @@ export interface SectionsPayload {
    * 未标定时恒为空串。与 `VolumePayload` / `CalibrationPayload` 同一个名字。
    */
   mismatch_note: string
+  /**
+   * 「这一条的成品读不动，已退回现训」那一句。空串表示没这回事。
+   *
+   * ⚠️ **是另一个字段，不是 `mismatch_note` 的第二种用法。**
+   * `copy.ts` 的 `calibratedLabel` 用「`mismatch_note` 里有没有话」判
+   * 「已标定（借来的）」—— 两件事共用一格，会让一份**本地**的模型在屏上
+   * 自称「借来的」，把数的来历整个说反。
+   */
+  artifact_note: string
   /** 三格**共享**的色标范围。前端不许各算各的。 */
   vmin: number
   vmax: number
@@ -543,6 +561,8 @@ export interface VolumePayload {
   calibrated: boolean
   /** 与 `SectionsPayload.mismatch_note` 同一个东西、同一个名字。 */
   mismatch_note: string
+  /** 与那一族同名同物：成品读不动时后端给的那句话。 */
+  artifact_note: string
   y_step: number
   y_min: number
   y_max: number

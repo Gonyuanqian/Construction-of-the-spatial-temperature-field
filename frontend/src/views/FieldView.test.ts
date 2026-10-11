@@ -488,4 +488,39 @@ describe('模型库与页③', () => {
     expect(urls.filter((u) => u.includes('/api/field/compare')).length,
       '换了模型却没重取对比那一张').toBeGreaterThan(1)
   })
+
+  it('成品读不动时，口径里印的是后端那句 artifact_note', async () => {
+    const NOTE = '这一条的成品读不动（格式是第 2 版，现在是第 1 版），已退回现训。'
+    stub({ ...OK, '/api/field/sections': { ...SECTIONS, artifact_note: NOTE } })
+    const w = mountView()
+    await flushPromises()
+    // ⚠️ 仍然只有**一个** `details.why` —— 两句解释在同一个块里，不是两块。
+    //    多出一块会让 `design/prose.test.ts`（spec §十二.11）那条断言的
+    //    「解释只有一处」失效。
+    const why = w.findAll('details.why')
+    expect(why).toHaveLength(1)
+    expect(why[0].text()).toContain(NOTE)
+  })
+
+  it('artifact_note 为空时口径里多一个字都没有', async () => {
+    // 这一档是**常态**（成品都在、都读得动）。少了它，一个「永远印那句话」
+    // 的实现照样全绿 —— 而它会让每一页都在报一件没发生的事。
+    stub(OK)                                  // `SECTIONS.artifact_note` 缺省是 ''
+    const w = mountView()
+    await flushPromises()
+    expect(w.text()).not.toContain('成品读不动')
+  })
+
+  it('artifact_note 不改变「已标定 / 借来的」那个图章', async () => {
+    // ⭐ Review Focus 5：两者是**两个格**。这一句在，图章还是「已标定」——
+    //    共用一格的话，一份本地的模型会在这条用例上现原形。
+    const NOTE = '这一条的成品读不动（字节坏了），已退回现训。'
+    stub({ ...OK, '/api/field/sections': {
+      ...SECTIONS, mismatch_note: '', artifact_note: NOTE } })
+    const w = mountView()
+    await flushPromises()
+    expect(w.text()).toContain('已标定')
+    expect(w.text()).not.toContain(`已标定（${BORROWED}）`)
+    expect(w.findAll('details.why')[0].text()).toContain(NOTE)
+  })
 })

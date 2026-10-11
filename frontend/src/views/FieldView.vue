@@ -315,6 +315,14 @@ const failure = computed(() =>
         <p v-if="sections.data.value?.mismatch_note" class="note">
           {{ sections.data.value.mismatch_note }}
         </p>
+        <!-- ⚠️ 与上面那句**各是一个格**（后端 `deps._artifact_note` → 载荷的
+             `artifact_note`）。合成一句会让一份本地的模型自称「借来的」。
+             ⚠️ 必须留**在同一个 `details.why` 里面**，不要新开一块 ——
+             两句都是「口径与出处」，而 `design/prose.test.ts` 判的是
+             「解释只有一处」。 -->
+        <p v-if="sections.data.value?.artifact_note" class="note">
+          {{ sections.data.value.artifact_note }}
+        </p>
         <p v-if="dNote" class="note">{{ dNote }}</p>
         <p v-if="compare.data.value" class="note">{{ compare.data.value.note }}</p>
       </details>

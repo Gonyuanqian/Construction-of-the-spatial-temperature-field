@@ -33,6 +33,9 @@ export function makeVolumePayload(over: Partial<VolumePayload> = {}): VolumePayl
     // 「借来的」那一句由各页自己的用例按需换上去（`calibratedLabel` 读的
     // 正是这个字段在不在）。
     mismatch_note: '',
+    // 成品读不动那一句。**常态是空串**（成品都在、都读得动）；那一条由
+    // 各页自己的用例按需换上去。
+    artifact_note: '',
     y_step: 0.5, y_min: 0, y_max: 18,
     x_min: 0, x_max: 2.1, z_max: 1.3017, max_measured_z: 2,
     vmin: 0, vmax: 5,
@@ -77,6 +80,7 @@ export function makeSectionsPayload(over: Partial<SectionsPayload> = {}): Sectio
     preset: 'standard', monotonic: true, calibrated: true,
     // 与 `makeVolumePayload` 同：空串 = 本地的。见那里的注释。
     mismatch_note: '',
+    artifact_note: '',
     vmin: 0, vmax: 5, max_measured_z: 2,
     x_min: 0, x_max: 2.1, z_max: 1.3017,
     x: [0, 0.7, 1.4, 2.1], z: [0, 0.7, 1.4, 2.1],
@@ -257,6 +261,7 @@ export const PAGE_PAYLOADS: Record<string, unknown> = {
     // 没标过 → 就没有「借来的」这回事。⚠️ 这一格与上面的 `mismatch`
     // **不是一回事**（见 `types.ts` 那段）。
     mismatch_note: '',
+    artifact_note: '',
     groups_sig: null, dataset_sig: 's', feature_groups: [], trend_kind: 'xgboost',
     // 真实后端在空态下也发 8 + 4 行（`_panel` 与盘上有没有包无关）；
     // 这里给空数组，是为了让冒烟测试不依赖那十二个值 —— 面板的行怎么渲染

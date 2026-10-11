@@ -625,4 +625,33 @@ describe('实时模式与模型库', () => {
     expect(w.find('[role="alert"]').exists()).toBe(true)
     expect(w.find('button[data-act="prepare"]').exists()).toBe(false)
   })
+
+  it('成品读不动时，页⑤ 口径里印的是后端那句 artifact_note', async () => {
+    const NOTE = '这一条的成品读不动（格式是第 2 版，现在是第 1 版），已退回现训。'
+    stubFetch(makeLiveFramePayload({ artifact_note: NOTE }))
+    const w = mountLive()
+    await flushPromises()
+    await w.get('button[data-act="prepare"]').trigger('click')
+    await flushPromises()
+    await w.get('button[data-view="section"]').trigger('click')
+    await flushPromises()
+
+    // ⚠️ 与页③ 一样：这一句住在口径那一块里，**不是**常驻在屏上 ——
+    //    它是解释，不是读数。
+    expect(w.text()).toContain(NOTE)
+  })
+
+  it('artifact_note 不改变页⑤ 那个「已标定 / 借来的」图章', async () => {
+    const NOTE = '这一条的成品读不动（字节坏了），已退回现训。'
+    stubFetch(makeLiveFramePayload({ mismatch_note: '', artifact_note: NOTE }))
+    const w = mountLive()
+    await flushPromises()
+    await w.get('button[data-act="prepare"]').trigger('click')
+    await flushPromises()
+    await w.get('button[data-view="section"]').trigger('click')
+    await flushPromises()
+    expect(w.text()).toContain('已标定')
+    expect(w.text()).not.toContain(`已标定（${BORROWED}）`)
+    expect(w.text()).toContain(NOTE)
+  })
 })
