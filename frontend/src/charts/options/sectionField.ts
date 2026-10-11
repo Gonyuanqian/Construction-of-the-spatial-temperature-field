@@ -172,8 +172,8 @@ function buildShedSeries(
       progressive: 0,
       emphasis: { itemStyle: { borderColor: p.ink, borderWidth: 1 } },
     },
-    // 2. 实测点位。ECharts 没有内置的「+」，用自定义 path 画十字 ——
-    //    与 Streamlit 版同一个记号，读图的人不用重新学。
+    // 2. 实测点位。ECharts 没有内置的「+」，用自定义 path 画十字。
+    //    十字是这套图里「这一格有实测」的记号，全站只此一种。
     {
       type: 'scatter',
       xAxisIndex: gi,

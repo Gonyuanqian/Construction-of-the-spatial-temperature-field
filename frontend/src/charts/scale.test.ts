@@ -9,7 +9,7 @@ import { deltaStops, hexToRgb, tempStops, valueToColor } from './scale'
 describe('温度色标', () => {
   it('是正向 cividis：暗蓝在低端、亮黄在高端', () => {
     // 反过来的话 52 °C 会是深蓝、42 °C 是亮黄 —— 每个人都会读反，
-    // 而图上不会报任何错（spec §8.1 记着 Streamlit 版就是这么错的）。
+    // 而图上不会报任何错（spec §8.1 记着这个坑：整张图读反了，屏上一切正常）。
     const s = tempStops()
     expect(s).toHaveLength(7)
     expect(s[0]).toBe('#00224E')       // 最暗的一端给低温

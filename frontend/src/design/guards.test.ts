@@ -205,7 +205,8 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
   it('温度色标是正向 cividis，不是 cividis_r', () => {
     const css = readFileSync(join(SRC, 'design', 'tokens.css'), 'utf8')
     expect(css).toMatch(/--temp-scale:\s*cividis\s*;/)
-    // 全仓不许出现 cividis_r —— 它是 Streamlit 版用反了的那一个（spec §8.1）
+    // 全仓不许出现反向色标的名字 —— spec §8.1 记着这个坑：
+    // 用反了的话图会整张读反，而屏上不会报任何错。
     const bad = [...VUE, ...TS].filter((p) =>
       readFileSync(p, 'utf8').includes('cividis_r'))
     expect(bad.map((p) => p.slice(SRC.length))).toEqual([])

@@ -22,8 +22,7 @@ const GRID_GAP = 0.045
 const GRID_LEFT0 = 0.035
 
 /**
- * 门禁那句口径。与 Streamlit 版 `fig_constraint_compare` 的 suptitle 同一个口径，
- * **唯一**的文案处（面板标题与页面正文共用它）。
+ * 门禁那句口径。这是它的**唯一**文案处（面板标题与页面正文共用它）。
  */
 export function deltaNote(payload: ComparePayload): string {
   const gate = payload.gate_label
