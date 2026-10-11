@@ -83,6 +83,32 @@ def tiny_job():
     return go
 
 
+@pytest.fixture(autouse=True)
+def _fresh_cache(monkeypatch):
+    """每一格都从一个**空的管线缓存**开始，并原样交还。
+
+    ⚠️ **必须 autouse，理由不在这一格、在别人身上。** `deps._PIPELINES` 是
+    **模块级**的，跨用例、跨文件活着；而本文件从头到尾用的都是**交付那一份包**
+    （`tiny_job` 与下面几条造出来的包只换了趋势参数，`dataclasses.replace`
+    保住了 `created_at`）。于是它们的缓存键
+    `(ds.signature, groups_sig, bundle.created_at)` 与**交付包那一份完全一样**。
+
+    留一个下去，下一个文件就替它背：
+
+      · `test_api_borrowed_model.py`（按文件名字母序紧随本文件）要的正是「借来的」
+        那一句，而留下去的那一份的 `mismatch_note` 是**空串** —— 屏上把借来的模型
+        说成本地的。实测：`pytest tests/test_api_artifact.py
+        tests/test_api_borrowed_model.py` 两条必红，单独跑那条文件四条全绿。
+      · 本文件自己也有同一个坑的另一面：键撞上就命中上一条留下的管线，
+        成品根本没被读过而用例照样绿。
+
+    与 `test_deps_artifact.py:75` 的 `fresh_cache` 是同一件事 —— 那边逐条按需
+    请求，这边 autouse：本文件**每一条**都会走 `get_pipeline()`（保存那一路自己
+    会调它），没有一条不需要。
+    """
+    monkeypatch.setattr(deps, "_PIPELINES", deps.PipelineCache())
+
+
 def test_保存那一路会把成品写进同一行(client, empty, ds, tiny_job):
     """⭐ 规格书 D3：成品与包**同一条 INSERT**，不是事后再补一次 UPDATE。
 
