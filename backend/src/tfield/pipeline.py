@@ -1,0 +1,406 @@
+"""把 ①~④ 装配成一个可训练、可查询的对象。
+
+R1（被留出的传感器必须从 IDW 源集排除）在这条链上只有一个落点：fit(exclude=...)。
+训练、标定、验证、部署全走它 —— 不可能出现「验证时排除了、标定里忘了」。
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Mapping, Sequence
+
+import numpy as np
+import pandas as pd
+
+from . import config as C
+from .data.types import Dataset
+from .features import FeatureSet, add_feature_groups
+from .models.idw import AnisoMetric, IDWCorrector
+from .models.trend import TrendModel, make_trend
+from .artifact import PipelineArtifact
+
+
+def _fallback_metric() -> AnisoMetric:
+    return AnisoMetric(lx=C.FALLBACK_LX, ly=C.FALLBACK_LY,
+                       lz=C.FALLBACK_LZ, power=C.FALLBACK_POWER)
+
+
+@dataclass(frozen=True)
+class PipelineConfig:
+    feature_groups: tuple[str, ...] = C.DEFAULT_FEATURE_GROUPS
+    trend_kind: str = C.FALLBACK_TREND_KIND
+    trend_params: Mapping[str, Any] = field(default_factory=lambda: dict(C.FALLBACK_TREND_PARAMS))
+    metric: AnisoMetric = field(default_factory=_fallback_metric)
+    cross_shed: bool = C.FALLBACK_CROSS_SHED
+
+    @classmethod
+    def fallback(cls) -> "PipelineConfig":
+        """未标定时的兜底配置。界面上必须标注「未标定」。"""
+        return cls()
+
+
+class FieldPipeline:
+    def __init__(self, cfg: PipelineConfig, ds: Dataset) -> None:
+        self.cfg = cfg
+        self.ds = ds
+        self.fitted = False
+        self._fs: FeatureSet | None = None
+        self._trend: TrendModel | None = None
+        self._idw: IDWCorrector | None = None
+        self._trend_all: np.ndarray | None = None      # 与 fs 行对齐的趋势预测
+        self._train_mask: np.ndarray | None = None
+        self._feature_names: tuple[str, ...] = ()
+        # 逐时刻的气象与时间，供查询期拼特征矩阵
+        w = ds.wide
+        self._bg_temp = w[C.BG_TEMP].to_numpy(float)
+        self._bg_rh = w[C.BG_RH].to_numpy(float)
+        self._bg_light = w[C.BG_LIGHT].to_numpy(float)
+        ts = pd.to_datetime(w[C.COL_TIMESTAMP])
+        self._hour = ts.dt.hour.to_numpy(int)
+        self._frac_day = (ts.dt.hour + ts.dt.minute / 60.0).to_numpy(float)
+        # 实时帧：接在时间轴尾部的那一段。空的时候下面每条路径都与旧实现逐位相同。
+        self._live_ts: list[pd.Timestamp] = []
+        self._live_resid: np.ndarray | None = None      # (24, n_live)
+
+    @classmethod
+    def from_bundle(cls, bundle, ds: Dataset) -> "FieldPipeline":
+        """bundle 只需提供 config() -> PipelineConfig（鸭子类型，避免反向依赖）。"""
+        return cls(bundle.config(), ds)
+
+    # ── 训练 ──
+    def fit(self, fs: FeatureSet, ds: Dataset, *, exclude: Sequence[int] = ()) -> "FieldPipeline":
+        self.ds = ds
+        exclude = tuple(int(s) for s in exclude)
+        return self._assemble(fs, ~np.isin(fs.sensor_id, exclude))
+
+    def _assemble(self, fs: FeatureSet, mask: np.ndarray, *,
+                  trend: TrendModel | None = None) -> "FieldPipeline":
+        """趋势与 IDW 的装配。**`fit` 与 `restore` 共用这一段。**
+
+        `trend=None` ＝ 现训一个；给了就用给的那个（装成品走这条）。
+        ⚠️ 趋势那一步**必须由调用方定**，不能写在段里现训 —— 写在段里，
+        `restore` 就会把成品带来的趋势扔掉、当场重训一遍。结果**逐位相同**，
+        只是又花掉十几秒 —— 而那正是整件事要省掉的十几秒，屏上一点提示都没有。
+        ⚠️ 分成两份实现的话，`restore` 会随 `fit` 漂 —— 而漂的表现是
+        「新训的模型好好的，装回来的模型 IDW 差一点」，屏上没有任何提示。
+        """
+        self._fs = fs
+        self._train_mask = mask
+
+        X = fs.X.loc[mask]
+        self._feature_names = tuple(X.columns)
+        self._trend = (make_trend(self.cfg.trend_kind, self.cfg.trend_params).fit(X, fs.y[mask])
+                       if trend is None else trend)
+        self._trend_all = self._trend.predict(fs.X)
+
+        # 用内部版本而不是 self.residual_matrix()：后者带 _require_fitted() 门，
+        # 而此刻 fitted 还是 False（趋势已就位、IDW 尚未装配）。在 fit 中途调用
+        # 公开访问器会自己把自己挡住。
+        src_ids = np.unique(fs.sensor_id[mask])
+        self._idw = IDWCorrector(self.cfg.metric, self.cfg.cross_shed).fit(
+            fs.coords[src_ids], self._resid_matrix()[src_ids])
+        self.fitted = True
+        return self
+
+    # ── 成品：存下来、装回去（规格书 D2/D9）──
+    def capture(self) -> PipelineArtifact:
+        """把这一份训练好的模型存成**成品**。
+
+        ⚠️ `TOOL_VERSION` **在函数里导入**。`calibration.py` 在模块层
+        `from .pipeline import FieldPipeline, PipelineConfig`，所以模块层再
+        `import calibration` 就是 `pipeline → artifact → calibration → pipeline`
+        的循环，而 `calibration` 走到第三跳时 `FieldPipeline` 还没定义。
+        """
+        from .calibration import TOOL_VERSION
+        self._require_fitted()
+        assert self._trend is not None
+        return PipelineArtifact(
+            tool_version=TOOL_VERSION,
+            trend_kind=self.cfg.trend_kind,
+            feature_groups=tuple(self.cfg.feature_groups),
+            feature_names=tuple(self._feature_names),
+            metric=self.cfg.metric,
+            cross_shed=self.cfg.cross_shed,
+            n_times=self.n_times,
+            trend=self._trend,
+        )
+
+    def restore(self, artifact: PipelineArtifact, *, fs: FeatureSet) -> "FieldPipeline":
+        """把成品装进这条管线。**`fs` 必须来自当前数据集。**
+
+        成品里没有 `FeatureSet`，也没有残差 —— 趋势从成品来，其余全部现算。
+        理由见 `tfield/artifact.py` 的模块 docstring（IDW 是精确插值）。
+        """
+        names = tuple(fs.X.columns)
+        if names != tuple(artifact.feature_names):
+            raise ValueError(
+                f"成品记的特征列是 {tuple(artifact.feature_names)}，当前这份数据的"
+                f"特征列是 {names} —— 两者必须相同。")
+        # ⚠️ 成品出自一次**没有排除任何传感器**的 fit，所以每个传感器都在训练集里。
+        # 不设它的后果不在 restore 上：`source_sensor_ids()` 有 assert，切完模型
+        # 进实时模式、第一次接帧才当场 AssertionError。
+        return self._assemble(fs, np.ones(len(fs.X), dtype=bool), trend=artifact.trend)
+
+    def _require_fitted(self) -> None:
+        if not self.fitted:
+            raise RuntimeError("必须先调用 fit() 才能预测")
+
+    @property
+    def train_rows(self) -> int:
+        return 0 if self._train_mask is None else int(self._train_mask.sum())
+
+    # ── 时间轴（含接进来的实时帧）──
+    @property
+    def n_live(self) -> int:
+        """已经接进来的实时帧数。"""
+        return 0 if self._live_resid is None else int(self._live_resid.shape[1])
+
+    @property
+    def n_times(self) -> int:
+        """时间轴长度。
+
+        **实时帧会使它大于 `len(self.ds.wide)`。** 所以凡是要问「这个时刻在不在
+        时间轴上」，都该走这里 —— 直接读 `ds.wide.shape[0]` 在实时帧接进来之后
+        就是个越界判定，而且它不会报错，只会拒掉合法的帧。
+        """
+        return int(len(self._bg_temp))
+
+    def timestamps(self) -> list[pd.Timestamp]:
+        """整条时间轴的时间戳（数据集的 + 已接进来的实时帧）。"""
+        out = list(pd.to_datetime(self.ds.wide[C.COL_TIMESTAMP]))
+        out.extend(self._live_ts)
+        return out
+
+    def time_at(self, t_index: int) -> pd.Timestamp:
+        """第 t_index 帧的时间戳。越界抛 `IndexError` —— **不返回 None**：
+        这一条是给「时间轴只追加、不插队」那个判定用的，静默的 None 会让它失效。
+        """
+        n = self.n_times
+        if not 0 <= t_index < n:
+            raise IndexError(f"t_index 越界：{t_index}（时间轴共 {n} 帧）")
+        n_ds = len(self.ds.wide)
+        if t_index < n_ds:
+            return pd.Timestamp(self.ds.wide[C.COL_TIMESTAMP].iloc[t_index])
+        return self._live_ts[t_index - n_ds]
+
+    def bg_light_at(self, t_index: int) -> float:
+        """第 t_index 帧的背景光照（单调投影的门禁量）。
+
+        **走访问器，别读 `ds.wide`。** 实时帧不在宽表里 —— `field/constraints.py`
+        原来就是直接读 `ds.wide[C.BG_LIGHT].iloc[t_index]` 的，接进第一帧实时数据
+        之后它当场 `IndexError`（越界读的是**宽表**，而时间轴已经长出去了）。
+        `_bg_light` 才是时间轴的真身，`append_live_frame` 每帧都在给它追加。
+        """
+        return float(self._bg_light[int(t_index)])
+
+    @property
+    def coords(self) -> np.ndarray:
+        assert self._fs is not None
+        return self._fs.coords
+
+    @property
+    def feature_names(self) -> tuple[str, ...]:
+        return self._feature_names
+
+    def source_sensor_ids(self) -> np.ndarray:
+        """本次训练用作 IDW 源的传感器编号（已排序）。"""
+        self._require_fitted()
+        assert self._fs is not None and self._train_mask is not None
+        return np.unique(self._fs.sensor_id[self._train_mask])
+
+    def source_y_levels(self) -> np.ndarray:
+        """本次训练的源传感器覆盖到的 y 值（升序去重）—— R2 的合法查询集。
+
+        **不是** `C.SHED_Y`：合法集取决于本次 fit 见过什么。留一断面时整个棚被
+        排除，它的 y 就从合法集里消失，此后在该 y 上查询趋势正是 R2 禁止的事。
+        """
+        return np.unique(self.coords[self.source_sensor_ids(), 1])
+
+    def _resid_matrix(self) -> np.ndarray:
+        """→ (24, n_t)，第 s 行 = 传感器 s 的 y − trend。无 fitted 前置条件。
+
+        实时帧接在尾部：`[:, :n_ds]` 来自数据集，`[:, n_ds:]` 来自实时帧。
+        **没有实时帧时逐位等价于旧实现**（`np.empty` 每一格都被写满）。
+        """
+        assert self._fs is not None and self._trend_all is not None
+        n_ds = len(self.ds.wide)
+        n_live = self.n_live
+        out = np.empty((C.EXPECTED_N_SENSORS, n_ds + n_live))
+        resid = self._fs.y - self._trend_all
+        for s in range(C.EXPECTED_N_SENSORS):
+            out[s, :n_ds] = resid[self._fs.sensor_id == s]
+        if n_live:
+            assert self._live_resid is not None
+            out[:, n_ds:] = self._live_resid
+        return out
+
+    # ── 实时帧 ──
+    def append_live_frame(self, *, bg_temp: float, bg_rh: float, bg_light: float,
+                          ts: pd.Timestamp,
+                          sensor_temps: Sequence[float]) -> int:
+        """把一帧实时数据接到时间轴尾部，返回它的 t_index。
+
+        **趋势冻结、只长残差。** 趋势模型是离线标定出来的，实时帧不改它 ——
+        否则每一帧都要重训一次趋势，那正是规格书点名否掉的假绕路
+        （「每帧拼增广数据集重新 fit」）。帧带来的新信息走**残差**那一路：
+        它的残差列并入 `_resid_matrix()`，IDW 重装配一次。
+
+        重装配很便宜：`IDWCorrector.fit` 只存数组、不算距离（距离在 `predict` 里算），
+        而权重只看坐标 —— 多一列而已。**这也意味着旧的 t_index 逐位不变**：
+        `w` 一个数都没变，每个输出元素仍是同样那 24 项点积。
+
+        三个前置条件，各自抛错而不是静默：
+
+        1. 帧数必须是 `C.EXPECTED_N_SENSORS`、且**全为有限数**。
+        2. 时间戳必须晚于当前时间轴末尾（时间轴只追加，不插队）。
+        3. 必须先 `fit`。
+        """
+        self._require_fitted()
+        temps = np.asarray(sensor_temps, dtype=float).ravel()
+        if temps.shape != (C.EXPECTED_N_SENSORS,):
+            raise ValueError(
+                f"一帧必须给 {C.EXPECTED_N_SENSORS} 路棚温，收到形状 {temps.shape}；"
+                "次序与 Dataset.sensor_ids() 一致（p1 的 8 个位置，然后 p2、p3）。")
+        if not bool(np.all(np.isfinite(temps))):
+            raise ValueError(
+                "实时帧的棚温里有非有限值（NaN/Inf）。IDW 的 predict 是稠密的 "
+                "w @ resid，一路坏值会让整帧变成 NaN，所以只能在入口上直接拒绝。")
+        when = pd.Timestamp(ts)
+        last = self.time_at(self.n_times - 1)
+        if when <= last:
+            raise ValueError(
+                f"实时帧的时间戳必须晚于时间轴末尾（{last}），收到 {when}。")
+
+        t_new = self.n_times
+        # 1) 逐时刻的气象与时间。**必须排在算残差之前** ——
+        #    _design_matrix 要读刚追加进去的 _bg_temp[t_new]。
+        self._bg_temp = np.append(self._bg_temp, float(bg_temp))
+        self._bg_rh = np.append(self._bg_rh, float(bg_rh))
+        self._bg_light = np.append(self._bg_light, float(bg_light))
+        self._hour = np.append(self._hour, when.hour)
+        self._frac_day = np.append(self._frac_day,
+                                  when.hour + when.minute / 60.0)
+        self._live_ts.append(when)
+
+        # 2) 残差 = 实测 − 趋势在这一帧 24 个测点处的预测
+        coords = np.asarray(self.coords, dtype=float)
+        trend_here = self.trend_at_coords(coords, np.array([t_new]))[:, 0]
+        col = (temps - trend_here).reshape(-1, 1)
+
+        # 3) 累积
+        self._live_resid = col if self._live_resid is None \
+            else np.hstack([self._live_resid, col])
+
+        # 4) 重装配 IDW —— 与 fit() 里那一行逐字同形
+        src = self.source_sensor_ids()
+        self._idw = IDWCorrector(self.cfg.metric, self.cfg.cross_shed).fit(
+            self.coords[src], self._resid_matrix()[src])
+        return t_new
+
+    def residual_matrix(self) -> np.ndarray:
+        """→ (24, n_t)，第 s 行 = 传感器 s 的 y − trend。
+
+        **包含被留出的传感器** —— 对被留出者而言这正是折外真残差，
+        是评估时的基准，不是 IDW 的源。
+        """
+        self._require_fitted()
+        return self._resid_matrix()
+
+    def trend_only_prediction(self, sensors: Sequence[int]) -> np.ndarray:
+        """→ (n_sensors, n_t)，不加 IDW 修正。"""
+        self._require_fitted()
+        assert self._fs is not None and self._trend_all is not None
+        return np.stack([self._trend_all[self._fs.sensor_id == s] for s in sensors])
+
+    # ── 任意空间点查询 ──
+    def _design_matrix(self, coords: np.ndarray, t_index: np.ndarray) -> pd.DataFrame:
+        """按 features.add_feature_groups 的同一套列定义拼出 (n_pts × n_t) 行特征。
+
+        行序为「时刻优先」：第 k 行对应 (t = t_index[k // n_pts], 点 = k % n_pts)，
+        预测结果 reshape(n_t, n_pts).T 即得 (n_pts, n_t)。
+        """
+        coords = np.atleast_2d(np.asarray(coords, dtype=float))
+        t_index = np.asarray(t_index, dtype=int)
+        n_p, n_t = len(coords), len(t_index)
+        long = pd.DataFrame({
+            "x": np.tile(coords[:, 0], n_t),
+            "y": np.tile(coords[:, 1], n_t),
+            "z": np.tile(coords[:, 2], n_t),
+            "bg_temp": np.repeat(self._bg_temp[t_index], n_p),
+            "bg_rh": np.repeat(self._bg_rh[t_index], n_p),
+            "bg_light": np.repeat(self._bg_light[t_index], n_p),
+            "hour": np.repeat(self._hour[t_index], n_p),
+            "frac_day": np.repeat(self._frac_day[t_index], n_p),
+        })
+        X = add_feature_groups(long, self.cfg.feature_groups)
+        return X[list(self._feature_names)]
+
+    def trend_at_coords(self, coords: np.ndarray, t_index: np.ndarray) -> np.ndarray:
+        """任意空间点 × 指定时刻的趋势预测。→ (n_pts, n_t)。
+
+        ⚠️ 调用方有责任只用 y ∈ `self.source_y_levels()`（R2）。本方法不检查 ——
+        合法的 y 集取决于本次 fit，是 fit 的属性而不是常数。两个出口都自己把关：
+        `predict_points`（任意点预测）按 1/dy 混合，field/build.py 的 `field_at`
+        （网格场）按同样的规则混合。**不要在这个方法之上新开一个不过关的出口。**
+        """
+        self._require_fitted()
+        assert self._trend is not None
+        coords = np.atleast_2d(np.asarray(coords, dtype=float))
+        t_index = np.asarray(t_index, dtype=int)
+        X = self._design_matrix(coords, t_index)
+        pred = self._trend.predict(X)
+        return pred.reshape(len(t_index), len(coords)).T
+
+    def residual_at_coords(self, coords: np.ndarray, t_index: np.ndarray) -> np.ndarray:
+        self._require_fitted()
+        assert self._idw is not None
+        coords = np.atleast_2d(np.asarray(coords, dtype=float))
+        t_index = np.asarray(t_index, dtype=int)
+        return self._idw.predict(coords)[:, t_index]
+
+    def feature_importance(self) -> pd.Series | None:
+        """趋势模型的增益重要性（索引 = 特征名）。
+
+        未 fit、或底层趋势模型没有这个能力时返回 `None`（**不抛**）——
+        界面据此显示「本模型不提供特征重要性」，而不是崩掉。
+        """
+        if self._trend is None or not hasattr(self._trend, "feature_importance"):
+            return None
+        return self._trend.feature_importance(self._feature_names)
+
+    def predict_points(self, coords: np.ndarray, t_index: np.ndarray) -> np.ndarray:
+        """任意空间点 × 指定时刻的温度预测。→ (n_pts, n_t)。
+
+        **R2 合规**：只在本次训练真的见过 y 的断面上查趋势。查询点的 y 不在合法集里
+        时，改在夹住它的两个合法断面上各算一次，再按 1/dy 混合 —— 与 `field_at` 同一
+        套语义（含出界钳制）。留一断面折里 y=9 没有任何训练样本，此前这里会直接查
+        趋势（实测把留一断面 MAE 从 0.2654 抬到 0.4777）。
+        """
+        self._require_fitted()
+        coords = np.atleast_2d(np.asarray(coords, dtype=float))
+        t_index = np.asarray(t_index, dtype=int)
+        legal = self.source_y_levels()
+        ys = coords[:, 1]
+        out = np.empty((len(coords), len(t_index)), dtype=float)
+        for y in np.unique(ys):
+            sel = ys == y
+            out[sel] = self._predict_on_levels(coords[sel], t_index, float(y), legal)
+        return out
+
+    def _predict_on_levels(self, coords: np.ndarray, t_index: np.ndarray,
+                           y: float, legal: np.ndarray) -> np.ndarray:
+        """把查询点落到合法 y 集上：命中 → 直接；夹住 → 1/dy 混合；出界 → 最近断面。"""
+        if np.any(np.isclose(legal, y)):
+            return (self.trend_at_coords(coords, t_index)
+                    + self.residual_at_coords(coords, t_index))
+        below, above = legal[legal < y], legal[legal > y]
+        if below.size == 0 or above.size == 0:
+            edge = float(legal[0] if below.size == 0 else legal[-1])
+            pts = coords.copy()
+            pts[:, 1] = edge
+            return self._predict_on_levels(pts, t_index, edge, legal)
+        y_lo, y_hi = float(below[-1]), float(above[0])
+        lo_pts, hi_pts = coords.copy(), coords.copy()
+        lo_pts[:, 1], hi_pts[:, 1] = y_lo, y_hi
+        w_lo, w_hi = 1.0 / (y - y_lo), 1.0 / (y_hi - y)
+        return (w_lo * self._predict_on_levels(lo_pts, t_index, y_lo, legal)
+                + w_hi * self._predict_on_levels(hi_pts, t_index, y_hi, legal)) / (w_lo + w_hi)

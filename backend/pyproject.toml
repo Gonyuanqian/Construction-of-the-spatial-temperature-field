@@ -1,0 +1,9 @@
+[project]
+name = "tfield"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = ["slow: 需要真实数据并训练模型，单例 10 s 以上"]

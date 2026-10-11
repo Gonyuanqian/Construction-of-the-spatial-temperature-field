@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Office 锁文件（WPS / Excel 打开时生成）
+~$*
+
+# 标定的敏感性曲面（可由 calibrate.py 再生；bundle_*.json 要提交）
+backend/configs/sensitivity_*.csv
+
+# 上传的数据集（用户自带，不进仓库）
+backend/configs/uploads/
+
+# 数据集本身（用户自带，不进仓库）。放进 backend/ 下那份按名字被忽略 ——
+# README「先放数据集」那一节要的正是这个：谁克隆下来都能把手上那份放进去，
+# 而它不会被误提交。
+backend/*.xlsx
+
+# Node
+node_modules/
+frontend/dist/
+*.local
+
+# 编辑器
+.idea/
+.vscode/
+*.swp
+
+# SDD 工作区：superpowers 的账本、交接台架、评审包 —— 本机草稿，不是项目的一部分。
+# 无前导斜杠，所以根下与 backend/ 下的一起盖住（backend/.superpowers/ 本来
+# 只靠没进仓库的 .superpowers/sdd/.gitignore 挡着，换台机器就露出来了）。
+.superpowers/

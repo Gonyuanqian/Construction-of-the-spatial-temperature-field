@@ -1,0 +1,64 @@
+/* 全局基线。 */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body { margin: 0; padding: 0; height: 100%; }
+
+/* 外壳是一张**闭合的框**（规格书 2026-10-04 §1.2、2026-10-06 §5.2 画的那两张）：
+   标题条、模式开关、左栏都钉在框里，滚的是右边内容区那一列（见 `App.vue`
+   的 `.page`）。没有这两行，滚的就是**整个文档** —— 往下翻的时候左栏那四张卡
+   跟着一起滑上去，而它 `align-self: stretch` 撑出来的浅蓝面还铺满整页，
+   于是屏幕上只留下一条空色带。
+   用 `height: 100%` 而不是 `100vh`：手机浏览器地址栏收起/展开时 `100vh` 不变
+   （框会伸到屏幕外），`100%` 跟着视口走。 */
+#app { height: 100%; display: flex; flex-direction: column; }
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-cn);
+  font-size: var(--size-body);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 { margin: 0; font-weight: var(--w-title); line-height: 1.35; }
+h1 { font-size: var(--size-title); }
+h2 { font-size: var(--size-h); }
+h3 { font-size: var(--size-h3); font-weight: var(--w-strong); }
+
+p { margin: 0 0 var(--gap-s); }
+ul { margin: 0; padding-left: 1.2em; }
+
+/* 数字对齐的地方才用等宽（spec §8.2：不做装饰性小标签） */
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+
+table { border-collapse: collapse; width: 100%; }
+th, td { border-bottom: var(--rule); padding: 4px 12px 4px 0; text-align: left; vertical-align: top; }
+th { font-weight: var(--w-strong); white-space: nowrap; }
+
+/* 说明与出处：次要文字，不是注释 */
+.note { color: var(--ink-muted); font-size: var(--size-note); }
+
+/* 按钮是控件，不是带下划线的字（spec 2026-10-06 §一 成因 1、§九）。
+   阴影专供卡片，按钮一律不吃 —— 否则「一档阴影」那条判据就破了。 */
+button {
+  font: inherit;
+  color: inherit;
+  background: var(--card);
+  border: 1px solid var(--steel);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--ink-muted); }
+button:disabled { color: var(--ink-muted); cursor: not-allowed; }
+button.on { background: var(--leaf); color: var(--paper); border-color: var(--leaf); }
+
+:focus-visible { outline: 2px solid var(--leaf); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

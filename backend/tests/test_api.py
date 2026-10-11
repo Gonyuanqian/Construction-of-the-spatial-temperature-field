@@ -1,0 +1,327 @@
+"""API 层的契约。
+
+走 TestClient（进程内），不起真服务器 —— 契约测试不该依赖端口与进程管理。
+真起服务器是 Task 6 的端到端验收。
+"""
+from __future__ import annotations
+
+import os
+import pathlib
+import subprocess
+import sys
+
+import pytest
+from fastapi.testclient import TestClient
+
+BACKEND = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(BACKEND))
+
+from api.main import create_app            # noqa: E402
+from api import main as api_main           # noqa: E402
+from api import paths                      # noqa: E402
+
+# 放在 api.* 之后 import：`api/__init__.py` 负责把 backend/src 放上 sys.path。
+from tfield.calibration import TOOL_VERSION  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def client() -> TestClient:
+    return TestClient(create_app())
+
+
+def test_不靠_pytest_的_pythonpath_也能_import_api():
+    """README 的首选启动命令 `python -m uvicorn api.main:app --port 8503` **不走 pytest**，
+    所以 `pyproject.toml` 里的 `pythonpath = ["src"]` 对它不生效。
+
+    没有这条测试，那条命令会在用户机器上以 `ModuleNotFoundError: No module named 'tfield'`
+    收场，而**所有测试依然全绿** —— 因为 pytest 恰好替我们把 `src/` 放上了 sys.path。
+    测试全绿、README 的命令却跑不起来，正是最该被钉住的那种差距。
+    """
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    r = subprocess.run([sys.executable, "-c", "import api.main; print('imported')"],
+                       cwd=str(BACKEND), capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "imported" in r.stdout
+
+
+def test_health(client):
+    r = client.get("/api/health")
+    assert r.status_code == 200
+    assert r.json()["status"] == "ok"
+
+
+def test_health_报出后端库版本(client):
+    """spec §5.1：`/api/health` 的契约是「存活 **+ 后端库版本**」。
+
+    只回 `{"status": "ok"}` 是漏了一半 —— 界面上要靠它回答
+    「跑着的后端到底是哪个版本」，验收时也要靠它对上盘。
+
+    ⚠️ 断言刻意写成 `== TOOL_VERSION`，**不写** `== "0.1.0"`：
+    写死字面量的话，实现里也写死同一个字面量时，这条测试照样通过 ——
+    它就成了「两个巧合相等」，而不是「版本取自唯一真源」。
+    这正是 TDD 在这里的价值：实现之前跑一遍，它是红的。
+    """
+    assert client.get("/api/health").json()["version"] == TOOL_VERSION
+
+
+def test_FastAPI_的版本号与健康接口同源(monkeypatch):
+    """`create_app(version=...)` 里的那个字面量也得取自 TOOL_VERSION。
+
+    否则会出现三个数各说各话：健康接口一个、OpenAPI 文档一个、
+    标定包的 tool_version 又是一个 —— 对盘的时候就不知道该信谁。
+
+    ⚠️ 断言不能是 `create_app().version == TOOL_VERSION`：只要实现里
+    写死 `"0.1.0"`，而 TOOL_VERSION 现在**正好**也是 `"0.1.0"`，
+    这条就在实现之前通过了 —— 两个巧合相等，不是同源。
+    把 TOOL_VERSION 换成一个哨兵值再建 app，才真的问出了
+    「这个数是从模块属性读的，还是写死的」。
+    """
+    monkeypatch.setattr(api_main, "TOOL_VERSION", "9.9.9-哨兵")
+    assert create_app().version == "9.9.9-哨兵"
+
+
+def test_数据集接口报得出身份(client):
+    r = client.get("/api/dataset")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["signature"] and len(body["signature"]) == 16
+    assert body["n_times"] == 1308
+    assert body["n_columns"] == 52
+    assert set(body["sheds"]) == {"p1", "p2", "p3"}
+    assert body["sheds"]["p2"] == 9.0
+    assert len(body["positions"]) == 8
+    # 用集合而不是下标：字典的插入顺序是 loader 的实现细节，
+    # API 从没承诺过顺序，拿 [0] 断言会把「换了个遍历写法」变成测试失败。
+    # 这 8 个 id 来自 C.SENSOR_LAYOUT 的键，含三个带括号的 ztop 点。
+    assert {p["id"] for p in body["positions"]} == {
+        "x0.15_z0.4", "x0.4_z0.7", "x0.8_zH(0.80)-0.20", "x1.05_z0.4",
+        "x1.05_z0.7", "x1.3_zH(1.30)-0.20", "x1.7_z0.7", "x1.95_z0.4",
+    }
+    assert all(set(p) == {"id", "x", "z", "layer"} for p in body["positions"])
+    # ztop 点的 z 是 1.1（MAX_MEASURED_Z），不是拱高 —— 别把层名当高度
+    top = next(p for p in body["positions"] if p["layer"] == "ztop")
+    assert top["z"] == 1.1
+
+    assert body["time_start"] == "2026-07-23T11:00:00"
+    assert body["time_end"] == "2026-07-27T23:55:00"
+
+
+def test_数据集接口报出时间戳修复(client):
+    """时间轴修复的 5 行（16:00 被写成次日 00:00）必须原样透出来，
+    否则 ① 页的「六项校验」就没有数据可报。"""
+    r = client.get("/api/dataset")
+    fix = r.json()["fix"]
+    assert fix["n_rows"] == 1308
+    assert fix["fixed_indices"] == [60, 348, 636, 924, 1212]
+    assert fix["monotonic_before"] is False    # 不修就是不单调，这正是不修不行的理由
+    assert fix["monotonic_after"] is True
+    assert fix["spacing_seconds"] == 300.0     # 5 分钟采样
+    assert fix["n_gaps"] == 0
+
+
+def test_数据集接口报出三项检查与那句说明(client):
+    """Review Focus #5：页① 只列三项，被砍的五项必须自己说出来。"""
+    body = client.get("/api/dataset").json()
+    assert [c["name"] for c in body["checks"]] == ["结构完整性", "时间轴", "缺失"]
+    assert [c["no"] for c in body["checks"]] == [1, 2, 3]
+    assert all(set(c) == {"no", "name", "what", "status", "evidence"}
+               for c in body["checks"])
+    for name in ("值域", "卡死", "跨棚离群", "质量标记", "对齐"):
+        assert name in body["checks_note"]
+
+
+def test_测点带上全时段均值(client):
+    """V1 要在每个测点旁边标注 5 天均值 —— 那是数值，由后端算（硬约束 1）。
+
+    三条一组（棚, 测点, 均值），不是八个测点共用一份均值：
+    同一个点位在三座棚里的均值不一样，只报一个数就把三座棚画成一样了。
+    **它挂在 `temperature` 上，不挂在 `positions` 上** —— 见 Step 7 的说明。
+    """
+    body = client.get("/api/dataset").json()
+    temp = body["temperature"]
+    assert len(temp) == len(body["sheds"]) * len(body["positions"]) == 24
+    assert all(set(t) == {"shed", "position", "mean", "min", "max"} for t in temp)
+    assert {t["shed"] for t in temp} == set(body["sheds"])
+    for t in temp:
+        assert t["min"] <= t["mean"] <= t["max"]
+        assert 0.0 < t["mean"] < 60.0
+
+
+def test_测点的几何形状没有被这次改动动到(client):
+    """`positions` 是**几何**，这一次只在别处加了观测量，几何一个字段都不该多。
+
+    这条测试同时守着「接口没被顺手改宽」—— `positions` 一宽，
+    所有读它的地方都要跟着想一遍「多出来的是不是几何」。
+    """
+    body = client.get("/api/dataset").json()
+    assert all(set(p) == {"id", "x", "z", "layer"} for p in body["positions"])
+
+
+def test_测点均值在退化输入下不会把_NaN_塞进响应体():
+    """⚠️ 本次改动真正的危险点。响应由 `JSONResponse` 序列化，它用
+    `json.dumps(..., allow_nan=False)` —— 任何 NaN/Inf 进了响应体就是
+    `ValueError` → HTTP 500，而不是 null。
+
+    两种退化输入都会算出非有限值：全缺失列 → 均值/极值全是 NaN；
+    空列 → pandas 的 min/max 直接抛 ValueError。两者都必须翻成 None。
+    末了的 `json.dumps(..., allow_nan=False)` 就是「没有非有限浮点逃出去」
+    这句话本身，而不是它的近似。
+    """
+    import json
+
+    import pandas as pd
+
+    from api.routes.dataset import _temperature_stats
+
+    class _AllMissing:
+        # p1 的两个测点：一个正常、一个全缺失。p2/p3 的列刻意不存在。
+        wide = pd.DataFrame({
+            "p1_x0.15_z0.4_temp_C": [25.0, 26.0],
+            "p1_x0.4_z0.7_temp_C": [None, None],
+        })
+        layout = {"x0.15_z0.4": None, "x0.4_z0.7": None}
+
+    class _Empty:
+        wide = pd.DataFrame({"p1_x0.15_z0.4_temp_C": pd.Series(dtype=float)})
+        layout = {"x0.15_z0.4": None}
+
+    for ds in (_AllMissing(), _Empty()):
+        stats = _temperature_stats(ds)
+        json.dumps(stats, allow_nan=False)         # 序列化器怎么配的，这里就怎么验
+        assert all(s["mean"] is None and s["min"] is None and s["max"] is None
+                   or all(v is not None and v == v and abs(v) != float("inf")
+                          for v in (s["mean"], s["min"], s["max"]))
+                   for s in stats)
+    ok = next(s for s in _temperature_stats(_AllMissing())
+              if s["position"] == "x0.15_z0.4")
+    assert ok["min"] <= ok["mean"] <= ok["max"] == 26.0
+
+
+def test_端口配置是_8503_不是别的():
+    """Review Focus #5：不许悄悄落到别的端口上。"""
+    assert paths.API_PORT == 8503
+
+
+def test_configs_是绝对路径():
+    """Ruling：API 层不能用依赖 CWD 的相对路径。"""
+    assert paths.CONFIGS.is_absolute()
+    assert paths.CONFIGS.name == "configs"
+    assert paths.CONFIGS.parent.name == "backend"
+
+
+def test_数据集不存在时报_404_而不是_500(client):
+    """「文件不见了」是 404，不是 500 —— 与「还没导入」（409）判然两种。
+
+    ⚠️ 造这个状态的写法在 2026-10-06 换过：以前是 monkeypatch
+    `paths.dataset_path`，因为那时 `GET /api/dataset` 读的就是它。
+    现在那个接口问的是「**现在在用哪一份**」（`deps._CURRENT`），
+    monkeypatch `paths.dataset_path` 对它**不再有任何影响** ——
+    留着老写法的话，这条测试会变成一条恒过的空过（请求照常 200）。
+
+    换成设置槽位，读的正是实现现在读的那个变量。断言一个字没改。
+    """
+    from api import deps
+    deps.set_current_dataset(pathlib.Path("C:/definitely/not/here.xlsx"))
+    try:
+        r = client.get("/api/dataset")
+        assert r.status_code == 404
+        assert "数据集不存在" in r.json()["detail"]
+    finally:
+        # `_CURRENT` 是进程级的：不恢复就是给后面跑的模块留一颗雷。
+        deps.set_current_dataset(paths.dataset_path())
+
+
+def test_dist_不存在时应用照样起得来(tmp_path, monkeypatch):
+    """Review Focus #5 的近亲：静态托管的守卫。
+
+    StaticFiles 在目录不存在时**构造就抛错**。若不加守卫，一个没跑过
+    npm run build 的人连 /api/health 都调不到 —— 症状是「后端起不来」，
+    而真正的原因在前端没构建。这条钉住那个守卫。
+    """
+    monkeypatch.setattr(paths, "DIST", tmp_path / "并不存在的 dist")
+    app = create_app()                       # 不抛异常
+    c = TestClient(app)
+    assert c.get("/api/health").json()["status"] == "ok"
+    # 断言根路径 **404** 才算真的验了守卫：Task 5 之后真实的 frontend/dist 已经存在，
+    # 若 monkeypatch 没生效，挂上去的就是真 dist，`/` 会返回 200 而不是 404 ——
+    # 只断言「没抛异常」的话，这一条从此就分不出守卫到底有没有起作用。
+    assert c.get("/").status_code == 404
+
+
+def test_dist_存在时根路径返回_index_html(tmp_path, monkeypatch):
+    """生产形态：一个进程同时供 API 与前端（spec §二）。"""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    # 哨兵串必须**唯一**：真实 dist/index.html 里写着系统标题（「棚式空间温度场
+    # 重建系统」），也含「温度场」三个字。Task 5 一构建出 dist，原来拿「温度场」
+    # 当断言就再也分不清「monkeypatch 生效了」与「serve 的是真 dist」——
+    # 这条测试会当场变成空过。
+    (dist / "index.html").write_text("<h1>临时 dist 哨兵 9f3c1a</h1>", encoding="utf-8")
+    monkeypatch.setattr(paths, "DIST", dist)
+    app = create_app()
+    c = TestClient(app)
+    assert "临时 dist 哨兵 9f3c1a" in c.get("/").text
+    # 挂载点在最后注册，不许把 /api 吃掉
+    #
+    # 只断言 status，不再断言整个 body 相等：静态托管的守卫跟「健康接口
+    # 有几个字段」本来无关，全字典相等会把那两件事耦在一起 ——
+    # health 每加一个字段（比如 spec §5.1 要的 version），两条守卫测试
+    # 都要跟着改，而它们真正要守的东西一个字都没变。
+    assert c.get("/api/health").json()["status"] == "ok"
+
+
+def test_数据集接口报出缺失量与重复量(client):
+    """页① 那排卡片要的四项里，有两项是这次新加的数：
+
+    缺失样本量 = 宽表里 NaN 的**格子**数（与 `check_missing` 同一口径，
+    不是「有缺失的行数」—— 两者今天都是 0，但这个数说的是前者）。
+    重复样本量 = **原始文件**里重复的时刻数（多出来的那几行）。修完的轴
+    严格递增，拿它算恒为 0，所以它必须来自修复前的原始轴。
+    """
+    body = client.get("/api/dataset").json()
+    assert body["n_missing"] == 0
+    assert body["n_dup_times"] == 4
+
+
+def test_测点编号按参考图的次序排(client):
+    """切面图上点旁那个「B 几」，**不来自数据集** —— `测点字典` sheet 里只有
+    设备通道号（`1, 0.15, 0.40`，1 是棚 1、3 是棚 2、5 是棚 3），没有 B 编号。
+    这一套是用户给的那张切面图上的编号，次序从图上逐点抄下来：
+    **先按高度分层、层从高到低（拱顶那层在前），同层按 x 从左到右。**
+
+    这一条钉的是**次序**，不是「响应里有个编号字段」。次序错了，
+    图上八个点会各自指到别的位置，而那一眼看不出来 —— 编号看着永远是对的。
+
+    编号单独占一格（`point_codes`）而不是并进 `positions`：后者是几何，
+    由 `test_测点的几何形状没有被这次改动动到` 守着。
+    """
+    body = client.get("/api/dataset").json()
+    assert body["point_codes"] == {
+        "x0.8_zH(0.80)-0.20": "B1",
+        "x1.3_zH(1.30)-0.20": "B2",
+        "x0.4_z0.7": "B3",
+        "x1.05_z0.7": "B4",
+        "x1.7_z0.7": "B5",
+        "x0.15_z0.4": "B6",
+        "x1.05_z0.4": "B7",
+        "x1.95_z0.4": "B8",
+    }
+
+
+
+@pytest.fixture(autouse=True)
+def _current_dataset():
+    """空态成为默认之后，这个文件也必须**显式声明**它测的是哪一份数据集。
+
+    2026-10-06 起，「当前在用哪一份数据集」是一个进程级的模块变量，启动时为空
+    （规格书 §1.1 的空态）。不声明的话，这个模块里凡是碰数据集的用例都会拿到 409，
+    而报错位置离现场很远。
+
+    写成 autouse 而不是改各文件形状各异的 `client` 夹具，是因为本仓还有 **6 处**
+    在测试里**内联**建 `TestClient(create_app())`（test_api.py ×2、
+    test_api_train.py ×3、test_deps.py ×1）—— 它们同样要碰数据集，
+    而只改 `client` 夹具会漏掉它们。一段代码、12 个文件、一模一样。
+    """
+    from api import deps, paths
+    deps.set_current_dataset(paths.dataset_path())
