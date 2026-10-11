@@ -184,9 +184,9 @@ def test_同一个项目里重迁移会清掉旧包(tmp_path):
 
 
 def test_旧包在另一个目录时绝不删除(tmp_path):
-    """旧项目零改动（spec §〇/§九）。
+    """原处零改动（spec §〇/§九）。
 
-    这是 P1 的实际情形：--original 指向 ../空间温度场的构建/configs/…。
+    这是搬家的实际情形：--original 指向**另一份工程**的 configs/…。
     那条路径上躺着别人的标定成果（几十分钟的训练），删了不可逆。
     """
     old_ds, old_bundle, new_ds = _fixture(tmp_path)
@@ -196,68 +196,81 @@ def test_旧包在另一个目录时绝不删除(tmp_path):
              "--original", str(old_bundle), "--original-dataset", str(old_ds),
              "--apply")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert old_bundle.exists(), "旧项目里的标定包被删了 —— 这是不可逆的"
+    assert old_bundle.exists(), "另一份工程里的标定包被删了 —— 这是不可逆的"
     assert old_bundle.read_text(encoding="utf-8") == before, "旧包被改动了"
 
 
-def test_把_bundle_误指到旧项目里也绝不删旧包(tmp_path):
+def test_把_bundle_误指到别处也绝不删旧包(tmp_path):
     """审阅 Important #1 —— **这一条钉死那个不可逆的路径。**
 
     「删不删」原来是用 `old_bundle.parent == expected.parent` 判断的，
     而 `expected.parent` 完全来自调用方给的 `--bundle`。
-    于是把 `--bundle` 误指到旧项目的 configs/ 里（它的语义是「新包写到哪」，
-    而重迁移时最顺手的写法正是「写回原处」），两个 parent 就相等了，
-    unlink 落在旧项目那份不可逆的标定成果上。
+    于是把 `--bundle` 误指到**别人那份工程**的 configs/ 里（它的语义是
+    「新包写到哪」，而重迁移时最顺手的写法正是「写回原处」），两个 parent
+    就相等了，unlink 落在别人那份不可逆的标定成果上。
 
     判据必须是**数据集在哪**，不是 `--bundle` 说在哪。
     """
     old_ds, old_bundle, new_ds = _fixture(tmp_path)
     before = old_bundle.read_text(encoding="utf-8")
 
-    # 这正是最危险的调用：--bundle 落在旧项目的 configs/ 里
+    # 这正是最危险的调用：--bundle 落在别人那份工程的 configs/ 里
     misdirected = old_bundle.parent / "bundle_X_d6294c09.json"
     r = _run("--bundle", str(misdirected), "--dataset", str(new_ds),
              "--original", str(old_bundle), "--original-dataset", str(old_ds),
              "--apply")
 
     assert old_bundle.exists(), (
-        "旧项目的标定包被删了 —— 不可逆。删不删不能由调用方给的 --bundle 决定。")
+        "别人那份工程的标定包被删了 —— 不可逆。删不删不能由调用方给的 --bundle 决定。")
     assert old_bundle.read_text(encoding="utf-8") == before, "旧包被改动了"
 
 
 # ── 端到端：Review Focus #3（指纹与复制的先后顺序）──
+#
+# ⚠️ 用的是**本仓自带**的那份真实标定包的全套内容，只把它的 `dataset_sig`
+# 换成下面那份副本的指纹。为什么非改一下不可：指纹里含 **mtime**，数据集被复制过
+# 一次就对不上了 —— 不改的话这一条会因为「这份文件的 mtime 不是当初那一个」而跳过，
+# 与它要钉的东西毫无关系。包里其余字段一个不动：下面那句 `load_for` 要吃的正是
+# **真包的形状**，不是为测试编的壳。
 _REAL_DS = BACKEND / "人参棚_多棚温湿度_气象时间对齐数据集.xlsx"
-_SOURCE_ROOT = BACKEND.parent.parent / "空间温度场的构建"
-_HAS_REAL = _REAL_DS.exists() and (_SOURCE_ROOT / "configs").is_dir()
+_REAL_BUNDLE = (BACKEND / "configs" /
+                "bundle_6145fa9261e89f1b_d6294c09.json")
 
 
-@pytest.mark.skipif(not _HAS_REAL, reason="需要真实数据集与旧项目的标定包")
+@pytest.mark.skipif(not (_REAL_DS.exists() and _REAL_BUNDLE.exists()),
+                    reason="需要仓库下那份数据集与 configs/ 里那份真实标定包")
 def test_真实的标定包迁移后_load_for_找得到(tmp_path):
     """这一条同时钉死三件事：
     (a) 迁移真的能让 load_for 找到包；
     (b) 指纹是在数据集**已经落到最终位置之后**算的 ——
         先算指纹后复制，mtime 一变指纹就过期，load_for 依然返回 None，
         而脚本会报告成功。只有真的调一次 load_for 才能发现；
-    (c) 新增的「包得对得上旧数据集」这道门不会误伤真的包。
+    (c) 迁移出来的包 **`load_for` 真的吃得下** —— 不是只有迁移脚本认得它的 JSON。
     """
     from tfield.calibration import load_for
     from tfield.config import DEFAULT_FEATURE_GROUPS
     from tfield.data.loader import load_dataset
 
+    old_ds = tmp_path / "old" / _REAL_DS.name
+    new_ds = tmp_path / "new" / _REAL_DS.name
+    for p in (old_ds, new_ds):
+        p.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(_REAL_DS, p)
+
+    old_bundle = old_ds.parent / "configs" / "bundle_9055b199eeee1293_d6294c09.json"
+    old_bundle.parent.mkdir(parents=True, exist_ok=True)
+    old_bundle.write_text(json.dumps(
+        {**json.loads(_REAL_BUNDLE.read_text(encoding="utf-8")),
+         "dataset_sig": dataset_signature(old_ds)}, ensure_ascii=False), encoding="utf-8")
+
     cfg = tmp_path / "configs"
     cfg.mkdir()
-    shutil.copy(_REAL_DS, tmp_path / _REAL_DS.name)
-    ds_path = tmp_path / _REAL_DS.name
-
-    old_bundle = next((_SOURCE_ROOT / "configs").glob("bundle_*_d6294c09.json"))
-    old_ds_path = _SOURCE_ROOT / _REAL_DS.name
-
-    r = _run("--bundle", str(cfg / "bundle_X_d6294c09.json"), "--dataset", str(ds_path),
-             "--original", str(old_bundle), "--original-dataset", str(old_ds_path),
+    r = _run("--bundle", str(cfg / "bundle_X_d6294c09.json"), "--dataset", str(new_ds),
+             "--original", str(old_bundle), "--original-dataset", str(old_ds),
              "--apply")
     assert r.returncode == 0, r.stdout + r.stderr
 
-    ds = load_dataset(ds_path)
+    ds = load_dataset(new_ds)
     bundle = load_for(ds, DEFAULT_FEATURE_GROUPS, root=cfg)
     assert bundle is not None, "迁移后 load_for 仍然找不到包 —— 指纹或顺序错了"
     assert bundle.created_at == json.loads(

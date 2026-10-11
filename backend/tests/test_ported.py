@@ -1,58 +1,18 @@
-"""移植件的契约 + **漂移守卫**。
+"""移植件的契约。
 
-`app/app.py` 依赖 streamlit，import 不进来（spec 2026-10-03 §五.5），
-所以「两边是不是还一样」只能拿**源码文本**对。
-这一组测试就是那个漂移面唯一的探针 —— 它红了不代表代码错，代表两边分了家。
+`api/ported.py` 是一份**移植件**：它的算法与文案照搬自另一份实现的应用层，
+那一份不在这棵树上。于是这里钉的是它自己的契约 —— 保留哪三项、
+被砍的五项都要点名、格式化的口径 —— 而不是「还跟来处一样」。
 """
 from __future__ import annotations
 
 import pathlib
 import sys
 
-import pytest
-
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
 from api import ported                                    # noqa: E402
-
-OLD_PROJECT = BACKEND.parent.parent / "空间温度场的构建"
-OLD_APP = OLD_PROJECT / "app" / "app.py"
-API_PORTED = BACKEND / "api" / "ported.py"
-
-
-def _extract(text: str, name: str) -> str:
-    """从源码里抠出某个顶层函数的源码（含 docstring），到下一个顶层 def/class 为止。"""
-    lines = text.splitlines()
-    start = next(i for i, ln in enumerate(lines) if ln.startswith(f"def {name}("))
-    end = len(lines)
-    for i in range(start + 1, len(lines)):
-        if lines[i].startswith("def ") or lines[i].startswith("class "):
-            end = i
-            break
-    body = lines[start:end]
-    while body and not body[-1].strip():
-        body.pop()
-    return "\n".join(body)
-
-
-@pytest.mark.skipif(not OLD_APP.exists(), reason="旧项目不在旁边，跳过漂移守卫")
-def test_check_missing_与_旧项目逐字相同():
-    assert _extract(API_PORTED.read_text(encoding="utf-8"), "check_missing") == \
-        _extract(OLD_APP.read_text(encoding="utf-8"), "check_missing")
-
-
-@pytest.mark.skipif(not OLD_APP.exists(), reason="旧项目不在旁边，跳过漂移守卫")
-def test_两条内联检查的文案与旧项目同源():
-    """结构完整性与时间轴这两条没有独立函数，只能对字符串片段。
-
-    片段取自 `app/app.py:dataset_checks`。改了那边的措辞、这边没跟，这条就红。
-    """
-    old = OLD_APP.read_text(encoding="utf-8")
-    for frag in ("必需 sheet 与列是否齐；缺列明确报错不猜",
-                 "单调、无重复、等间隔 300 s；已知缺陷已幂等修复",
-                 'layout {len(ds.layout)} 个点位'):
-        assert frag in old, f"旧项目里找不到这段文案：{frag!r} —— 两边漂了"
 
 
 def test_保留三项且被砍的五项全部点名():

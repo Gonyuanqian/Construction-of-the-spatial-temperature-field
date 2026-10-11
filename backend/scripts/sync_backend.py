@@ -1,10 +1,13 @@
-"""两份 tfield 副本的保真校验与显式同步。
+"""两棵 tfield 树之间的保真校验与显式同步。
 
-`tfield` 是这个项目最值钱的东西，Vue 版复制了一份出去，两份一定会漂。
+`tfield` 是这个项目最值钱的东西，它可能在别的地方也有一份，两份一定会漂。
 目标不是阻止漂移（用户可能就是想在这边改着玩），是让漂移**在任何时候都看得见**。
 
-方向：A = 真源（旧项目的 `src/tfield`），B = 副本（新项目的 `backend/src/tfield`）。
-`--push` 是 A → B，`--pull` 是 B → A。
+方向：A = 另一棵树，B = 本仓的 `backend/src/tfield`。`--push` 是 A → B，
+`--pull` 是 B → A。
+
+⚠️ **`--a` 必填，没有推算出来的默认值。** 两棵树相邻只是个巧合，
+而这个工具猜错一棵树的代价是覆盖掉另一侧的成果 —— 那比当场报错贵得多。
 
 ⚠️ 写盘一律要 `--apply`。不带就是干跑，但退出码仍然反映差异。
 """
@@ -21,7 +24,7 @@ SKIP_SUFFIXES = {".pyc", ".pyo"}
 
 #: **已知有意差异**：相对路径 → 一句为什么。
 #:
-#: B 方案（只改 Vue 副本）的代价必须认：两份 `tfield` 从此有意不同，而
+#: 「只改本仓这一份」的代价必须认：两份 `tfield` 从此有意不同，而
 #: 这个工具因此从报警器变成一把上膛的枪 —— `--push` 会静默覆盖掉实时构场能力。
 #: 这份清单是那个代价的安全阀：已知的差异明写出来，**其余任何差异照旧报警**。
 #:
@@ -37,27 +40,28 @@ SKIP_SUFFIXES = {".pyc", ".pyo"}
 #: **原始文件**里的重复时刻数，而修复前的轴在 `repair_axis` 里用完就丢了 ——
 #: 要留住它，公开类型 `FixReport` 得多一个字段。那一个决定同时落在两个文件上，
 #: 是这次改版唯一动到库的地方。
-#: （`api/` 是新项目自己的邻居包，不在 `sync_backend.py` 的比较范围里。）
+#: （`api/` 是本仓自己的邻居包，不在 `sync_backend.py` 的比较范围里。）
 KNOWN_DIVERGENCES: dict[str, str] = {
     "data/loader.py":
-        "副本多了留出切分 split_holdout / derived_signature（实时模式用）",
+        "本仓这一份多了留出切分 split_holdout / derived_signature（实时模式用）",
     "pipeline.py":
-        "副本多了 append_live_frame、时间轴访问器 n_times / timestamps / time_at"
-        " 与 bg_light_at",
+        "本仓这一份多了 append_live_frame、时间轴访问器 n_times / timestamps /"
+        " time_at 与 bg_light_at",
     "artifact.py":
-        "副本多了整个文件：训练好的模型的成品字节格式（模型库存成品用）。"
-        "旧项目不存成品 —— 它每页现训。与 pipeline.py 那一条同性质："
-        "副本多出来的东西，是有意的。",
+        "本仓这一份多了整个文件：训练好的模型的成品字节格式（模型库存成品用）。"
+        "另一棵树不存成品 —— 它每页现训。与 pipeline.py 那一条同性质："
+        "本仓多出来的东西，是有意的。",
     "validation/report.py":
-        "副本的 ti 用 len(ds.wide) 而不是写死的 C.EXPECTED_ROWS（训练段只有 1164 行）；"
-        "副本多了 out_of_fold_predictions 与 OOF_COLUMNS（页② 的精度图表要逐点逐时刻的"
-        "折外预测，而 evaluate 只留聚合）",
+        "本仓这一份的 ti 用 len(ds.wide) 而不是写死的 C.EXPECTED_ROWS"
+        "（训练段只有 1164 行）；本仓这一份多了 out_of_fold_predictions 与"
+        " OOF_COLUMNS（页② 的精度图表要逐点逐时刻的折外预测，而 evaluate 只留聚合）",
     "field/constraints.py":
-        "副本的 light_at 走 pipe.bg_light_at 而不是 ds.wide.iloc（实时帧不在宽表里）",
+        "本仓这一份的 light_at 走 pipe.bg_light_at 而不是 ds.wide.iloc"
+        "（实时帧不在宽表里）",
     "data/types.py":
-        "副本的 FixReport 多了 duplicate_count（页① 要报原始文件的重复时刻数）",
+        "本仓这一份的 FixReport 多了 duplicate_count（页① 要报原始文件的重复时刻数）",
     "data/timestamp.py":
-        "副本在 repair_axis 里数原始轴的重复时刻，填进 FixReport",
+        "本仓这一份在 repair_axis 里数原始轴的重复时刻，填进 FixReport",
 }
 
 
@@ -94,9 +98,9 @@ def diff(a: dict[str, str], b: dict[str, str]) -> list[str]:
     lines: list[str] = []
     for key in sorted(set(a) | set(b)):
         if key not in a:
-            lines.append(f"  只在 B（副本）：{key}")
+            lines.append(f"  只在 B（本仓这一棵）：{key}")
         elif key not in b:
-            lines.append(f"  只在 A（真源）：{key}")
+            lines.append(f"  只在 A（另一棵树）：{key}")
         elif a[key] != b[key]:
             lines.append(f"  内容不同：{key}")
     return lines
@@ -104,14 +108,13 @@ def diff(a: dict[str, str], b: dict[str, str]) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     here = pathlib.Path(__file__).resolve()
-    # here = <新项目>/backend/scripts/sync_backend.py
-    project = here.parents[2]                       # <新项目>
-    desktop = project.parent
-    ap = argparse.ArgumentParser(description="两份 tfield 副本的保真校验与同步")
-    ap.add_argument("--a", default=str(desktop / "空间温度场的构建" / "src" / "tfield"),
-                    help="真源（旧项目），默认按两个项目相邻推算")
+    # here = <本仓>/backend/scripts/sync_backend.py
+    project = here.parents[2]                       # <本仓>
+    ap = argparse.ArgumentParser(description="两棵 tfield 树的保真校验与同步")
+    ap.add_argument("--a", required=True,
+                    help="另一棵树（必填；本工具不猜路径）")
     ap.add_argument("--b", default=str(project / "backend" / "src" / "tfield"),
-                    help="副本（新项目）")
+                    help="本仓这一棵（默认就是它）")
     ap.add_argument("--check", action="store_true", help="只校验（默认动作）")
     ap.add_argument("--push", action="store_true", help="A → B")
     ap.add_argument("--pull", action="store_true", help="B → A")
@@ -123,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     a_dir, b_dir = pathlib.Path(args.a), pathlib.Path(args.b)
-    for name, d in (("真源 A", a_dir), ("副本 B", b_dir)):
+    for name, d in (("另一棵树 A", a_dir), ("本仓这一棵 B", b_dir)):
         if not d.is_dir():
             print(f"{name} 目录不存在：{d}", file=sys.stderr)
             return 2
