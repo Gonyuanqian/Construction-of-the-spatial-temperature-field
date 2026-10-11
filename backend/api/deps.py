@@ -28,12 +28,14 @@ from typing import Callable
 
 import pandas as pd
 
+from tfield.artifact import ArtifactError, ArtifactVersionError, PipelineArtifact
 from tfield.calibration import groups_signature
 from tfield.data.loader import HOLDOUT_CUTOFF, Holdout, load_dataset, split_holdout
 from tfield.data.types import Dataset
 from tfield.features import build_features
 from tfield.pipeline import FieldPipeline, PipelineConfig
 
+from . import models_store
 from .errors import NoDatasetError
 
 Capacity = int
@@ -97,8 +99,57 @@ NO_BUNDLE = ""
 _BORROWED_NOTE = "这一份模型的参数不是用当前这份数据标出来的 —— 参数照用，误差数不算它的成绩。"
 
 
+#: 成品读不动时，屏上要多的那一句。**两种错两句不同的话**（规格书 D7/D8）——
+#: 「格式我还不认识」要人做的是升级，而「字节坏了」要人做的是重新训一遍。
+#: 合成一句，这两种处境就分不开了。
+def _artifact_note(e: ArtifactError) -> str:
+    if isinstance(e, ArtifactVersionError):
+        return (f"这一条的成品读不动（格式是第 {e.found} 版，现在是第 "
+                f"{e.expected} 版），已退回现训。")
+    return "这一条的成品读不动（字节坏了），已退回现训。"
+
+
+def _artifact_of(bundle) -> tuple[bytes | None, str]:
+    """当前这一份模型该用的成品字节，以及读不动的理由。→ `(字节, 理由)`。
+
+    ⚠️ **认包、不认「当前那一行」。** `_build_pipeline` 手上这份包可能是
+    「刚跑完还没保存」的那一份（`current_bundle` 的 unsaved 档），它**没有行** ——
+    这时库里「当前」那一行的成品是**另一个模型**的，装上去就是凭空换了一个模型，
+    而屏上没有一个字会提示。用 `created_at` 判「手上这份包就是库里那一行」，
+    那是 `PipelineCache` 已经在用的包身份（`deps.py:81`）。
+
+    ⚠️ **不能用 `dataset_sig` + `groups_sig` 判**：重训一次得到的是同一份数据、
+    同一组特征，两列全等 —— 于是刚跑完还没保存的那一份会被判成「就是库里那一行」，
+    装上的是**上一次**的模型。
+
+    ⚠️ 库里那一行读不动时**不在这里报**：这条路上从来读过它，
+    为成品而新引入一次读，不该顺带新引入一种 500。真读不动时
+    `current_bundle()` 会在同一个请求里自己抛（它读的是同一行）。
+    """
+    if bundle is None:
+        return None, ""
+    mid = models_store.current_id()
+    if mid is None:
+        return None, ""
+    try:
+        other = models_store.load_bundle(mid)
+    except Exception:       # noqa: BLE001 —— 见上面那段：这条路上它从没读过库
+        return None, ""
+    if other is None or other.created_at != bundle.created_at:
+        return None, ""
+    raw = models_store.artifact_of(mid)
+    if raw is None:
+        return None, ""
+    try:
+        PipelineArtifact.from_bytes(raw)          # 只验，不在这里用
+    except ArtifactError as e:
+        return None, _artifact_note(e)
+    return raw, ""
+
+
 def _mark_calibrated(pipe: FieldPipeline, bundle, *,
-                     mismatch_note: str = "") -> FieldPipeline:
+                     mismatch_note: str = "",
+                     artifact_note: str = "") -> FieldPipeline:
     """把「配置从哪来」写进管线**自己**身上。
 
     路由层据此照实标注（spec §七 V3：兜底参数「不是最优，只是不在坏角上」，
@@ -109,9 +160,15 @@ def _mark_calibrated(pipe: FieldPipeline, bundle, *,
     ⚠️ `mismatch_note` 走关键字、带默认空串：它是 2026-10-10 才有的**第三档**
     （「已标定」里再分「本地的」与「借来的」），原先的两档调用点只有两个位置
     参数，不该被逼着一起改。
+
+    ⚠️ `artifact_note` 是**另一个格子**，不是 `mismatch_note` 的第二份用法。
+    `frontend/src/design/copy.ts:225` 的 `calibratedLabel` 用「`mismatch_note`
+    里有没有话」判「已标定（借来的）」—— 把成品的理由塞进那个格子，一份**本地**
+    的模型会在屏上自称「借来的」。
     """
     pipe.calibrated = bundle is not None        # type: ignore[attr-defined]
     pipe.mismatch_note = mismatch_note          # type: ignore[attr-defined]
+    pipe.artifact_note = artifact_note          # type: ignore[attr-defined]
     return pipe
 
 
@@ -134,16 +191,34 @@ def _borrowed(ds: Dataset, bundle) -> bool:
 
 
 def _build_pipeline(ds: Dataset, groups: tuple[str, ...], bundle) -> FieldPipeline:
-    """未标定走 `PipelineConfig.fallback()`（**不是最优，只是不在坏角上**）。
+    """有成品就装上（0.25 s），没有或读不动就现训（10~21 s）。
 
-    这条路在界面上必须标成「未标定」—— 兜底参数与标定后的数**同折族、不同参数**，
-    大小不可直接比。
+    未标定走 `PipelineConfig.fallback()`（**不是最优，只是不在坏角上**）——
+    这条路在界面上必须标成「未标定」。
+
+    ⚠️ **两条路都必须过 `_mark_calibrated`。** 装上成品那条路若绕开它，
+    `calibrated` / `mismatch_note` / `artifact_note` 三个属性就不在管线上，
+    而屏上那些 `getattr(pipe, ..., False)` 会静默退成「未标定」——
+    一份标定好的模型在页③ 上自称兜底参数。
     """
     cfg = bundle.config() if bundle is not None else PipelineConfig.fallback()
+    note = ""
+    if bundle is not None:
+        raw, note = _artifact_of(bundle)
+        if raw is not None:
+            art = PipelineArtifact.from_bytes(raw)
+            pipe = FieldPipeline(cfg, ds).restore(
+                art, fs=build_features(ds, groups))
+            return _mark_calibrated(
+                pipe, bundle,
+                mismatch_note=_BORROWED_NOTE if _borrowed(ds, bundle) else "",
+                artifact_note=note)
+
     pipe = FieldPipeline(cfg, ds).fit(build_features(ds, groups), ds)
     return _mark_calibrated(pipe, bundle,
                             mismatch_note=_BORROWED_NOTE if _borrowed(ds, bundle)
-                            else "")
+                            else "",
+                            artifact_note=note)
 
 
 class PipelineCache:
