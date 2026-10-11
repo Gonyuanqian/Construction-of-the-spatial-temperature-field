@@ -16,6 +16,7 @@ from .data.types import Dataset
 from .features import FeatureSet, add_feature_groups
 from .models.idw import AnisoMetric, IDWCorrector
 from .models.trend import TrendModel, make_trend
+from .artifact import PipelineArtifact
 
 
 def _fallback_metric() -> AnisoMetric:
@@ -68,14 +69,27 @@ class FieldPipeline:
     # ── 训练 ──
     def fit(self, fs: FeatureSet, ds: Dataset, *, exclude: Sequence[int] = ()) -> "FieldPipeline":
         self.ds = ds
-        self._fs = fs
         exclude = tuple(int(s) for s in exclude)
-        mask = ~np.isin(fs.sensor_id, exclude)
+        return self._assemble(fs, ~np.isin(fs.sensor_id, exclude))
+
+    def _assemble(self, fs: FeatureSet, mask: np.ndarray, *,
+                  trend: TrendModel | None = None) -> "FieldPipeline":
+        """趋势与 IDW 的装配。**`fit` 与 `restore` 共用这一段。**
+
+        `trend=None` ＝ 现训一个；给了就用给的那个（装成品走这条）。
+        ⚠️ 趋势那一步**必须由调用方定**，不能写在段里现训 —— 写在段里，
+        `restore` 就会把成品带来的趋势扔掉、当场重训一遍。结果**逐位相同**，
+        只是又花掉十几秒 —— 而那正是整件事要省掉的十几秒，屏上一点提示都没有。
+        ⚠️ 分成两份实现的话，`restore` 会随 `fit` 漂 —— 而漂的表现是
+        「新训的模型好好的，装回来的模型 IDW 差一点」，屏上没有任何提示。
+        """
+        self._fs = fs
         self._train_mask = mask
 
         X = fs.X.loc[mask]
         self._feature_names = tuple(X.columns)
-        self._trend = make_trend(self.cfg.trend_kind, self.cfg.trend_params).fit(X, fs.y[mask])
+        self._trend = (make_trend(self.cfg.trend_kind, self.cfg.trend_params).fit(X, fs.y[mask])
+                       if trend is None else trend)
         self._trend_all = self._trend.predict(fs.X)
 
         # 用内部版本而不是 self.residual_matrix()：后者带 _require_fitted() 门，
@@ -86,6 +100,45 @@ class FieldPipeline:
             fs.coords[src_ids], self._resid_matrix()[src_ids])
         self.fitted = True
         return self
+
+    # ── 成品：存下来、装回去（规格书 D2/D9）──
+    def capture(self) -> PipelineArtifact:
+        """把这一份训练好的模型存成**成品**。
+
+        ⚠️ `TOOL_VERSION` **在函数里导入**。`calibration.py` 在模块层
+        `from .pipeline import FieldPipeline, PipelineConfig`，所以模块层再
+        `import calibration` 就是 `pipeline → artifact → calibration → pipeline`
+        的循环，而 `calibration` 走到第三跳时 `FieldPipeline` 还没定义。
+        """
+        from .calibration import TOOL_VERSION
+        self._require_fitted()
+        assert self._trend is not None
+        return PipelineArtifact(
+            tool_version=TOOL_VERSION,
+            trend_kind=self.cfg.trend_kind,
+            feature_groups=tuple(self.cfg.feature_groups),
+            feature_names=tuple(self._feature_names),
+            metric=self.cfg.metric,
+            cross_shed=self.cfg.cross_shed,
+            n_times=self.n_times,
+            trend=self._trend,
+        )
+
+    def restore(self, artifact: PipelineArtifact, *, fs: FeatureSet) -> "FieldPipeline":
+        """把成品装进这条管线。**`fs` 必须来自当前数据集。**
+
+        成品里没有 `FeatureSet`，也没有残差 —— 趋势从成品来，其余全部现算。
+        理由见 `tfield/artifact.py` 的模块 docstring（IDW 是精确插值）。
+        """
+        names = tuple(fs.X.columns)
+        if names != tuple(artifact.feature_names):
+            raise ValueError(
+                f"成品记的特征列是 {tuple(artifact.feature_names)}，当前这份数据的"
+                f"特征列是 {names} —— 两者必须相同。")
+        # ⚠️ 成品出自一次**没有排除任何传感器**的 fit，所以每个传感器都在训练集里。
+        # 不设它的后果不在 restore 上：`source_sensor_ids()` 有 assert，切完模型
+        # 进实时模式、第一次接帧才当场 AssertionError。
+        return self._assemble(fs, np.ones(len(fs.X), dtype=bool), trend=artifact.trend)
 
     def _require_fitted(self) -> None:
         if not self.fitted:
