@@ -14,6 +14,7 @@ from tfield import config as C
 from tfield.calibration import groups_signature
 
 from .. import deps, jobs, models_store, ported
+from ..errors import NoDatasetError
 from .calibration import _jsonable
 
 router = APIRouter(tags=["models"])
@@ -25,6 +26,13 @@ _NAME_HINT = '请求体要长成 {"name": "棚里那套"} 这样。'
 #: 名字的长度上限。**等于列宽 `VARCHAR(120)`**：比它长的名字在严格模式下
 #: 会被 MySQL 报 1406（一个 500），在这里先拦成一句人话。
 _MAX_NAME = 120
+
+#: 没有数据集时，一行**没有成品**的模型要说的那句话。
+#:
+#: ⚠️ 这一档只在**没有数据集**时出现（规格书 D6）。有数据集时 `compatible`
+#: 一个字都没改 —— 特征组对不上是**输入类型**对不上，成品让**参数**不再依赖
+#: 数据，没让特征列不依赖。
+_NO_ARTIFACT_WHY = "这一条还没有成品，先导入数据集才能用"
 
 
 def _compat(row: models_store.ModelRow, ds, current_file: str) -> deps.ModelFit:
@@ -62,27 +70,42 @@ def list_models() -> dict[str, Any]:
     库里有就能挑）。`borrowed` = 能用、但这一份的参数**不是**为当前这份数据标
     的 —— 两轴各自的独立事实，屏上因此有三档：用不了 / 本地的 / 借来的。
 
-    没有数据集时**走 409**（`get_train_dataset` 抛 `NoDatasetError`，由
-    `main.py` 的全局 handler 翻）—— 与页②③⑤ 同一条闸门。没有数据集时
-    「哪一个模型能用」无从判断，而把十几行都标成「对不上」比一句
-    「先导入数据集」难读得多。
+    ⚠️ **没有数据集时不再 409**（规格书 D5）。这一格原先每次都要
+    `deps.get_train_dataset()`，于是「模型库」这个动作在没有数据集时整页打不开 ——
+    而「库里有哪些模型」这件事**本来就不需要数据集**。降级之后，能不能用成了
+    **这一行自己的性质**：有没有成品。
     """
-    ds = deps.get_train_dataset()
-    current_file = deps.current_dataset_path().name
+    try:
+        ds = deps.get_train_dataset()
+        current_file = deps.current_dataset_path().name
+    except NoDatasetError:
+        ds, current_file = None, None
+
     mid = models_store.current_id()
     rows: list[dict[str, Any]] = []
     for row in models_store.list_models():
-        fit = _compat(row, ds, current_file)
         d = row.to_dict()
-        d["compatible"] = fit.same_groups
-        # ⚠️ 用不了的行**不叫借来的**：那是「能借来用、但不是这份数据标的」的
-        # 意思。两轴都不对时两个标一起挂上去，读的人得先自己判哪个说了算。
-        d["borrowed"] = fit.same_groups and not fit.same_data
-        d["why"] = fit.why
+        if ds is None:
+            d["compatible"] = row.has_artifact
+            d["borrowed"] = False
+            d["why"] = "" if row.has_artifact else _NO_ARTIFACT_WHY
+        else:
+            fit = _compat(row, ds, current_file)
+            d["compatible"] = fit.same_groups
+            # ⚠️ 用不了的行**不叫借来的**：那是「能借来用、但不是这份数据标的」的
+            # 意思。两轴都不对时两个标一起挂上去，读的人得先自己判哪个说了算。
+            d["borrowed"] = fit.same_groups and not fit.same_data
+            d["why"] = fit.why
         d["is_current"] = row.id == mid          # 以 current_id 为准，不读那一列
         rows.append(d)
-    return {"rows": rows, "current_id": mid,
-            "dataset_file": current_file, "dataset_sig": ds.signature}
+    return {
+        "rows": rows,
+        "current_id": mid,
+        # ⚠️ 没有数据集时是 `None`，**不是空串**：空串与「数据集的文件名恰好是
+        # 空」在屏上长得一样，而前端要拿它决定「在比的是哪一份」那句话写不写。
+        "dataset_file": current_file,
+        "dataset_sig": None if ds is None else ds.signature,
+    }
 
 
 @router.get("/models/{model_id}")
@@ -164,7 +187,13 @@ def save_model(body: Any = Body(None)) -> dict[str, Any]:
 
     ds = deps.get_train_dataset()
     file = deps.current_dataset_path().name
-    row = models_store.save_model(name, got.bundle, ds, file)
+    # ⚠️ **在这一句拿管线**：`deps.get_pipeline()` 走 `current_bundle()`，
+    # 而此刻「当前那一份」就是刚跑完、还没保存的那一份（unsaved 档），
+    # 于是它正是要固化的这份模型的管线。放在 `save_model` 之后拿，
+    # 拿到的就是**刚写进去那一行**的管线，而不是这份。
+    pipe = deps.get_pipeline()
+    row = models_store.save_model(name, got.bundle, ds, file,
+                                  artifact=pipe.capture().to_bytes())
     jobs.retire_result()      # ← 保存成功即退场（规格书 §5.4）
     return row.to_dict()
 

@@ -334,12 +334,29 @@ def test_借来的那一行选得中_而且真的拿去构场(client):
     assert got.mismatch_note, "借来的必须如实报出来"
 
 
-def test_没有数据集时列表走_409(client, finish_job):
-    """与页②③⑤ 同一条闸门：没有数据集时「能不能用」无从判断。"""
+def test_没有数据集时列表降级_不是_409(client, finish_job):
+    """⭐ 规格书 D5：这一格原来走 409（`get_train_dataset` 抛 `NoDatasetError`）。
+
+    「模型库」这个动作在没有数据集时整页打不开，是这一轮要消掉的事 ——
+    「库里有哪些模型」本来就不需要数据集。降级之后「能不能用」成了**这一行
+    自己的性质**：有没有成品。
+
+    ⚠️ 判据（`compatible`）**一个字都没改**，改的只是「没有数据集时拿哪一轴
+    去判」—— 有数据集那一档仍走 `_compat`（规格书 D6）。这一条刚跑完就被保存，
+    成品与包**同一条 INSERT** 落库，所以它仍然能用。
+    """
     finish_job()
-    client.post("/api/models", json={"name": "x"})
+    row = client.post("/api/models", json={"name": "x"}).json()
     deps.clear_current_dataset()
-    assert client.get("/api/models").status_code == 409
+    r = client.get("/api/models")
+    assert r.status_code == 200, "没有数据集时模型库该降级，不是 409"
+    body = r.json()
+    assert body["dataset_file"] is None
+    assert body["dataset_sig"] is None
+    mine = [x for x in body["rows"] if x["id"] == row["id"]]
+    assert mine and mine[0]["has_artifact"] is True, "保存那一路该把成品写进去"
+    assert mine[0]["compatible"] is True, "有成品就够了 —— 参数已经固化"
+    assert mine[0]["why"] == "", "能用就不该有一句理由"
 
 
 def test_数据库连不上时列表接口报_500_并把原话带出来(raw_client, monkeypatch):
