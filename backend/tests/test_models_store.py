@@ -203,7 +203,8 @@ def test_列表不带包_只有一行字段(db, ds):
     assert "bundle" not in rows[0].to_dict()
     assert set(rows[0].to_dict()) == {
         "id", "name", "saved_at", "dataset_sig", "groups_sig", "data_file",
-        "data_start", "data_end", "mae", "rmse", "r2", "is_current"}
+        "data_start", "data_end", "mae", "rmse", "r2", "is_current",
+        "has_artifact"}
 
 
 def _drop_db(name: str) -> None:
@@ -266,3 +267,72 @@ def test_库还不存在时_第一次连会自建(monkeypatch):
         assert _has_db(name), "库还是没建起来"
     finally:
         _drop_db(name)
+
+
+# ── 成品那一列 ──────────────────────────────────────────────────────
+
+def test_建表语句跑两遍不炸(db):
+    """⭐ 规格书 D10。`CREATE TABLE IF NOT EXISTS` 对已存在的表是空操作，
+    所以给老库补 `artifact` 只能靠一条显式 ALTER；它必须幂等 ——
+    否则第二次启动就崩，而「第二次启动」就是常态。
+    """
+    db.init()
+    db.init()                    # 夹具已经一次；再两次，凑够「第二遍、第三遍」
+    conn = db.connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SHOW COLUMNS FROM model LIKE 'artifact'")
+            assert cur.fetchall(), "ALTER 没把 artifact 那一列加上"
+    finally:
+        conn.close()
+
+
+def test_存一份带成品的_取回来逐字节相同(db, ds):
+    raw = b"\x00\x01\x02 fake-artifact-bytes \xfe\xff"
+    row = db.save_model("带成品的一份", _real_bundle(), ds,
+                        "人参棚_原始.xlsx", artifact=raw)
+    assert row.has_artifact is True
+    assert db.artifact_of(row.id) == raw, "LONGBLOB 一个字节都不许变"
+
+
+def test_没有成品的那一行_artifact_of_给_None(db, ds):
+    """`None` 与「这一行不存在」是两件事，但都该是 `None` ——
+    不为「不存在」另造一个异常，调用方（`deps._artifact_of`）对两者的动作
+    完全一样：现训。
+    """
+    row = db.save_model("没成品的一份", _real_bundle(), ds, "人参棚_原始.xlsx")
+    assert row.has_artifact is False
+    assert db.artifact_of(row.id) is None
+    assert db.artifact_of(999999) is None
+
+
+def test_列表不搬成品也不搬包(db, ds):
+    """⭐ Review Focus：成品 0.9 MB、包 763 KB，而列一屏十几行。
+    快照里**不该有任何字段能装下它们** —— 快照里放了个能装的字段，
+    迟早有人把它填上。
+    """
+    db.save_model("带成品的一份", _real_bundle(), ds, "人参棚_原始.xlsx",
+                  artifact=b"\x00" * (1024 * 1024))
+    rows = db.list_models()
+    assert len(rows) == 1 and rows[0].has_artifact is True
+    names = {f.name for f in dataclasses.fields(rows[0])}
+    assert "artifact" not in names, "列表快照里不许有能装成品的字段"
+    assert "bundle" not in names, "列表快照里不许有能装包的字段"
+    assert len(str(rows[0].to_dict())) < 1024, "列表那一行不该拖着大字段"
+
+
+def test_列名清单里能查出有没有成品(db, ds):
+    """`_COLUMNS` 少写了 `artifact IS NOT NULL AS has_artifact` 时，
+    MySQL 会在 `r["has_artifact"]` 上抛 KeyError —— 但只在**有行**的时候才走到
+    那里。直接在刚建出来的空表上验一次列清单，比等一条数据流用例去撞它快。
+    """
+    db.save_model("一份", _real_bundle(), ds, "人参棚_原始.xlsx")
+    conn = db.connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT {db._COLUMNS} FROM model LIMIT 1")
+            r = cur.fetchone()
+    finally:
+        conn.close()
+    assert "has_artifact" in r
+    assert int(r["has_artifact"]) == 0

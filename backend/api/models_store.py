@@ -58,12 +58,17 @@ CREATE TABLE IF NOT EXISTS model (
   r2          DOUBLE       NULL,
   is_current  TINYINT(1)   NOT NULL DEFAULT 0,
   bundle      LONGTEXT     NOT NULL,
+  -- 成品：训练好的那一份里属于「模型」的字节（0.895 MB）。
+  -- LONGBLOB 不是 BLOB：BLOB 上限 64 KiB，而这一份 0.9 MB —— 会**静默截断**，
+  -- 而截断的成品在读回来时是「字节坏了」（回落现训），不是「存不进」。
+  artifact    LONGBLOB     NULL,
   KEY idx_current (is_current)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 """
 
 _COLUMNS = ("id, name, saved_at, dataset_sig, groups_sig, data_file, "
-            "data_start, data_end, mae, rmse, r2, is_current")
+            "data_start, data_end, mae, rmse, r2, is_current, "
+            "artifact IS NOT NULL AS has_artifact")
 
 
 def db_name() -> str:
@@ -76,6 +81,16 @@ def db_name() -> str:
 #: MySQL 的「这个库不存在」（`ER_BAD_DB_ERROR`）。第一次连时自建库表就靠认
 #: 这个错号 —— 见 `connect()` 里那一段。
 _ER_BAD_DB_ERROR = 1049
+
+#: MySQL 的「这一列已经在了」（`ER_DUP_FIELDNAME`）。补列语句靠认它保持幂等。
+#: 只认这一个错号，别的错号一律原样抛 —— 与 `connect()` 里「只认 1049」同一条
+#: 规则：糊成「那就当它在了吧」会把「表比代码旧」和「库根本没连上」变成同一件事。
+_ER_DUP_FIELDNAME = 1060
+
+#: 给老库补成品那一列。`CREATE TABLE IF NOT EXISTS` 对已存在的表是空操作，
+#: 所以新加一列必须有这一句，否则跑着的那台机器永远停在旧表上。
+_ALTER_ADD_ARTIFACT = ("ALTER TABLE model ADD COLUMN artifact LONGBLOB NULL "
+                       "AFTER bundle")
 
 
 def connect(*, with_db: bool = True):
@@ -126,6 +141,11 @@ def init() -> None:
         conn.select_db(db_name())
         with conn.cursor() as cur:
             cur.execute(_DDL_TABLE)
+            try:
+                cur.execute(_ALTER_ADD_ARTIFACT)
+            except pymysql.err.MySQLError as e:
+                if not (e.args and e.args[0] == _ER_DUP_FIELDNAME):
+                    raise
         conn.commit()
     finally:
         conn.close()
@@ -151,6 +171,8 @@ class ModelRow:
     rmse: float | None
     r2: float | None
     is_current: bool
+    #: 这一行有没有成品。**列表页只带这一个布尔**，不带那 0.9 MB 本身。
+    has_artifact: bool
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -160,6 +182,7 @@ class ModelRow:
             "data_start": self.data_start, "data_end": self.data_end,
             "mae": self.mae, "rmse": self.rmse, "r2": self.r2,
             "is_current": self.is_current,
+            "has_artifact": self.has_artifact,
         }
 
 
@@ -183,6 +206,7 @@ def _row(r: dict[str, Any]) -> ModelRow:
         rmse=None if r["rmse"] is None else float(r["rmse"]),
         r2=None if r["r2"] is None else float(r["r2"]),
         is_current=bool(r["is_current"]),
+        has_artifact=bool(r["has_artifact"]),
     )
 
 
@@ -259,6 +283,29 @@ def load_bundle(model_id: int) -> CalibrationBundle | None:
     return CalibrationBundle.from_json(str(r["bundle"]))
 
 
+def artifact_of(model_id: int) -> bytes | None:
+    """那一行里的成品字节。没有这一行、或这一行没有成品时给 `None`。
+
+    ⚠️ **不放进 `ModelRow`**：一屏十几行 × 0.9 MB 就是十几 MB 的响应体，
+    而列表页一个字都不用成品里的东西。
+
+    ⚠️ 返回的是 `bytes` —— `pymysql` 的 `LONGBLOB` 出来就是 `bytes`。别在这里
+    做 `from_bytes`：**是不是一份读得动的成品，是 `deps` 的判断**，
+    这一层只负责把字节原样搬出来（`None` / 坏字节 / 版本不对三种，
+    在 `deps._artifact_of` 里分成三件事）。
+    """
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT artifact FROM model WHERE id = %s", (model_id,))
+            r = cur.fetchone()
+    finally:
+        conn.close()
+    if r is None or r["artifact"] is None:
+        return None
+    return bytes(r["artifact"])
+
+
 def current_id() -> int | None:
     """当前模型的行号。**`ORDER BY id DESC LIMIT 1`，不是裸 `LIMIT 1`。**
 
@@ -278,7 +325,7 @@ def current_id() -> int | None:
 
 
 def save_model(name: str, bundle: CalibrationBundle, ds,
-               data_file: str) -> ModelRow:
+               data_file: str, *, artifact: bytes | None = None) -> ModelRow:
     """存一份**并置为当前**（规格书 D7：一个动作两个结果）。
 
     ⚠️ 置当前的两条 UPDATE 在**同一个事务**里：先全清零、再把这一行点起来。
@@ -289,6 +336,10 @@ def save_model(name: str, bundle: CalibrationBundle, ds,
     抄下来：包里只有 `dataset_sig`（一个 31 字符的派生签名），**没有文件名、
     没有时间范围**。不抄，「这份模型是拿哪一段数据训的」在库上就永远看不出来，
     而它正是用户点名要看的那一列。
+
+    ⚠️ `artifact` 走关键字、带默认 `None`：**它与包同生共死**（规格书 D3）——
+    同一条 INSERT，不在事务之外另写一次 UPDATE。中间那一瞬库里会有一行
+    「有包没成品」，而那正是「这一条还没有成品，选中时会现训一遍」的样子。
     """
     mae, rmse, r2 = report_metrics(bundle)
     ts = ds.wide[C.COL_TIMESTAMP]
@@ -302,12 +353,13 @@ def save_model(name: str, bundle: CalibrationBundle, ds,
             cur.execute("UPDATE model SET is_current = 0")
             cur.execute(
                 "INSERT INTO model (name, saved_at, dataset_sig, groups_sig,"
-                " data_file, data_start, data_end, mae, rmse, r2, is_current, bundle)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1, %s)",
+                " data_file, data_start, data_end, mae, rmse, r2, is_current,"
+                " bundle, artifact)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1, %s, %s)",
                 (name, now, bundle.dataset_sig, bundle.groups_sig, data_file,
                  start.to_pydatetime() if hasattr(start, "to_pydatetime") else start,
                  end.to_pydatetime() if hasattr(end, "to_pydatetime") else end,
-                 mae, rmse, r2, bundle.to_json()))
+                 mae, rmse, r2, bundle.to_json(), artifact))
             new_id = int(cur.lastrowid)
         conn.commit()
     finally:
