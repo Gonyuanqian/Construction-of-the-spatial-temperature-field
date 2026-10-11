@@ -15,7 +15,7 @@ function row(over: Partial<ModelRowPayload> = {}): ModelRowPayload {
     dataset_sig: 'a', groups_sig: 'b', data_file: 'f.xlsx',
     data_start: '2026-07-23T11:00:00', data_end: '2026-07-27T11:55:00',
     mae: 0.1, rmse: 0.2, r2: 0.99, is_current: true,
-    compatible: true, borrowed: false, why: '', ...over,
+    compatible: true, borrowed: false, why: '', has_artifact: true, ...over,
   }
 }
 

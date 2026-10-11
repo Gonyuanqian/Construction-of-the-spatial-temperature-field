@@ -1068,4 +1068,43 @@ describe('保存到模型库', () => {
     // 失败之后那一行还在，用户能看着那句话去处理 —— 不许悄悄收掉
     expect(w.text()).toContain(MODELS.saveTitle)
   })
+
+  it('保存那几秒里按钮说的是「正在固化成品」，并写明要十几秒', async () => {
+    // ⚠️ 固化 = 把拟合好的趋势存下来，所以保存这一路要**现训一遍**（十几秒）。
+    //    只写「保存中」，用户只会以为这台机器卡了 —— 这一条钉的就是那句解释。
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url)
+      if (u.includes('/api/models') && (init?.method ?? 'GET') === 'POST') {
+        await gate                                  // 卡在保存上，看那几秒的屏
+        return new Response(JSON.stringify({ id: 1, name: '棚里那套' }),
+          { status: 201, headers: { 'Content-Type': 'application/json' } })
+      }
+      const out = u.endsWith('/api/calibration') ? NEW : FEATURES
+      return new Response(JSON.stringify(out),
+        { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+
+    const w = mount(TrainView)
+    await flushPromises()
+    await w.get('input[name="model-name"]').setValue('棚里那套')
+    await w.findAll('button').find((b) => b.text() === MODELS.saveTitle)!
+      .trigger('click')
+    await flushPromises()
+
+    expect(w.findAll('button').find((b) => b.text() === MODELS.fixating),
+      '忙的时候按钮该说「正在固化成品」').toBeTruthy()
+    // ⚠️ **判的是按钮，不是整页的 `text()`**：那一行的 `<label for="model-name">`
+    //    **永远**印着 `MODELS.saveTitle`（它跟着输入框走，不是动作的一部分），
+    //    拿整页判就成了「这一条永远红」。要钉的是「忙的那几秒里**没有一个按钮**
+    //    还说保存」。
+    expect(w.findAll('button').some((b) => b.text() === MODELS.saveTitle),
+      '忙的时候按钮不该还说「保存到模型库」').toBe(false)
+    expect(w.text()).toContain(MODELS.fixatingWhy)
+
+    release()
+    await flushPromises()
+    expect(w.text()).not.toContain(MODELS.fixating)
+  })
 })

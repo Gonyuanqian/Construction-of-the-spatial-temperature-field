@@ -12,7 +12,7 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { BORROWED, calibratedLabel } from './copy'
+import { BORROWED, MODELS, calibratedLabel } from './copy'
 
 describe('标定图章', () => {
   it('没有包 → 兜底参数', () => {
@@ -45,4 +45,14 @@ describe('标定图章', () => {
     expect(calibratedLabel({ calibrated: false, mismatch_note: '借了别的' }))
       .toBe('未标定（兜底参数）')
   })
+})
+
+it('新增的四句文案不含屏上禁用的标点', () => {
+  // 后端那一条（`test_on_screen_copy.py` 的 BANNED）扫的是载荷字段；
+  // 前端这四句也上屏，同一把尺子量它们。
+  const banned = ['——', '**', '`', ' · ', '→', '↳']
+  for (const s of [MODELS.notSolid, MODELS.notSolidWhy,
+                   MODELS.fixating, MODELS.fixatingWhy]) {
+    for (const b of banned) expect(s).not.toContain(b)
+  }
 })

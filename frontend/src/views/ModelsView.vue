@@ -180,6 +180,12 @@ async function onSetCurrent(row: ModelRowPayload): Promise<void> {
                      那一列在讲它；不在这里再写一句通用解释。 -->
                 <span v-if="row.borrowed" class="stamp" :title="row.why">
                   {{ BORROWED }}</span>
+                <!-- 没有成品（规格书 D6/D7）：选它仍然能用，只是**参数**要现训
+                     一遍（十几秒）。`title` 上挂的是那句现训的代价 —— 图章只有
+                     三个字，说不清代价。 -->
+                <span v-if="!row.has_artifact" class="stamp" :title="MODELS.notSolidWhy">
+                  {{ MODELS.notSolid }}
+                </span>
               </td>
               <td>
                 {{ row.data_file }}
@@ -197,6 +203,12 @@ async function onSetCurrent(row: ModelRowPayload): Promise<void> {
                 <button type="button" @click="router.push(`/models/${row.id}`)">
                   {{ MODELS.view }}</button>
                 <span v-if="!row.compatible" class="note why">{{ row.why }}</span>
+                <!-- ⚠️ `&& row.compatible`：用不了的那一行，后端那句 `why` 已经说清了
+                     为什么不能选，再叠一句「这一条还没有成品」是把同一件事说两遍。
+                     这一句只在**能用、单单缺成品**时出现。 -->
+                <span v-if="!row.has_artifact && row.compatible" class="note why">
+                  {{ MODELS.notSolidWhy }}
+                </span>
               </td>
             </tr>
           </tbody>

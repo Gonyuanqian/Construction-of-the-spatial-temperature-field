@@ -169,6 +169,15 @@ export const MODELS = {
   current: '当前模型',
   setCurrent: '设为当前',
   view: '查看',
+  /** ⚠️ 「未固化」是**图章上那三个字**。完整的一句解释是后端
+   *  `routes/models.py` 的 `_NO_ARTIFACT_WHY`，跟着载荷的 `why` 到屏上 ——
+   *  前端**不另写**，与 `BORROWED` 那一节同一条规矩。 */
+  notSolid: '未固化',
+  notSolidWhy: '这一条还没有成品，选中时会用它的参数现训一遍',
+  /** 保存按钮在忙的那几秒。**说清它会慢** —— 现固化要重训一遍，
+   *  十几秒里只写「保存中」，用户只会以为这台机器卡了。 */
+  fixating: '正在固化成品',
+  fixatingWhy: '要重新训一遍才能固化，可能要十几秒',
 } as const
 
 /**

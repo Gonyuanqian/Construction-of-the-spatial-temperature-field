@@ -717,6 +717,14 @@ export interface ModelRowPayload {
   /** 说得出理由时那一句人话（借来的与用不了的都有）；两轴都对得上时是空串
    *  （不是 null —— 前端不用判两种空）。 */
   why: string
+  /**
+   * 这一行有没有**成品**（训练好的模型的字节，与包同生共死）。
+   *
+   * ⚠️ 有数据集时它与 `compatible` **无关** —— `compatible` 说的是特征组那一轴，
+   * 成品让**参数**不再依赖数据，没让特征列不依赖。
+   * **没有数据集**时它才是 `compatible` 的判据（后端 `routes/models.py`）。
+   */
+  has_artifact: boolean
 }
 
 export interface ModelsPayload {
@@ -724,9 +732,13 @@ export interface ModelsPayload {
   /** 当前模型的行号。一行都没有、或一行都没标当前时是 null。 */
   current_id: number | null
   /** 当前数据集的文件名。列表上那两行「对不上」的理由由后端算好，
-   *  这一格只是让前端有机会在页面上说清「在比的是哪一份」。 */
-  dataset_file: string
-  dataset_sig: string
+   *  这一格只是让前端有机会在页面上说清「在比的是哪一份」。
+   *
+   *  **没有数据集时是 null** —— 空串与「文件名恰好是空」在屏上长得一样。
+   */
+  dataset_file: string | null
+  /** 同上：没有数据集时是 null（`is_current` 那一格不受影响）。 */
+  dataset_sig: string | null
 }
 
 /**

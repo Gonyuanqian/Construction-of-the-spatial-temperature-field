@@ -138,6 +138,10 @@ export function makeLiveFramePayload(over: Partial<LiveFramePayload> = {}): Live
  *
  * 两条 `why` 都逐字取自后端 `api/deps.py` 的 `_GROUPS_WHY` 与那句话的模板：
  * 夹具里自己编一句，就等于前端测试钉的是一句后端永远不产出的话。
+ *
+ *   `has_artifact` 与 `compatible` 是**两轴**：第三行用不了是因为特征组，
+ *   不是因为没有成品。所以三行都是 true —— 要让「没有成品」这一档可测，
+ *   由用例自己 push 一行，不要改这三行（它们被多处用例当基线用）。
  */
 export function makeModelsPayload(): ModelsPayload {
   return {
@@ -154,6 +158,7 @@ export function makeModelsPayload(): ModelsPayload {
         data_start: '2026-07-23T11:00:00', data_end: '2026-07-27T11:55:00',
         mae: 0.1685, rmse: 0.2537, r2: 0.9987,
         is_current: true, compatible: true, borrowed: false, why: '',
+        has_artifact: true,
       },
       {
         id: 2, name: '上一份数据训的',
@@ -165,6 +170,7 @@ export function makeModelsPayload(): ModelsPayload {
         mae: 0.2210, rmse: 0.3104, r2: 0.9971,
         is_current: false, compatible: true, borrowed: true,
         why: '数据来源不同：别人家的棚.xlsx',
+        has_artifact: true,
       },
       {
         id: 3, name: '另一个特征组标的',
@@ -176,6 +182,7 @@ export function makeModelsPayload(): ModelsPayload {
         mae: 0.4402, rmse: 0.6019, r2: 0.9931,
         is_current: false, compatible: false, borrowed: false,
         why: '这一份是用别的特征组标出来的',
+        has_artifact: true,
       },
     ],
   }

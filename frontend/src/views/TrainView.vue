@@ -603,8 +603,11 @@ const residualOptions = computed(() => {
         <input id="model-name" name="model-name" type="text"
                :placeholder="MODELS.savePlaceholder" v-model="modelName" />
         <button type="button" :disabled="!modelName.trim() || saving" @click="onSave">
-          {{ MODELS.saveTitle }}
+          {{ saving ? MODELS.fixating : MODELS.saveTitle }}
         </button>
+        <!-- ⚠️ 只写「正在固化成品」不够：固化要**现训一遍**，那十几秒里用户
+             只会以为这台机器卡了。这一句连同按钮一起出现、一起消失。 -->
+        <span v-if="saving" class="note">{{ MODELS.fixatingWhy }}</span>
         <!-- ⚠️ `state` 不是随手贴的（`design/prose.test.ts` 是 spec §十二.11 的
              判据本身）：这一句只在**这一刻**成立 —— 这一份还没入库，存下去才
              成为全站当前模型。它随这一行一起出现、一起消失，与上面那句

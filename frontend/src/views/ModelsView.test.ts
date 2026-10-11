@@ -238,3 +238,66 @@ describe('模型库详情', () => {
     expect(w.text()).not.toContain('NaN')
   })
 })
+
+describe('没有成品的那一行（规格书 D6/D7、§七）', () => {
+  beforeEach(() => { installTokens(); vi.restoreAllMocks() })
+
+  /** 在三条基线后面再补一行「有成品但没固化」的。 */
+  function withNotSolid(p: ModelsPayload): ModelsPayload {
+    p.rows.push({
+      ...p.rows[0], id: 9, name: '刚存进来还没固化的一份',
+      is_current: false, compatible: true, borrowed: false,
+      has_artifact: false, why: '',
+    })
+    return p
+  }
+
+  it('盖「未固化」，并说清选中之后会现训一遍', async () => {
+    stub(withNotSolid(makeModelsPayload()))
+    const w = await mountAt('/models')
+    const row = w.findAll('tbody tr')
+      .find((r) => r.text().includes('刚存进来还没固化的一份'))!
+    // ⚠️ 「未固化」是**图章上那三个字**，与 `why` 是两件事：
+    //     `why` 是**后端**给的理由，那句话前端不另写。
+    expect(row.text()).toContain(MODELS.notSolid)
+    expect(row.text()).toContain(MODELS.notSolidWhy)
+  })
+
+  it('有成品的那一行不盖「未固化」', async () => {
+    // 上面那条的反面。少了它，一个「永远盖未固化」的实现照样全绿 ——
+    // 而它会让库里每一份模型都声称自己没固化。
+    stub(makeModelsPayload())
+    const w = await mountAt('/models')
+    const row = w.findAll('tbody tr')
+      .find((r) => r.text().includes('七月下旬那套'))!
+    expect(row.text()).not.toContain(MODELS.notSolid)
+  })
+
+  it('用不了的那一行只印后端那句 why，不再叠一句「没成品」', async () => {
+    // ⚠️ 两条理由会打架：`compatible: false` 时后端那句 `why` 已经说清了
+    // 为什么不能选，再叠一句「这一条还没有成品」是把同一件事说两遍。
+    // 所以那一句只在 `compatible` 为真、单单缺成品时出现。
+    const p = makeModelsPayload()
+    p.rows[2] = { ...p.rows[2], has_artifact: false }
+    stub(p)
+    const w = await mountAt('/models')
+    const row = w.findAll('tbody tr')
+      .find((r) => r.text().includes('另一个特征组标的'))!
+    expect(row.text()).toContain('这一份是用别的特征组标出来的')
+    expect(row.text()).toContain(MODELS.notSolid)          // 图章照盖：那是事实
+    expect(row.text()).not.toContain(MODELS.notSolidWhy)   // 解释只留一句
+  })
+
+  it('没有数据集时，那一句 why 是后端给的，前端逐字印它', async () => {
+    const p = makeModelsPayload()
+    p.dataset_file = null
+    p.dataset_sig = null
+    p.rows[0] = {
+      ...p.rows[0], compatible: false,
+      why: '这一条还没有成品，先导入数据集才能用',
+    }
+    stub(p)
+    const w = await mountAt('/models')
+    expect(w.text()).toContain('这一条还没有成品，先导入数据集才能用')
+  })
+})
