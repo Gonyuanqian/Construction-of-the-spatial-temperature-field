@@ -287,6 +287,41 @@ def test_建表语句跑两遍不炸(db):
         conn.close()
 
 
+def test_库已经在而表旧时_第一次连上就把那一列补回来(db, monkeypatch):
+    """⭐ 规格书 D10 的**另一半**：那条幂等的 ALTER 得**真的跑**。
+
+    `test_建表语句跑两遍不炸` 只证了它幂等 —— 而且它自己先调了 `init()`。
+    而用户那台机器上的库**早就在**（规格书 §二：id=1，2026-10-09，实测
+    `tfield_models.model` 里没有 `artifact` 这一列），于是 `connect()` 里那条
+    「库不存在才建」的支路**一次都不会走**，补列语句一句都不会跑。库在、表旧，
+    而 `_COLUMNS` 里带着 `artifact IS NOT NULL AS has_artifact` —— 模型库列表
+    与每一条走 `current_bundle()` 的构场/实时路由一起报 1054。
+
+    这里**从头到尾不调 `init()`**：要的正是「库已经在、只有一个普通连接」那条路。
+    `_ENSURED` 是进程级的一次性闸门，所以先把它按回未跑过
+    （`raising=False` 是为了这条用例在**修复之前**也跑得出那个 1054，
+    而不是先撞一个 AttributeError）。
+    """
+    conn = models_store.connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("ALTER TABLE model DROP COLUMN artifact")
+        conn.commit()
+    finally:
+        conn.close()
+    monkeypatch.setattr(models_store, "_ENSURED", False, raising=False)
+
+    assert models_store.list_models() == []          # 旧代码在这里报 1054
+
+    conn = models_store.connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SHOW COLUMNS FROM model LIKE 'artifact'")
+            assert cur.fetchall(), "第一次连上之后那一列该已经补回来了"
+    finally:
+        conn.close()
+
+
 def test_存一份带成品的_取回来逐字节相同(db, ds):
     raw = b"\x00\x01\x02 fake-artifact-bytes \xfe\xff"
     row = db.save_model("带成品的一份", _real_bundle(), ds,

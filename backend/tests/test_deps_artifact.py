@@ -17,6 +17,7 @@ import dataclasses
 
 import numpy as np
 import pytest
+from pymysql.err import OperationalError
 
 import conftest
 from api import deps, jobs, paths
@@ -240,6 +241,36 @@ def test_库里那一行的包读不动时当没有成品_不在这里报(clean_
     other = dataclasses.replace(tiny_bundle(), created_at="另一刻标出来的")
     assert deps._artifact_of(other) == (None, ""), (
         "库里那一行读不动，该当「这一条没有成品」，不是抛")
+
+
+def test_库自己读不动时_这一路也不许抛(clean_library, ds, fresh_cache, monkeypatch):
+    """⭐ Review Focus 4 的**另一半**：多读的那一次库，它**自己**可能读不动。
+
+    「刚跑完还没保存」那一档（`current_bundle` tier 1）到今天为止**完全不读库**
+    —— 那正是 MySQL 挂掉时构场仍能出图的原因。为了取成品，`_artifact_of` 多读了
+    两处库；只要它们抛出，屏上本来是好的请求就变成 500。上一条挡的是「库里那一行
+    的**包里**是坏数据」，这一条挡的是「**库这层**读不动」，两种都在这条路上。
+
+    ⚠️ 打的是真错号（2003 连不上），不是随便一个异常：这条守卫要挡的正是这一种。
+    """
+    orig_id = deps.models_store.current_id
+    clean_library.save_model("库里那一份", tiny_bundle(), ds,
+                             paths.dataset_path().name, artifact=b"TFART\x00")
+    other = dataclasses.replace(tiny_bundle(), created_at="另一刻标出来的")
+
+    def boom():
+        raise OperationalError(2003, "Can't connect to MySQL server")
+
+    # ① 认「当前那一行」那一步
+    monkeypatch.setattr(deps.models_store, "current_id", boom)
+    assert deps._artifact_of(other) == (None, ""), (
+        "current_id 抛出时该当「这一条没有成品」，不是把请求变成 500")
+    monkeypatch.setattr(deps.models_store, "current_id", orig_id)
+
+    # ② 取成品字节那一步。**必须**用与库里那一行 `created_at` 相等的包才走得到它
+    monkeypatch.setattr(deps.models_store, "artifact_of", boom)
+    assert deps._artifact_of(tiny_bundle()) == (None, ""), (
+        "artifact_of 抛出时该当「这一条没有成品」，不是把请求变成 500")
 
 
 def test_借来的那一份_两句话各在各的格子里(clean_library, ds, fresh_cache):

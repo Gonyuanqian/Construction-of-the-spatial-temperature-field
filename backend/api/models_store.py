@@ -92,6 +92,49 @@ _ER_DUP_FIELDNAME = 1060
 _ALTER_ADD_ARTIFACT = ("ALTER TABLE model ADD COLUMN artifact LONGBLOB NULL "
                        "AFTER bundle")
 
+#: 「这一版新加的列已经补过了吗」。**进程级**的一次性闸门 —— `connect()` 每个
+#: 请求都会调，而那条 DDL 只需要在第一次真的连上之后发一遍（见 `_ensure_columns`）。
+_ENSURED = False
+
+
+def _add_artifact_column(conn) -> None:
+    """给**已有的**表补成品那一列。幂等：只认 1060，别的错号原样抛。
+
+    `init()` 与 `connect()` 两条路共用这一句 —— 各写一遍的话，早晚会一处改了
+    一处没改，而表现是「新装的机器有这一列、老机器没有」这种最难查的分叉。
+    """
+    with conn.cursor() as cur:
+        try:
+            cur.execute(_ALTER_ADD_ARTIFACT)
+        except pymysql.err.MySQLError as e:
+            if not (e.args and e.args[0] == _ER_DUP_FIELDNAME):
+                raise
+
+
+def _ensure_columns(conn) -> None:
+    """连上以后补一次列（规格书 D10）。**一个进程里只真跑一遍。**
+
+    ⚠️ 这是这一版唯一一处**跨版本的状态迁移**，而 `CREATE TABLE IF NOT EXISTS`
+    对已存在的表是空操作 —— 只有这一句能把 `artifact` 补到**老库**上。不补，
+    跑着的那台机器就永远停在旧表上：`_COLUMNS` 里带着那一列，于是模型库列表、
+    构场、实时、标定**一起**报 1054。用户那台就是这种库 —— `model` 表建于
+    2026-10-09（规格书 §二），实测没有 `artifact`。
+
+    ⚠️ **接在普通连接上，不接在 `create_app()` 里**：放进启动，MySQL 没起来时
+    整个应用起不来。而本仓那条门槛「连不上要**大声报错**」指的是每次请求把原始
+    那句话报出来，不是把服务变成起不来。接在这里，第一台连上库的机器自己就把
+    表补上了。
+
+    ⚠️ 每条连接都判一次闸门，但只有第一次真发语句：补列是个写库的操作，而模型库
+    是每个请求都要读的东西 —— 每请求一次 DDL，第一个并发请求就会排在元数据锁上。
+    """
+    global _ENSURED
+    if _ENSURED:
+        return
+    _add_artifact_column(conn)
+    conn.commit()
+    _ENSURED = True
+
 
 def connect(*, with_db: bool = True):
     """开一条连接。**连不上就抛，绝不返回 None。**
@@ -122,17 +165,24 @@ def connect(*, with_db: bool = True):
     if with_db:
         kw["database"] = db_name()
     try:
-        return pymysql.connect(**kw)
+        conn = pymysql.connect(**kw)
     except pymysql.err.OperationalError as e:
         if not (with_db and e.args and e.args[0] == _ER_BAD_DB_ERROR):
             raise
-    # 库还不存在。`init()` 走的是 `with_db=False`，所以不会绕回这里。
-    init()
-    return pymysql.connect(**kw)
+        # 库还不存在。`init()` 走的是 `with_db=False`，所以不会绕回这里；
+        # 它自己把表建出来时已经带上新列了，这里不必再补。
+        init()
+        return pymysql.connect(**kw)
+    if with_db:
+        # 库在、**表可能还是旧的**：那是这一版唯一一处跨版本迁移，
+        # 靠的就是紧接在第一次连上之后补这一列（规格书 D10）。
+        _ensure_columns(conn)
+    return conn
 
 
 def init() -> None:
     """确保库与表都在。第一次连时自建（规格书 §四）。幂等。"""
+    global _ENSURED
     conn = connect(with_db=False)
     try:
         with conn.cursor() as cur:
@@ -141,14 +191,11 @@ def init() -> None:
         conn.select_db(db_name())
         with conn.cursor() as cur:
             cur.execute(_DDL_TABLE)
-            try:
-                cur.execute(_ALTER_ADD_ARTIFACT)
-            except pymysql.err.MySQLError as e:
-                if not (e.args and e.args[0] == _ER_DUP_FIELDNAME):
-                    raise
+        _add_artifact_column(conn)
         conn.commit()
     finally:
         conn.close()
+    _ENSURED = True          # 表是这一版建的，列一定在
 
 
 @dataclass(frozen=True)

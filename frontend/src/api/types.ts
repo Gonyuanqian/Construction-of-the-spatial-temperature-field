@@ -289,14 +289,14 @@ export interface CalibrationPayload {
    */
   mismatch_note: string
   /**
-   * 「这一条的成品读不动，已退回现训」那一句。空串表示没这回事。
-   *
-   * ⚠️ **是另一个字段，不是 `mismatch_note` 的第二种用法。**
-   * `copy.ts` 的 `calibratedLabel` 用「`mismatch_note` 里有没有话」判
-   * 「已标定（借来的）」—— 两件事共用一格，会让一份**本地**的模型在屏上
-   * 自称「借来的」，把数的来历整个说反。
+   * ⚠️ **这一条载荷上没有 `artifact_note`**，虽然页③ 与页⑤ 的载荷有那一格。
+   * 「成品读不动」是**构场那一路**的事实（`deps._artifact_note` 写在管线上，
+   * 由 `routes/field.py` 发出去）；而这一条来自 `routes/calibration.py`，
+   * 它不建管线，也就说不出成品读不读得动。在这里凭空加一格，就是让类型声称
+   * 一个后端从不发送的字段 —— 哪天有人在页② 印它，那是一个静默的
+   * `undefined`（`v-if` 恒假），而测试照样绿。要那一格，得先让那条路由
+   * 真的算出它来。
    */
-  artifact_note: string
   /**
    * ⚠️ 三个都是 `string | null`。它们来自标定包自身（生成时刻、工具版本、
    * 分组签名）；**没有包时整组都不存在**，线上就是 null，不是空串 ——

@@ -24,6 +24,7 @@ import sys
 
 import pytest
 from fastapi.testclient import TestClient
+from pytest import MonkeyPatch
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
@@ -39,6 +40,28 @@ QUERY = {"t_index": 12}
 @pytest.fixture(scope="module")
 def client() -> TestClient:
     return TestClient(create_app())
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _clean_cache():
+    """本模块用完，把管线缓存**原样交还**。
+
+    ⚠️ **借来的那一份的缓存键与交付包那一份完全相同** ——
+    `bundle_for_another_dataset()` 只换 `dataset_sig`，`created_at` 与交付包同，
+    而键里认的正是后者。于是这一份带着「借来的」那句话的管线会留在**模块级**的
+    `_PIPELINES` 里，被后面的文件当成交付包那一份命中：`test_api_field.py` 与
+    `test_api_volume.py` 断的恰好是交付包那一份的 `mismatch_note == ""`。
+    实测（两个文件一起跑、不带 `-m`）：`test_api_field.py::test_形状与状态码` 必红。
+
+    ⚠️ 用 `MonkeyPatch` 而不是 `monkeypatch` 夹具：那个是**函数级**的，而这里要
+    「整模块只清一次」—— 每格一清，四格就各 `fit()` 一次（十几秒 × 4）。换一个
+    新对象、退出时还原，本模块内四条用例仍共用同一份管线（下面 `_borrowed` 那段
+    说的是这件事）。
+    """
+    mp = MonkeyPatch()
+    mp.setattr(deps, "_PIPELINES", deps.PipelineCache())
+    yield
+    mp.undo()
 
 
 @pytest.fixture(autouse=True)

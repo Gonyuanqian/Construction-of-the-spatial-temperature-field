@@ -125,19 +125,25 @@ def _artifact_of(bundle) -> tuple[bytes | None, str]:
     ⚠️ 库里那一行读不动时**不在这里报**：这条路上从来读过它，
     为成品而新引入一次读，不该顺带新引入一种 500。真读不动时
     `current_bundle()` 会在同一个请求里自己抛（它读的是同一行）。
+
+    ⚠️ **三句读库一起进同一个 try**（Review Focus 4 的另一半）：`current_id()`
+    与 `artifact_of()` 早先漏在 try 外面，任一句抛出都会把「刚跑完还没保存」
+    那一档本来好用的请求变成 500 —— 而那一档（`current_bundle` tier 1）到今天
+    为止**根本不读库**，那正是 MySQL 挂掉时构场仍能出图的原因。读不动就当
+    「这一条没有成品」，退回现训：慢，但对。
     """
     if bundle is None:
         return None, ""
-    mid = models_store.current_id()
-    if mid is None:
-        return None, ""
     try:
+        mid = models_store.current_id()
+        if mid is None:
+            return None, ""
         other = models_store.load_bundle(mid)
+        if other is None or other.created_at != bundle.created_at:
+            return None, ""
+        raw = models_store.artifact_of(mid)
     except Exception:       # noqa: BLE001 —— 见上面那段：这条路上它从没读过库
         return None, ""
-    if other is None or other.created_at != bundle.created_at:
-        return None, ""
-    raw = models_store.artifact_of(mid)
     if raw is None:
         return None, ""
     try:

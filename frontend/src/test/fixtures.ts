@@ -260,8 +260,9 @@ export const PAGE_PAYLOADS: Record<string, unknown> = {
     source: null,
     // 没标过 → 就没有「借来的」这回事。⚠️ 这一格与上面的 `mismatch`
     // **不是一回事**（见 `types.ts` 那段）。
+    // ⚠️ 没有 `artifact_note`：这一条载荷的后端（`routes/calibration.py`）
+    // 从不发它。见 `types.ts` 里 `CalibrationPayload` 那段。
     mismatch_note: '',
-    artifact_note: '',
     groups_sig: null, dataset_sig: 's', feature_groups: [], trend_kind: 'xgboost',
     // 真实后端在空态下也发 8 + 4 行（`_panel` 与盘上有没有包无关）；
     // 这里给空数组，是为了让冒烟测试不依赖那十二个值 —— 面板的行怎么渲染
