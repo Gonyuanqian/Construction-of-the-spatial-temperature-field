@@ -164,6 +164,9 @@ python backend/scripts/sync_backend.py --pull --apply   # 副本 → 真源
 | `pipeline.py` | `append_live_frame` 与时间轴访问器（`n_times` / `timestamps` / `time_at` / `bg_light_at`） |
 | `validation/report.py` | 时间轴长度按实际行数算（训练段只剩 1164 行） |
 | `field/constraints.py` | `light_at` 走管线而不是宽表（实时帧不在宽表里） |
+| `artifact.py` | 整个文件：成品的字节格式（旧项目不存成品，它每页现训） |
+| `data/types.py` | `FixReport` 多了 `duplicate_count`（页① 要报原始文件的重复时刻数） |
+| `data/timestamp.py` | `repair_axis` 里数原始轴的重复时刻，填进 `FixReport` |
 
 `--push` / `--pull` **默认不碰**清单里的文件：`--push` 撞上它们会停下，
 要显式加 `--overwrite-known` 才覆盖（覆盖掉实时构场能力是不可逆的，

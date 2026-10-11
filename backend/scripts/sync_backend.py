@@ -44,6 +44,10 @@ KNOWN_DIVERGENCES: dict[str, str] = {
     "pipeline.py":
         "副本多了 append_live_frame、时间轴访问器 n_times / timestamps / time_at"
         " 与 bg_light_at",
+    "artifact.py":
+        "副本多了整个文件：训练好的模型的成品字节格式（模型库存成品用）。"
+        "旧项目不存成品 —— 它每页现训。与 pipeline.py 那一条同性质："
+        "副本多出来的东西，是有意的。",
     "validation/report.py":
         "副本的 ti 用 len(ds.wide) 而不是写死的 C.EXPECTED_ROWS（训练段只有 1164 行）；"
         "副本多了 out_of_fold_predictions 与 OOF_COLUMNS（页② 的精度图表要逐点逐时刻的"
