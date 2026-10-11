@@ -5,7 +5,7 @@
 
 **为什么走原始请求体不走 multipart**（规格书 §4.1）：FastAPI 的
 `UploadFile` / `File` / `Form` 需要 `python-multipart`，而它**不在
-`backend/requirements-api.txt` 里**（本机装了是因为环境里有 streamlit）。
+`backend/requirements-api.txt` 里**（本机装了，是环境里另外带进来的）。
 干净机器按 requirements 装完，带 `UploadFile` 的路由会让**整个应用起不来**
 （FastAPI 在注册路由时就抛），而「`requirements-api.txt` 一个字不改」
 是多份规格书的全局约束。

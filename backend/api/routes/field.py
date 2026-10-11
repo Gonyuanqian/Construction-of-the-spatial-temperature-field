@@ -130,9 +130,8 @@ def temp_range(*grids: np.ndarray) -> tuple[float, float]:
     三格共用一个范围是这张图存在的全部理由 —— 各自拉伸的话，
     同一个颜色在三个棚里代表不同温度，并排看就失去意义（spec §七 V5）。
 
-    退化保护（`vmax - vmin < 0.2` 时各让 0.1）与 Streamlit 版
-    `fig_sections` 里的那条**同一条规则**：不让色标塌成零宽，
-    否则一整张场是一个颜色，看起来像「处处一样温」。
+    退化保护（`vmax - vmin < 0.2` 时各让 0.1）是一条**独立的规则**：
+    不让色标塌成零宽，否则一整张场是一个颜色，看起来像「处处一样温」。
     """
     vals = np.concatenate([np.asarray(g)[np.isfinite(np.asarray(g))] for g in grids])
     if vals.size == 0:

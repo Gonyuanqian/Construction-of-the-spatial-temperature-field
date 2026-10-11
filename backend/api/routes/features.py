@@ -20,7 +20,7 @@ from .. import ported
 router = APIRouter(tags=["features"])
 
 #: 只为了问出「每一组会产出哪些列名」而存在的一行零。
-#: **它不是数据，从不进模型** —— 与 `app/app.py:420` 的 `_ZERO_LONG` 同一个手法。
+#: **它不是数据，从不进模型** —— 特征组函数要的是形状，不是值。
 _ZERO_LONG = pd.DataFrame({k: [0.0] for k in
                            ("x", "y", "z", "bg_temp", "bg_rh", "bg_light",
                             "hour", "frac_day")})

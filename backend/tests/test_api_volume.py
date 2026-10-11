@@ -3,7 +3,7 @@
 规格书 §4.5 立下的规矩与 P3 同一条：同一数据集、同一标定包、同一 `t_index`、
 同一 `preset`、同一 `monotonic` 下，接口返回的**每一片** `values` 必须与直接调用
 `tfield.field.build.field_at(...).values` **逐位相等**（NaN 位置也相同）。
-冻结的 Streamlit 渲染器不构成独立证据。
+冻住任何一个渲染器都不构成独立证据。
 
 整个文件是 slow：真 `fit()` 要几十秒。模块级 fixture 只 fit 一次，全文件复用。
 """

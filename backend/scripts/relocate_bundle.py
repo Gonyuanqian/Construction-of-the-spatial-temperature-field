@@ -20,7 +20,7 @@
 
 **删除规则**：只清理**新数据集所属项目目录里**的旧包。
     判据是「数据集在哪」，**不是**调用方给的 `--bundle` 说在哪 ——
-    后者可以被误指到旧项目的 configs/ 上，那一刀就落在别人几十分钟的
+    后者可以被误指到别处的 configs/ 上，那一刀就落在别人几十分钟的
     标定成果上，而且不可逆。
 """
 from __future__ import annotations
@@ -128,9 +128,9 @@ def main(argv: list[str] | None = None) -> int:
     # (b) 同一个项目：那个目录得在**新数据集所属的项目**里。
     #
     # 只看 (a) 是不够的，而且是危险的：`expected.parent` 完全来自调用方给的
-    # `--bundle`，把它误指到旧项目的 configs/（它的语义是「新包写到哪」，
+    # `--bundle`，把它误指到别处的 configs/（它的语义是「新包写到哪」，
     # 而重迁移时最顺手的写法正是「写回原处」），(a) 就成立了，
-    # unlink 直接落在旧项目那份不可逆的标定成果上。
+    # unlink 直接落在别处那份不可逆的标定成果上。
     # 所以 (b) 的判据取**数据集的位置**，那是调用方没法用 --bundle 绕开的。
     same_dir = old_bundle.parent.resolve() == expected.parent.resolve()
     same_project = is_within(old_bundle.parent, new_ds.parent)
