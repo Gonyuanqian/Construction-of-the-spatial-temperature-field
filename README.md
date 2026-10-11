@@ -1,20 +1,29 @@
-# 棚式空间温度场重建系统 · Vue 版
+# 棚式空间温度场重建系统
 
-同一份后端（`tfield`）的**第二种前端实现**，与 Streamlit 版并行存在、互不干扰。
-本仓库独立于 `../空间温度场的构建/`。
+FastAPI 后端 + Vue 3 前端的棚体空间温度场重建与可视化系统：导入一份棚里的
+温湿度与气象数据，标定出一套模型，然后把整个棚的空间温度场构建出来、并跟着
+实时帧一帧一帧回放。
 
-- 后端库与规格书：`../空间温度场的构建/`
-- **设计文档**：[`../空间温度场的构建/docs/superpowers/specs/2026-10-03-Vue前端-design.md`](../空间温度场的构建/docs/superpowers/specs/2026-10-03-Vue前端-design.md)
+## 先放数据集
 
-> ⚠️ **两个目录必须相邻**：设计文档不复制，靠相对路径引用。
-> 移动任何一个目录都会断开这个链接。
+**本仓库不带数据集** —— 克隆下来第一件事是把你手上那份 xlsx 放进 `backend/`：
+
+```
+backend/人参棚_多棚温湿度_气象时间对齐数据集.xlsx
+```
+
+- **位置**：`backend/` 下，与 `api/`、`src/`、`configs/` 同级。
+- **文件名**：必须逐字是这样。名字由 `backend/src/tfield/config.py` 的
+  `DATA_FILENAME` 写死，改一个字后端就找不到它。
+- 放好之后启动后端，页① 才会显示 `1308 个时刻 × 52 列`；没放时页① 是空态。
+- 它在 `.gitignore` 里，所以放进去**不会**出现在 `git status`，也不会被误提交。
+- 另有一个入口是页① 的上传（落在 `backend/configs/uploads/`）。但**后端那批
+  测试要的是 `backend/` 下这一份** —— 只靠上传的那一份跑不了测试。
 
 ## 端口
 
 | 端口 | 谁 |
 |---|---|
-| 8501 | 另一个项目 `software-shiyan/前端系统开发` —— **不要占** |
-| 8502 | Streamlit 版 —— **不要占** |
 | **8503** | 本项目的 FastAPI |
 | **5173** | Vite 开发服务器（仅开发时） |
 
@@ -72,8 +81,10 @@ npm run dev
 - 页② 的每一个数**原样来自标定包**。重算一遍会得到略微不同的数，
   于是页面上的数与 `configs/` 里那个包对不上。
 
-`api/ported.py` 是从旧项目 `app/app.py` **移植**过来的检查与文案。
-它是一个新的漂移面，靠 `tests/test_ported.py` 的源码文本比对盯着。
+`api/ported.py` 是**在 API 层另写一份**的检查与文案：那些纯函数与字符串原本
+长在早先那份实现里，而那一份的模块顶层就 import 了 Web 框架，Vue 侧 import
+不进来、塞进 `tfield` 又会与别处的副本永久漂移，所以照原样移植到 API 层。
+它是一个新的漂移面，靠 `tests/test_ported.py` 盯着。
 
 ## 实时模式
 
@@ -102,6 +113,10 @@ npm run dev
 cd backend  && python -m pytest -q -m "not slow"    # 后端
 cd frontend && npm run build && npm test             # 前端
 ```
+
+**跑后端测试之前先把数据集放到 `backend/` 下**（见开头那一节）：那批用例要真读
+那份 xlsx，没放就会红。另有十几条只跟库本身有关的用例带了守卫，数据集不在时
+**静默跳过** —— 于是「没放数据集」的表现是红与跳过混在一起，别把它当成环境坏掉。
 
 后端的测试**同样要 MySQL**，用的是另一个库 `tfield_models_test`
 （`tests/conftest.py` 里钉死：谁把它指到 `tfield_models` 上会**当场报错**，不会去清
@@ -141,30 +156,32 @@ Three），读的是 `dist/`。产物比源码旧、或 `dist/` 不存在时它*
    这一条最容易错，也最难自己发现 —— 错的时候画面上一切正常，只有一个
    不该存在的温度。（自动测试里钉着算法那一半，没钉几何那一半。）
 
-## `tfield` 是复制来的，会漂
+## `tfield` 会漂，工具让它看得见
 
-`backend/src/tfield/` 是 `../空间温度场的构建/src/tfield/` 的**逐字节副本**。
+`backend/src/tfield/` 是与 API 层解耦的核心库。同一份库在别的地方可能也有一份，
 两份一定会漂。漂移**不被阻止，但一定看得见**：
 
 ```bash
-python backend/scripts/sync_backend.py --check          # 0 = 一致，1 = 有差异（会列出文件）
-python backend/scripts/sync_backend.py --push --apply   # 真源 → 副本
-python backend/scripts/sync_backend.py --pull --apply   # 副本 → 真源
+python backend/scripts/sync_backend.py --a <另一棵 tfield 树> --check
+python backend/scripts/sync_backend.py --a <另一棵 tfield 树> --push --apply
+python backend/scripts/sync_backend.py --a <另一棵 tfield 树> --pull --apply
 ```
+
+`--a` 是另一棵树，`--b` 默认是本仓的 `backend/src/tfield`。**两个路径都必须给全**
+—— 没有猜的默认值，因为悄悄猜错一棵树比当场报错贵得多。
 
 不带 `--apply` 就是干跑。`--push` / `--pull` 只搬运、**不删除**。
 
-**但实时模式之后，两份 `tfield` 是「有意不同」了。** 旧项目不跑实时模式，
-所以副本里那几处改动是**不该**进旧项目的。清单写死在
-`backend/scripts/sync_backend.py` 的 `KNOWN_DIVERGENCES` 里：
+**本仓这一份与别处是「有意不同」的。** 实时模式那几处改动不该出现在别的树上，
+清单写死在 `backend/scripts/sync_backend.py` 的 `KNOWN_DIVERGENCES` 里：
 
-| 文件 | 副本多了什么 |
+| 文件 | 本仓这一份多了什么 |
 |---|---|
 | `data/loader.py` | 留出切分（`split_holdout`）与派生指纹 |
 | `pipeline.py` | `append_live_frame` 与时间轴访问器（`n_times` / `timestamps` / `time_at` / `bg_light_at`） |
 | `validation/report.py` | 时间轴长度按实际行数算（训练段只剩 1164 行） |
 | `field/constraints.py` | `light_at` 走管线而不是宽表（实时帧不在宽表里） |
-| `artifact.py` | 整个文件：成品的字节格式（旧项目不存成品，它每页现训） |
+| `artifact.py` | 整个文件：成品的字节格式（别处的实现不存成品，它每页现训） |
 | `data/types.py` | `FixReport` 多了 `duplicate_count`（页① 要报原始文件的重复时刻数） |
 | `data/timestamp.py` | `repair_axis` 里数原始轴的重复时刻，填进 `FixReport` |
 
@@ -179,8 +196,8 @@ python backend/scripts/sync_backend.py --pull --apply   # 副本 → 真源
 ## 标定包为什么在 `configs/` 里是那个怪名字
 
 `dataset_signature(path)` = `sha1(绝对路径 | mtime | 大小)[:16]` ——
-**绝对路径是数据集身份的一部分**。项目复制过来之后路径变了，指纹跟着变，
-`load_for` 就再也找不到原来的标定包（界面上表现为「还没有标定包」）。
+**绝对路径是数据集身份的一部分**。数据集连同标定包一起换了个位置之后，路径变了，
+指纹跟着变，`load_for` 就再也找不到原来的标定包（界面上表现为「还没有标定包」）。
 
 `scripts/relocate_bundle.py` 处理这件事：先用 sha256 证明两份数据集**内容逐字节相同**，
 再把包的 `dataset_sig` 改写成新指纹。**内容不同就拒绝迁移** —— 那必须重标。
@@ -190,21 +207,19 @@ cd backend
 python scripts/relocate_bundle.py \
   --bundle configs/bundle_0000000000000000_d6294c09.json \
   --dataset "人参棚_多棚温湿度_气象时间对齐数据集.xlsx" \
-  --original "../../空间温度场的构建/configs/bundle_9055b199eeee1293_d6294c09.json" \
-  --original-dataset "../../空间温度场的构建/人参棚_多棚温湿度_气象时间对齐数据集.xlsx" \
+  --original "<包原来所在的那个 configs>/bundle_9055b199eeee1293_d6294c09.json" \
+  --original-dataset "<数据集原来的那个位置>/人参棚_多棚温湿度_气象时间对齐数据集.xlsx" \
   --apply
 ```
 
 `--bundle` 传的是**占位名**：真实文件名里嵌的新指纹由脚本自己算出来，
 调用方不需要预先知道它。（所以上面这个包里没有真指纹的那串数字 —— 是故意的。）
 
-路径是 `../../` 而不是 `../`：两个项目是同级目录，从 `backend/` 往上两级才到桌面。
-
-脚本**不会删除** `../../空间温度场的构建/configs/` 里的旧包，所以旧项目的标定成果不受影响。
-真正决定删不删的是「旧包在不在**新数据集所属的项目**里」——
+脚本**不会删除** `--original` 那一侧的旧包，所以旧位置上的标定成果不受影响。
+真正决定删不删的是「旧包在不在**新数据集所属的那一份工程**里」——
 不是「跨不跨目录」，更不是调用方给的 `--bundle` 说在哪。
 （`--bundle` 的语义只是「新包写到哪」；重迁移时最顺手的写法是「写回原处」，
-所以拿它当删除判据，一刀就会落在别人不可逆的标定成果上。）
+所以拿它当删除判据，一刀就会落在别处不可逆的标定成果上。）
 
 脚本还会核对**包里记的指纹 == 旧数据集现在的指纹**。对不上就拒绝迁移 ——
 那说明旧数据集在标定之后被重新导出过，包里那套参数对它已经失效，
@@ -212,6 +227,6 @@ python scripts/relocate_bundle.py \
 
 ## `tfield` 必须保持框架无关
 
-`backend/src/tfield/**` **永远不得 `import fastapi` 或 `import streamlit`**。
-FastAPI 只活在 `backend/api/`。这条有测试守着
-（`tests/test_copy_fidelity.py::test_tfield_里不许出现框架导入`）。
+`backend/src/tfield/**` **永远不得 import 任何 Web 框架**（FastAPI 也不行）。
+服务层只活在 `backend/api/`。这条有测试守着
+（`tests/test_tfield_framework_free.py::test_tfield_里不许出现框架导入`）。
