@@ -115,8 +115,13 @@ cd frontend && npm run build && npm test             # 前端
 ```
 
 **跑后端测试之前先把数据集放到 `backend/` 下**（见开头那一节）：那批用例要真读
-那份 xlsx，没放就会红。另有十几条只跟库本身有关的用例带了守卫，数据集不在时
-**静默跳过** —— 于是「没放数据集」的表现是红与跳过混在一起，别把它当成环境坏掉。
+那份 xlsx，没放就会**红**。另有 13 个用例文件带了守卫（`test_data_path().exists()`），
+数据集不在时**静默跳过** —— 于是「没放数据集」的表现是红与跳过混在一起，
+别把它当成环境坏掉。
+
+同一种静默跳过还有一处：`test_spa_fallback.py` 那 10 条要
+`frontend/dist/index.html` 在才跑（生产形态的角色回退无从谈起），
+所以没构建过前端时后端是 `492 passed, 10 skipped`，构建过之后才满。
 
 后端的测试**同样要 MySQL**，用的是另一个库 `tfield_models_test`
 （`tests/conftest.py` 里钉死：谁把它指到 `tfield_models` 上会**当场报错**，不会去清
