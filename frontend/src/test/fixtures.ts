@@ -38,6 +38,11 @@ export function makeVolumePayload(over: Partial<VolumePayload> = {}): VolumePayl
     artifact_note: '',
     y_step: 0.5, y_min: 0, y_max: 18,
     x_min: 0, x_max: 2.1, z_max: 1.3017, max_measured_z: 2,
+    // 页⑤ 右栏「环境参数」那两格几何（后端算好的）。取值照
+    // `backend/src/tfield/config.py`：SHED_X_MAX − SHED_X_MIN = 2.1、SHED_Z_MAX = 1.3017。
+    // ⚠️ 与上面那三个数**自洽**（x_max − x_min 正好等于 shed_width）——
+    // 对不上会让「后端只管发、前端只管印」这条链子在夹具里就先断掉。
+    shed_width: 2.1, shed_height: 1.3017,
     vmin: 0, vmax: 5,
     // ⚠️ 26.5 而不是 `bg_temp` 那个 28.4：拱内均温本来就低于棚顶气温
     // （拱外是 NaN、顶部那条外推带又不算）。两个数相等会让「拿气温冒充均温」
@@ -277,6 +282,10 @@ export const PAGE_PAYLOADS: Record<string, unknown> = {
   // （气象、24 路读数、分级那几句）根本渲染不出来。
   '/api/live/status': makeLiveStatus({ state: 'ready', running: false, cursor: 3, total: 144 }),
   '/api/live/frame/': makeLiveFramePayload(),
+  // 页⑤ 三维那一块与右栏读的是**体网格**载荷（`/api/live/volume/{n}`）。
+  // ⚠️ 原先这张表里没有它：冒烟测试里那条请求拿 404，三维块静默只渲染一句
+  // 错误说明 —— 于是「右栏投进外壳之后还有没有东西」在这些测试里看不见。
+  '/api/live/volume/': makeVolumePayload(),
   // 次序无所谓：`matchPayload` 按前缀**长度从长到短**匹配，`/api/models/1`
   // 会赢过 `/api/models`（这个文件头那段注释说的就是这件事）。
   '/api/models': makeModelsPayload(),

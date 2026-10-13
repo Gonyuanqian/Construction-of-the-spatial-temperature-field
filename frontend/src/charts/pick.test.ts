@@ -60,6 +60,8 @@ function makeVolume(): VolumePayload {
     artifact_note: '',
     y_step: 0.5, y_min: 0, y_max: 18,
     x_min: 0, x_max: 2.1, z_max: 1.3017, max_measured_z: 2,
+    // 与 `x_max - x_min` 自洽的几何两格 —— 后端算好发下来的形状。
+    shed_width: 2.1, shed_height: 1.3017,
     vmin: 0, vmax: 5,
     mean: 26.5,
     x: [0, 0.7, 1.4, 2.1], z: [0, 0.7, 1.4, 2.1],
