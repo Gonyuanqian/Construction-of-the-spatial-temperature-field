@@ -61,11 +61,49 @@ async function mountApp() {
   return mount(App, { global: { plugins: [router] } })
 }
 
+// ⚠️ **一个测试文件只许调一次**（调第二次当场抛
+// `enableAutoUnmount cannot be called more than once` —— 2026-10-12 实跑撞上）。
+// 它设的是**整份文件**的钩子，所以抬到这里一次，下面两个 `describe` 一起用。
+enableAutoUnmount(afterEach)
+
 describe('应用外壳', () => {
   beforeEach(() => {
     installTokens()
     vi.restoreAllMocks()
   })
+
+  // ⚠️ 挂到 `/live` 会把 `theme-live` 加到 `documentElement` 上（`App.vue` 的
+  // `watchEffect`），**卸载时不会摘** —— 漏了它，后面每一条用例都跑在深色档上，
+  // 而 CSS 在 jsdom 里不生效、令牌又是手写的，所以**一条都不会红**。
+  // （`enableAutoUnmount` 那条在文件顶上，整份文件只调一次。）
+  afterEach(() => { document.documentElement.classList.remove('theme-live') })
+
+  /**
+   * 挂到某一路径上。⚠️ **必须挂在 `document.body` 上**：页③ 有一个
+   * `<Teleport to="#rail-extra">` 落点，页⑤ 新开的那个 `#shell-side` 同理 ——
+   * 字符串选择器的落点是在 **document** 上用 `querySelector` 找的，游离挂载时
+   * 找不到，Teleport 子树一个都不挂载（不报错）。
+   * 载荷走 `PAGE_PAYLOADS` 那一套真形状（这一个文件头已经在用它）：
+   * 这一组要断的正是「页⑤ 真的挂起来之后，外壳给右栏留了落点没有」。
+   *
+   * ⚠️ 与已有的 `mountApp()` 并列，**不去改它**：那个只会挂 `/`，改它会把
+   * 上面七八条既有用例一起挪到 `/live` 上去。
+   */
+  async function mountAt(path: string) {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const body = matchPayload(String(url))
+      if (body === undefined) {
+        return new Response('{"detail":"外壳测试不打这个接口"}', { status: 404 })
+      }
+      return new Response(JSON.stringify(body), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+    const router = createAppRouter(createMemoryHistory())
+    await router.push(path)
+    await router.isReady()
+    return mount(App, { attachTo: document.body, global: { plugins: [router] } })
+  }
 
   it('标题常驻，且用的是 copy.ts 那一个名字', async () => {
     stubFetch()
@@ -174,15 +212,48 @@ describe('应用外壳', () => {
       expect(document.documentElement.classList.contains('theme-live')).toBe(false)
     })
   })
+
+  it('实时那一屏有三栏，且右栏是一个真的落点', async () => {
+    // ⚠️ 落点必须由**这一层**渲染（`Vue` 的字符串落点是在 `document` 上找的，
+    // 而页⑤ 的内容是 `<Teleport to="#shell-side">` 投进来的）。
+    // 少了它：右栏整块消失，**不报错**。
+    const w = await mountAt('/live')
+    await flushPromises()
+    const aside = w.find('#shell-side')
+    expect(aside.exists(), '外壳没有给右栏留落点').toBe(true)
+    // 三栏是一列栅格，不是 flex 里塞三块 —— 后者的第三列会跟着内容漂。
+    expect(aside.classes()).toContain('shell-side')
+  })
+
+  it('训练侧没有右栏那一列', async () => {
+    // 反面：只在 /live 上加一列是本轮的全部要求；页①②③④ 的 DOM 逐字不变。
+    const w = await mountAt('/data')
+    await flushPromises()
+    expect(w.find('#shell-side').exists(), '训练侧也多了一列').toBe(false)
+    expect(w.find('.body').classes(), '训练侧的外壳被改成三栏了').not.toContain('live')
+  })
+
+  it('模式开关在实时那一屏挪进了中央列', async () => {
+    // 参考图的模式页签在中央工作区顶上，不在整屏顶上。
+    const w = await mountAt('/live')
+    await flushPromises()
+    expect(w.find('.page nav[aria-label="模式"]').exists(),
+      '模式开关还在横跨全宽的位置').toBe(true)
+    const train = await mountAt('/data')
+    await flushPromises()
+    expect(train.find('.page nav[aria-label="模式"]').exists(),
+      '训练侧的模式开关也被挪进去了').toBe(false)
+  })
 })
 
 
 describe('数据集闸门与重挂载', () => {
+  // `enableAutoUnmount(afterEach)` 2026-10-12 抬到文件顶上了 —— 一个文件只许调一次。
   // 外壳要挂到 document.body 上：页③ 有一个 `<Teleport to="#rail-extra">` 落点，
   // 而字符串选择器的落点是在 **document** 上用 `querySelector` 找的 ——
   // 游离挂载时找不到落点，Teleport 子树一个都不挂载，下一次重渲染就对着
   // 从未挂载的旧 vnode 调 `patchElement` → 崩。与 routes.smoke.test.ts 同一个理由。
-  enableAutoUnmount(afterEach)
+  // （挂载的收尾由文件顶上那一句 `enableAutoUnmount` 管。）
 
   const JSON_HEAD = { 'Content-Type': 'application/json' }
 

@@ -93,10 +93,23 @@ watchEffect(() => {
 
 <template>
   <TitleBar />
-  <ModeSwitch v-model="mode" />
-  <div class="body">
+  <!-- ⚠️ **两处 `<ModeSwitch>` 是有意的**（2026-10-12 页⑤ 仪表盘）。
+       参考图的模式页签在**中央工作区顶上**，而不是横跨整屏；而页①②③④
+       那四页要维持现状（用户裁定「只需要改动实时模式的页面」）。
+       两个 `<ModeSwitch>` 共用一个 `v-model`，所以「开关显示哪个模式」
+       与「现在在哪一页」仍然不可能对不上。 -->
+  <ModeSwitch v-if="!isLive" v-model="mode" />
+  <div class="body" :class="{ live: isLive }">
     <NavRail :items="railItems" />
+    <!-- ⚠️ 右栏的**落点**。位置在源码里放在 `main` **前面**：
+         字符串选择器的 Teleport 是在挂载期用 `document.querySelector` 找的，
+         落点必须在那一页的组件挂起来之前就进文档 —— 放在后面能跑通全靠
+         同一次 patch 里的次序，而那是实现细节，不是承诺。
+         它**不在 `.page` 里面**：`.page` 是滚动容器，右栏做进它里面，
+         内容一超一屏就跟着滚出去，「参数栏」就不成立了（规格书 §三 D1）。 -->
+    <aside v-if="isLive" id="shell-side" class="shell-side" />
     <main class="page">
+      <ModeSwitch v-if="isLive" v-model="mode" />
       <RouterView v-if="!gate" :key="dataset.version.value" />
       <NoDataset v-else />
     </main>
@@ -120,4 +133,48 @@ watchEffect(() => {
   overflow: hidden;
 }
 .page { flex: 1 1 auto; min-width: 0; padding-right: var(--gap-l); overflow-y: auto; }
+
+/* ── 实时那一屏的三栏（2026-10-12 用户裁定） ──────────────────────────
+   `.body.live` 把外壳从「导航 + 内容」换成三列：左 210px（`--sidebar-w`
+   在实时那一档的取值）、中自适应、右 390px（`--side-w`）。
+   ⚠️ 三块都用 `grid-area` **显式定位**，不靠自动排列：自动排列会按源码次序
+   填格，而窄屏那一档（只有两列）会把 `main` 排到第二行的第一格 ——
+   也就是塞到导航底下。显式定位与源码次序无关。
+   ⚠️ 中列写 `minmax(0, 1fr)` 而不是 `1fr`：写成 `1fr` 时格子的下限是
+   **内容宽度**，画布会先把页宽撑破，而不是自己缩（与页① 那条左右分栏同一条理由）。 */
+.body.live {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--side-w);
+  grid-template-rows: minmax(0, 1fr);
+}
+.body.live > .rail { grid-area: 1 / 1 / 2 / 2; }
+.body.live > .page { grid-area: 1 / 2 / 2 / 3; }
+/* 右栏自己是一个竖排的列：里面那几张卡的间距由这里的 `gap` 说了算，
+   页⑤ 因此不必给每张卡再写一个下边距。 */
+.shell-side {
+  grid-area: 1 / 3 / 2 / 4;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-m);
+  min-width: 0;
+  overflow-y: auto;
+}
+/* 1200–1440px：右栏收窄。参考图那 390px 在 1280 的屏上是「中央只剩 680px」，
+   三维会紧得看不出棚体（规格书 §九 第一条风险）。 */
+@media (max-width: 1439px) {
+  .body.live { grid-template-columns: var(--sidebar-w) minmax(0, 1fr) 320px; }
+}
+/* < 1200px：右栏落到中央列**下方**，两栏变一栏 —— 左右不挤，也不出横向滚动条。 */
+@media (max-width: 1199px) {
+  .body.live {
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .body.live > .rail { grid-area: 1 / 1 / 3 / 2; }
+  .body.live > .page { grid-area: 1 / 2 / 2 / 3; }
+  .shell-side {
+    grid-area: 2 / 2 / 3 / 3;
+    max-height: 42vh;
+  }
+}
 </style>
