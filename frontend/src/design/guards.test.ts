@@ -79,6 +79,11 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
       '--size-h3', '--size-chart-axis', '--size-chart-title',
       // 残差图的柱子色（页②，2026-10-08 走查时从 `--steel` 换过来的）。
       '--bar',
+      // 页⑤ 仪表盘重做（2026-10-12）。登记的用处不是「存在」，是**被删掉会红**：
+      // 浅色那一档全部取等值，页①②③④ 一个像素不动。
+      '--header', '--on-face', '--face-dim', '--interact', '--card-2', '--ok',
+      // 版式那两个（同一轮）。标题条高度与右栏宽度只在 /live 上离开默认值。
+      '--titlebar-h', '--side-w',
     ]
     const missing = need.filter((t) => !css.includes(`${t}:`))
     expect(missing, `tokens.css 少了这些令牌：${missing.join('、')}`).toEqual([])
