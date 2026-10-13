@@ -47,4 +47,21 @@ describe('沿棚均温曲线', () => {
     expect(opt.yAxis.axisLabel.color).toBe(P.inkMuted)
     expect(opt.series[0].lineStyle.color).toBe(P.leaf)
   })
+
+  it('线加粗、补一块面积底 —— 深底上细线读不出形状', () => {
+    // 2026-10-12：这一屏的底换成深蓝之后，原来 1.4px 的线在上面只剩一条
+    // 若有若无的痕（参考图那条线粗得多，而且带一层同色的面积底）。
+    // ⚠️ 颜色仍走 `p.leaf` —— 「同一个数在哪儿都是同一个颜色」那条没变，
+    // 变的只是**粗细与底**。
+    const opt = buildLiveMeanCurveOption(makeVolumePayload(), P) as {
+      series: {
+        lineStyle: { color: string; width: number }
+        areaStyle?: { color: string; opacity: number }
+      }[]
+    }
+    expect(opt.series[0].lineStyle.color).toBe(P.leaf)
+    expect(opt.series[0].lineStyle.width, '细线在深蓝底上没有存在感')
+      .toBeGreaterThanOrEqual(2.5)
+    expect(opt.series[0].areaStyle, '没有面积底就只是一条飘着的线').toBeTruthy()
+  })
 })
