@@ -18,15 +18,49 @@
  * （spec 2026-10-03 §5.1）。搬上来的第二个理由更硬：`/live` 收起导航，
  * 导航不在时原来那一行也跟着没了 —— 实时那一屏恰恰最需要确认后端是哪一个。
  */
-import { onMounted } from 'vue'
+
+import { computed, onMounted, onUnmounted, ref, watchEffect } from 'vue'
+import { useRoute } from 'vue-router'
 
 import { getJson } from '../api/client'
 import { useAsync } from '../composables/useAsync'
 import { MODELS, SYSTEM_TITLE } from '../design/copy'
+import { fmtClock } from '../design/format'
 
 const health = useAsync(() => getJson<{ status: string; version: string }>('/api/health'))
 
+/**
+ * ⚠️ 这一句是**执行时补上的**，计划的替换稿里没有它：`useAsync` **不自己跑**
+ * （它的 `run()` 自带一条防串号的 `seq` 守卫，所以发起权必须在调用方），
+ * 少了这一句 `health.data.value` 永远是 `null` —— 那枚 `.ok` 点永不出现，
+ * 而既有的「库版本 0.1.0」「后端没起」两条也会跟着红。
+ */
 onMounted(() => void health.run())
+
+const route = useRoute()
+const isLive = computed(() => route.path.startsWith('/live'))
+
+/**
+ * 本机挂钟（2026-10-12 用户裁定「顶栏可以放当前时间，顶栏的当前时间为本机的时间」）。
+ *
+ * ⚠️ **它与概览三格里的「本帧时刻」是两件事**，这正是它成立的理由：
+ *   顶栏这一枚说的是「现在几点」，来自 `new Date()`，**不会倒退**；
+ *   概览那一枚说的是「手上这一帧的数据时刻」，来自后端的 `cursor` ——
+ *   帧历史在内存里，服务一重启就回到第 0 帧。
+ * 所以它**不参与任何构场逻辑**：这一屏真正的时间轴永远来自服务端。
+ *
+ * 每一秒重算一次，屏上每分钟跳一格（`fmtClock` 只到分钟）——
+ * 一秒一跳是为了让分钟那一位在整分上翻，而不是慢一个周期才翻。
+ * ⚠️ 只在实时那一屏上开定时器：训练侧那四页一个像素都不该为它重渲染。
+ */
+const now = ref(new Date())
+let timer: ReturnType<typeof setInterval> | undefined
+
+watchEffect(() => {
+  if (timer) { clearInterval(timer); timer = undefined }
+  if (isLive.value) timer = setInterval(() => { now.value = new Date() }, 1000)
+})
+onUnmounted(() => { if (timer) clearInterval(timer) })
 </script>
 
 <template>
@@ -49,7 +83,15 @@ onMounted(() => void health.run())
           <path d="M6.5 9.2h3" />
         </svg>
       </RouterLink>
+      <!-- 本机挂钟（2026-10-12）。⚠️ **与概览三格里的「本帧时刻」是两件事**：
+           这一枚是「现在几点」、不会倒退；那一枚是「手上这一帧的数据时刻」、
+           重启就回到第 0 帧。各自带标签，不合并。 -->
+      <p v-if="isLive" class="clock">
+        <span class="clock-label">本机时间</span>
+        <span class="num">{{ fmtClock(now) }}</span>
+      </p>
       <p class="backend">
+        <span v-if="isLive && health.data.value" class="ok" aria-hidden="true" />
         <template v-if="health.error.value">后端：{{ health.error.value }}</template>
         <template v-else-if="health.data.value">
           后端：{{ health.data.value.status }}，库版本
@@ -111,4 +153,27 @@ onMounted(() => void health.run())
   border-radius: var(--radius);
 }
 .to-models:hover { color: var(--face-dim); }
+
+/* 本机挂钟。次要文字那一档 —— 它是给「现在」对表用的，不是数据。 */
+.clock {
+  margin: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--gap-s);
+  color: var(--face-dim);
+  font-size: var(--size-label);
+}
+.clock-label { font-size: var(--size-note); }
+/* 后端正常那枚点（参考图顶栏右上角那一个）。⚠️ **只在实时那一屏**上挂
+   （模板里的 `v-if="isLive"`）：加在训练侧就是四页一起改，本轮不许。
+   颜色走 `--ok`，浅色档取 `var(--leaf)`。 */
+.ok {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: var(--gap-s);
+  border-radius: 50%;
+  background: var(--ok);
+  vertical-align: middle;
+}
 </style>

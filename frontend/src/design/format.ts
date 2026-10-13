@@ -25,3 +25,17 @@ export const fmt1 = (v: number): string => v.toFixed(1)
 /** `38.9 至 48.8 °C`。区间用「至」—— 被禁的是 `—` 与 `→` 那类连接符（spec §8.5）。 */
 export const fmtRange = (lo: number, hi: number, unit = ''): string =>
   `${fmt1(lo)} 至 ${fmt1(hi)}${unit ? ` ${unit}` : ''}`
+/**
+ * 本机挂钟：`HH:MM`，**本地时区**。
+ *
+ * ⚠️ **不许写成 `fmtTime(new Date().toISOString())`** —— `toISOString()` 是
+ * **UTC**，在东八区会把上午十点印成凌晨两点，而屏上一切正常。
+ * 本仓要的是「本机的时间」（2026-10-12 用户原话）。
+ *
+ * 与 `fmtTime` 分开而不是合一：那个吃的是**后端给的朴素本地时间字符串**
+ * （`'2026-07-27T12:00:00'` → `'2026-07-27 12:00'`，不做任何时区换算），
+ * 两边的输入根本不是一种东西。放同一个文件里，是因为「时间怎么印」
+ * 只该有一个地方回答。
+ */
+export const fmtClock = (d: Date): string =>
+  `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
