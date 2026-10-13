@@ -202,13 +202,17 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
     expect(hexes, `palette.ts 不许重打色值：${hexes.join('、')}`).toEqual([])
   })
 
-  it('温度色标是正向 cividis，不是 cividis_r', () => {
+  it('温度色标是正向 turbo，不是它的反向', () => {
     const css = readFileSync(join(SRC, 'design', 'tokens.css'), 'utf8')
-    expect(css).toMatch(/--temp-scale:\s*cividis\s*;/)
+    expect(css).toMatch(/--temp-scale:\s*turbo\s*;/)
     // 全仓不许出现反向色标的名字 —— spec §8.1 记着这个坑：
     // 用反了的话图会整张读反，而屏上不会报任何错。
-    const bad = [...VUE, ...TS].filter((p) =>
-      readFileSync(p, 'utf8').includes('cividis_r'))
+    // ⚠️ 两个反向名一起扫：换 turbo 只是换了哪一条色标，
+    // 「反向」这件事本身照旧不该在仓里出现。
+    const bad = [...VUE, ...TS].filter((p) => {
+      const t = readFileSync(p, 'utf8')
+      return t.includes('cividis_r') || t.includes('turbo_r')
+    })
     expect(bad.map((p) => p.slice(SRC.length))).toEqual([])
   })
 
@@ -220,8 +224,11 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
     // charts/scale.ts 例外但**定点**：文件里的十六进制必须与两条色标的采样点
     // 集合**相等** —— 多一个（夹带了别的颜色）红，少一个（被删了）也红。
     // 早先这个例外挂在 options/diurnalResidual.ts 上，色标搬到 scale.ts 之后
-    // 必须一起搬：守卫指着一个不再含色值的文件，等于那七个值从此没人守。
-    const TEMP_STOPS = ['#00224E', '#12456F', '#4C6C7F', '#7C7B78', '#BE8353', '#EB9A31', '#FFE945']
+    // 必须一起搬：守卫指着一个不再含色值的文件，等于那九个值从此没人守。
+    // ⚠️ 2026-10-12 换 turbo 时**一起改**：漏改的话 `charts/scale.ts` 里那九个
+    // 新值会全部被判成「多出的色值」，而这个文件正好也在同一次提交里。
+    const TEMP_STOPS = ['#30123B', '#4675ED', '#1BCFD4', '#61FC6C', '#D1E834',
+      '#F6A12A', '#F04D02', '#B10A01', '#7A0403']
     const DELTA_STOPS = ['#053061', '#2166AC', '#4393C3', '#92C5DE', '#D1E5F0', '#F7F7F7',
       '#FDDBC7', '#F4A582', '#D6604D', '#B2182B', '#67001F']
     const TOKENS = 'design/tokens.css'

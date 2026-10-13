@@ -104,25 +104,26 @@ describe('V2 的 option', () => {
     expect(heat.data).toHaveLength(4)
   })
 
-  it('全图的颜色只来自调色板与正向 cividis，没有第八个颜色', () => {
+  it('全图的颜色只来自调色板与正向 turbo，没有第八个颜色', () => {
     const o = buildDiurnalResidualOption(TS, TH, 'p1', PALETTE)
     const flat = JSON.stringify(o)
     // 先证明「它真的画了颜色」—— 否则下面那条 foreign 会在「一个色都没有」时空转通过。
     // 这五个是 V2 真正用到的令牌色（paper/ink/inkMuted/steel/leaf）。
     const used = [PALETTE.paper, PALETTE.ink, PALETTE.inkMuted, PALETTE.steel, PALETTE.leaf]
     for (const c of used) expect(flat.toUpperCase()).toContain(c.toUpperCase())
-    // cividis 是**色标名**不是颜色，canvas 的渐变要的是真颜色，只能写成字面量。
-    const cividis = ['#00224E', '#12456F', '#4C6C7F', '#7C7B78', '#BE8353', '#EB9A31', '#FFE945']
-    const allowed = new Set([...paletteColors(PALETTE), ...cividis].map((c) => c.toUpperCase()))
+    // turbo 是**色标名**不是颜色，canvas 的渐变要的是真颜色，只能写成字面量。
+    const tempScale = ['#30123B', '#4675ED', '#1BCFD4', '#61FC6C', '#D1E834',
+      '#F6A12A', '#F04D02', '#B10A01', '#7A0403']
+    const allowed = new Set([...paletteColors(PALETTE), ...tempScale].map((c) => c.toUpperCase()))
     const hexes = [...flat.matchAll(/#[0-9A-Fa-f]{6}/g)].map((m) => m[0].toUpperCase())
     const foreign = [...new Set(hexes.filter((h) => !allowed.has(h)))]
-    expect(foreign, `这些色不在调色板或 cividis 里：${foreign.join('、')}`).toEqual([])
-    // 正向 cividis：最低温深蓝、最高温亮黄。若某处误用了反向色标，这条会红。
+    expect(foreign, `这些色不在调色板或温度色标里：${foreign.join('、')}`).toEqual([])
+    // 正向 turbo：最低温暗紫蓝、最高温暗红。若某处误用了反向色标，这条会红。
     const vm = o.visualMap as { inRange: { color: string[] } }
-    expect(vm.inRange.color[0]).toBe('#00224E')
-    expect(vm.inRange.color[vm.inRange.color.length - 1]).toBe('#FFE945')
+    expect(vm.inRange.color[0]).toBe('#30123B')
+    expect(vm.inRange.color[vm.inRange.color.length - 1]).toBe('#7A0403')
     // visualMap 必须**只**作用在热图上。不写 seriesIndex 时，ECharts 5 会
-    // 按「最后一个维度」给所有 series 染色 —— 两条折线也会被 cividis 重染，
+    // 按「最后一个维度」给所有 series 染色 —— 两条折线也会被色标重染，
     // 而折线的调色板色仍留在 lineStyle 里，上面那几条会静默通过。
     const seriesArr = o.series as Array<Record<string, any>>
     const heatIndex = seriesArr.findIndex((x) => x.type === 'heatmap')

@@ -30,7 +30,7 @@ describe('一片场画成像素', () => {
     expect(alphaAt(r, 0, 1)).toBe(0)                       // 拱外
     expect(alphaAt(r, 1, 1)).toBe(255)                     // 拱内照常
     expect(rgbAt(r, 0, 0)).toEqual(hexToRgb(STOPS[0]))     // 最低值 → 暗端
-    expect(rgbAt(r, 1, 0)).toEqual(hexToRgb(STOPS[6]))     // 最高值 → 亮端
+    expect(rgbAt(r, 1, 0)).toEqual(hexToRgb(STOPS[8]))     // 最高值 → 亮端
   })
 
   it('**拱外那格不填黑，而是完全透明**', () => {
@@ -57,7 +57,7 @@ describe('一片场画成像素', () => {
     // 所以场景里既不用翻数组，也不用开 `flipY`。这条钉住这个约定。
     const r = rasterPlane([[0, 0], [5, 5]], 0, 5, STOPS)
     expect(rgbAt(r, 0, 0)).toEqual(hexToRgb(STOPS[0]))
-    expect(rgbAt(r, 0, 1)).toEqual(hexToRgb(STOPS[6]))
+    expect(rgbAt(r, 0, 1)).toEqual(hexToRgb(STOPS[8]))
   })
 
   it('整卷 37 片共用一份斜纹下标时，索引对得上下标', () => {
