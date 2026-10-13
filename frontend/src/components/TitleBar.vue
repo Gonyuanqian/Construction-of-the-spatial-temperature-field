@@ -63,7 +63,13 @@ onMounted(() => void health.run())
 
 <style scoped>
 .titlebar {
-  background: var(--leaf);
+  /* 面走 `--header`，不走 `--leaf`（2026-10-12）：实时那一档的面是深蓝、
+     强调色是青，两者在这一轮之前是同一个令牌。浅色档 `--header` 取 `var(--leaf)`，
+     页①②③④ 像素不变。 */
+  background: var(--header);
+  /* 76px 是实时那一档的取值（`--titlebar-h`）；浅色档是 `auto`，即现状。
+     ⚠️ `min-height` 而不是 `height`：窄屏上标题折行时写死高度会把字切掉。 */
+  min-height: var(--titlebar-h);
   /* 2026-10-06 用户裁定：原来 8px 的上下内边距配上 17px 的标题，整条读起来
      像一条细带子，压不住整页。加高到 `--gap-m`，标题走 `--size-title`（26px）。 */
   padding: var(--gap-m) var(--gap-l);
@@ -74,7 +80,7 @@ onMounted(() => void health.run())
 }
 .titlebar h1 {
   grid-column: 2;
-  color: var(--paper);
+  color: var(--on-face);
   font-weight: var(--w-title);
   letter-spacing: 0.01em;
 }
@@ -93,16 +99,16 @@ onMounted(() => void health.run())
 }
 .backend {
   margin: 0;
-  color: var(--steel);
+  color: var(--face-dim);
   font-size: var(--size-label);
 }
 .to-models {
-  color: var(--paper);
+  color: var(--on-face);
   display: inline-flex;
   align-items: center;
   /* 触摸目标：图标只有 16px，四周补出可点区域 */
   padding: 2px;
   border-radius: var(--radius);
 }
-.to-models:hover { color: var(--steel); }
+.to-models:hover { color: var(--face-dim); }
 </style>

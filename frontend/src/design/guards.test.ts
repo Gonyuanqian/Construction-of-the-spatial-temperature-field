@@ -133,7 +133,10 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
     const base = readFileSync(join(SRC, 'design', 'base.css'), 'utf8')
     const focus = base.match(/:focus-visible\s*\{[^}]*\}/)?.[0] ?? ''
     expect(focus, 'base.css 里没有 :focus-visible 规则').not.toBe('')
-    expect(focus).toContain('var(--leaf)')
+    // ⚠️ 2026-10-12：焦点环从主色改到**交互色**（`base.css` 那一条）。
+    // 这条守卫守的是「被继承的那条还在、没被组件盖掉」，所以它跟着换算 —
+    // 不换的话它会指着 `base.css` 里一个已经不存在的值，从此永远红。
+    expect(focus).toContain('var(--interact)')
   })
 
   it('一排指标卡在窄屏上换行，不被压窄也不撑出横向滚动', () => {
