@@ -16,14 +16,17 @@ import { computed, onMounted, onUnmounted, ref, watch, withDefaults } from 'vue'
 import type { VolumePayload } from '../api/types'
 import { getJson } from '../api/client'
 import { interpretVolumePick, pickText } from '../charts/pick'
+import { tempStops } from '../charts/scale'
 // 三栏各是一张卡片（2026-10-09 用户裁定）。用全站那一档，不自己写圆角与阴影 ——
 // 各写一遍，`guards.test.ts` 守着的「一处圆角、一处阴影」就名存实亡了。
 import Card from '../components/Card.vue'
+import ViewControls from '../components/ViewControls.vue'
 import { useAsync } from '../composables/useAsync'
 import { calibratedLabel } from '../design/copy'
 import { fmtTime } from '../design/format'
 import { markerPoint, snapIndex, type HoverPick } from './hover'
 import VolumeScene from './VolumeScene.vue'
+import type { ViewCmd } from './viewCmd'
 import {
   SHELL_LENGTH_DEFAULT, SHELL_LENGTH_MAX, SHELL_LENGTH_MIN, buildVolumeSpec,
 } from './volumeView'
@@ -87,12 +90,33 @@ const props = withDefaults(defineProps<{
    * 那条透传用例钉的就是这个）。
    */
   showViewControls?: boolean
+  /**
+   * 这一块渲染哪几栏（2026-10-12 页⑤ 仪表盘）。
+   *
+   * - `'all'`（**默认**）：三栏都在这一块里，屏上 `[几何, 中栏, 问数]`。
+   *   默认值取「页③ 现在什么样」，所以页③ 一个字符都不用改。
+   * - `'shell'`：只留中栏；「问数」与「几何与剖切」两张卡用
+   *   `<Teleport to="#shell-side">` 投进外壳的右栏（`App.vue` 渲染的
+   *   `<aside id="shell-side">`），次序是**问数在前**。
+   *
+   * ⚠️ 为什么是 `Teleport` 而不是把这十几项状态提上去：右栏吸附的格点
+   *   **必须与画面画的是同一份**（规格书 §三 D4）。投出去的是同一份
+   *   `volume.data.value` 渲染出来的同一段模板 —— 两边分不了家。
+   *   提上去再传下来是同一件事的第二条路，还多一处「载荷有两个来源」的隐患。
+   *
+   * ⚠️ 落点不存在时 Vue **静默不挂**：页⑤ 上右栏会整块消失而不报错。
+   *   `VolumeView.test.ts` 里那一组自己造落点，正是防这一手。
+   */
+  panels?: 'all' | 'shell'
 }>(), {
   // 默认**摆**：页③ 一直摆着，页⑤ 显式关掉。默认值取「页③ 现在什么样」，
   // 于是页③ 一个字符都不用改 —— 这次裁定动的是页⑤。
   showNotes: true,
   // 同上：默认关，页③ 与改动前逐字相同。
   showViewControls: false,
+  // 默认取「页③ 现在什么样」——与 `showClock` / `showNotes` / `showViewControls`
+  // 同一条规矩：改哪一页由**页**说，不由这一块替两页一起定。
+  panels: 'all',
 })
 
 const volume = useAsync(() => getJson<VolumePayload>(
@@ -206,6 +230,33 @@ const cutAt = computed(() => cutY.value ?? cutMax.value)
 const sceneOk = ref(false)
 function onSceneReady(ok: boolean) { sceneOk.value = ok }
 
+/**
+ * 相机动作的入口。**只在场景真的建起来之后**才有东西可调 ——
+ * 拿不到就当无事发生（场景那一半是懒挂的，测试里还是替身）。
+ */
+const scene = ref<InstanceType<typeof VolumeScene> | null>(null)
+function nudge(cmd: ViewCmd): void {
+  const s: { nudge?: (c: ViewCmd) => void } | null = scene.value
+  s?.nudge?.(cmd)
+}
+
+/**
+ * 色标那条横条。**颜色来自 `charts/scale.ts` 的采样点**，不在这里写色值 ——
+ * 全仓的十六进制只许出现在 `tokens.css` 与 `scale.ts`（`guards.test.ts` 钉着），
+ * 而 `tempStops()` 正是那两个例外之一。于是屏上这条色标、三维纹理、
+ * 与页②③ 的热图用的是**同一组** stops。
+ *
+ * ⚠️ 里面那个百分比是**色块的位置**（第几个采样点摆在横条的百分之几），
+ * 不是任何物理量。全仓「前端不做数值计算」那条约束管的是温度。
+ */
+function scaleGradient(): string {
+  const stops = tempStops()
+  const n = stops.length - 1
+  return `linear-gradient(to right, ${
+    stops.map((c, i) => `${c} ${((i / n) * 100).toFixed(1)}%`).join(', ')
+  })`
+}
+
 function onCut(e: Event) {
   cutY.value = Number((e.target as HTMLInputElement).value)
 }
@@ -294,33 +345,57 @@ function runQuery() {
            ⚠️ 三栏各是一张 `<Card>`（同日第二次裁定）：分栏之后三个部分直接浮在
            纸底上，只靠栏里那几个 `<fieldset>` 的细线互相区分，而同一页的
            「三个断面的温度场」「ΔT」都是 `<Card class="block">` ——
-           **三维这一块是唯一一块没套卡片的**。补上它，页③ 才是一条一致的卡片列。 -->
-      <div class="vol-grid">
-        <Card class="vol-side">
-          <!-- 剖切刀。⚠️ **只在场景报「画得出来」之后才挂** —— 没有 WebGL 时
-               刀切的是一个不存在的画面，一个对自己无效的控件比没有更难看。
-               （这条不变量原先挂在 `VolumeScene.test.ts` 上，控件搬上来，
-               守它的测试也跟着搬上来了。） -->
-          <fieldset v-if="sceneOk" class="rail-box">
-            <legend>剖切刀（沿棚长 y）</legend>
-            <input
-              :value="cutAt" type="range"
-              :min="cutMin" :max="cutMax" :step="volume.data.value.y_step"
-              aria-label="剖切刀" @input="onCut"
-            >
-            <p class="num">切到 y = {{ cutAt.toFixed(2) }} m 为止</p>
-          </fieldset>
+           **三维这一块是唯一一块没套卡片的**。补上它，页③ 才是一条一致的卡片列。
 
-          <fieldset class="rail-box">
-            <legend>棚体示意长度</legend>
-            <input
-              v-model.number="shellLength" type="range"
-              :min="SHELL_LENGTH_MIN" :max="SHELL_LENGTH_MAX" step="0.5"
-              aria-label="棚体示意长度"
-            >
-            <p class="num">{{ shellLength.toFixed(1) }} m（只改几何，不改场）</p>
-          </fieldset>
-        </Card>
+           ⚠️ 2026-10-12 页⑤ 那一档只留中栏，左右两栏投进外壳右栏。
+           源码次序因此与页③ 的屏上次序**不是一回事**：源码写成
+           `[问数, 中栏, 几何]`，页③ 的栏位由下面 CSS 的 `grid-column` 显式定死，
+           而投出去的次序正好就是参考图要的「问数在前」。
+           `VolumeView.test.ts` 的 `columns()` 按**类名**取栏，不按位置 ——
+           按位置取的话源码次序一改就会读反，而它给出的每一条断言照样绿。 -->
+      <div class="vol-grid" :class="{ 'stage-only': panels === 'shell' }">
+        <Teleport to="#shell-side" :disabled="panels === 'all'">
+          <Card class="vol-side vol-ask">
+            <table v-if="readout">
+              <tbody>
+                <tr><th>时刻</th><td class="num">{{ readout.time }}</td></tr>
+                <tr><th>位置</th><td class="num">{{ readout.where }}</td></tr>
+                <tr><th>这一片</th><td>{{ readout.layer }}</td></tr>
+                <tr><th>回答</th><td>{{ readout.text }}</td></tr>
+                <tr v-if="readout.pinned">
+                  <th>已钉住</th>
+                  <td>
+                    读数不跟鼠标跑。
+                    <button type="button" @click="pinned = null">取消钉住</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-else class="note">把鼠标移到棚体上，读最近格点的温度；点一下把读数钉住。</p>
+
+            <fieldset class="rail-box">
+              <legend>查一个坐标</legend>
+              <div class="row">
+                <label>x <input v-model="query.x" type="number" step="0.01"></label>
+                <label>y <input v-model="query.y" type="number" step="0.01"></label>
+                <label>z <input v-model="query.z" type="number" step="0.01"></label>
+              </div>
+              <p class="note">
+                三格划分出来的是格点，不是连续场。查询<strong>吸附到最近的格点</strong>，不插值；
+                吸附后的坐标会在下面写出来。
+              </p>
+              <button type="button" :disabled="!parsed" @click="runQuery">查询</button>
+              <p v-if="queryError" role="alert" class="alert">{{ queryError }}</p>
+              <table v-if="queryAnswer">
+                <tbody>
+                  <tr><th>时刻</th><td class="num">{{ queryAnswer.time }}</td></tr>
+                  <tr><th>位置</th><td class="num">{{ queryAnswer.where }}</td></tr>
+                  <tr><th>回答</th><td>{{ queryAnswer.text }}</td></tr>
+                </tbody>
+              </table>
+            </fieldset>
+          </Card>
+        </Teleport>
 
         <Card class="vol-stage">
           <!-- 画面角上那枚时刻（2026-10-09 用户裁定）。它读的是**载荷自己的**
@@ -334,52 +409,68 @@ function runQuery() {
             {{ fmtTime(volume.data.value.time) }}
           </p>
           <VolumeScene
+            ref="scene"
             :spec="spec" :payload="volume.data.value" :picked="shown" :cut-y="cutAt"
             :show-view-controls="showViewControls"
             @hover="onHover" @pick="onPick" @ready="onSceneReady"
           />
-        </Card>
 
-        <Card class="vol-side">
-          <table v-if="readout">
-            <tbody>
-              <tr><th>时刻</th><td class="num">{{ readout.time }}</td></tr>
-              <tr><th>位置</th><td class="num">{{ readout.where }}</td></tr>
-              <tr><th>这一片</th><td>{{ readout.layer }}</td></tr>
-              <tr><th>回答</th><td>{{ readout.text }}</td></tr>
-              <tr v-if="readout.pinned">
-                <th>已钉住</th>
-                <td>
-                  读数不跟鼠标跑。
-                  <button type="button" @click="pinned = null">取消钉住</button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <p v-else class="note">把鼠标移到棚体上，读最近格点的温度；点一下把读数钉住。</p>
-
-          <fieldset class="rail-box">
-            <legend>查一个坐标</legend>
-            <div class="row">
-              <label>x <input v-model="query.x" type="number" step="0.01"></label>
-              <label>y <input v-model="query.y" type="number" step="0.01"></label>
-              <label>z <input v-model="query.z" type="number" step="0.01"></label>
+          <!-- 页⑤ 才摆的两条画布外标记：色标与棚位两端（规格书 §六 版面纪律）。
+               ⚠️ **只有端点，没有中间的刻度**：0/6/12/18 m 那种刻度要在前端
+               把一个跨度等分 —— 那正是本仓不许的数值计算。可用的数就是载荷
+               自己报的 `vmin/vmax` 与 `y_min/y_max`，所以只印两端。
+               ⚠️ 它们是画布**外**的 HTML 叠层，不碰 `VolumeScene` 的几何，
+               页③ 也因此零影响。 -->
+          <template v-if="panels === 'shell' && volume.data.value">
+            <div class="stage-scale">
+              <span class="num scale-end">{{ volume.data.value.vmin.toFixed(1) }} °C</span>
+              <span class="scale-bar" :style="{ background: scaleGradient() }" />
+              <span class="num scale-end">{{ volume.data.value.vmax.toFixed(1) }} °C</span>
             </div>
-            <p class="note">
-              三格划分出来的是格点，不是连续场。查询<strong>吸附到最近的格点</strong>，不插值；
-              吸附后的坐标会在下面写出来。
+            <p class="note num stage-axis">
+              棚位 y {{ volume.data.value.y_min.toFixed(2) }} 至
+              {{ volume.data.value.y_max.toFixed(2) }} m
             </p>
-            <button type="button" :disabled="!parsed" @click="runQuery">查询</button>
-            <p v-if="queryError" role="alert" class="alert">{{ queryError }}</p>
-            <table v-if="queryAnswer">
-              <tbody>
-                <tr><th>时刻</th><td class="num">{{ queryAnswer.time }}</td></tr>
-                <tr><th>位置</th><td class="num">{{ queryAnswer.where }}</td></tr>
-                <tr><th>回答</th><td>{{ queryAnswer.text }}</td></tr>
-              </tbody>
-            </table>
-          </fieldset>
+          </template>
         </Card>
+
+        <Teleport to="#shell-side" :disabled="panels === 'all'">
+          <Card class="vol-side vol-geom">
+            <!-- 剖切刀。⚠️ **只在场景报「画得出来」之后才挂** —— 没有 WebGL 时
+                 刀切的是一个不存在的画面，一个对自己无效的控件比没有更难看。
+                 （这条不变量原先挂在 `VolumeScene.test.ts` 上，控件搬上来，
+                 守它的测试也跟着搬上来了。） -->
+            <fieldset v-if="sceneOk" class="rail-box">
+              <legend>剖切刀（沿棚长 y）</legend>
+              <input
+                :value="cutAt" type="range"
+                :min="cutMin" :max="cutMax" :step="volume.data.value.y_step"
+                aria-label="剖切刀" @input="onCut"
+              >
+              <p class="num">切到 y = {{ cutAt.toFixed(2) }} m 为止</p>
+            </fieldset>
+
+            <fieldset class="rail-box">
+              <legend>棚体示意长度</legend>
+              <input
+                v-model.number="shellLength" type="range"
+                :min="SHELL_LENGTH_MIN" :max="SHELL_LENGTH_MAX" step="0.5"
+                aria-label="棚体示意长度"
+              >
+              <p class="num">{{ shellLength.toFixed(1) }} m（只改几何，不改场）</p>
+            </fieldset>
+          </Card>
+
+          <!-- 三维视图控制那张卡**只在页⑤** 上出现：页③ 用的是压在画布角上
+               的那一组（`showViewControls`），两处摆法共用一个 `ViewControls`。 -->
+          <Card v-if="panels === 'shell'" class="vol-side">
+            <fieldset class="rail-box">
+              <legend>三维视图控制</legend>
+              <ViewControls :run="nudge" :ok="sceneOk" />
+              <p class="note">拖动鼠标可查看三维模型。</p>
+            </fieldset>
+          </Card>
+        </Teleport>
       </div>
     </template>
   </div>
@@ -404,8 +495,23 @@ function runQuery() {
 }
 /* 两栏都是内容可能比格子宽的那种（右边那三个坐标框尤其），允许格子窄于内容。 */
 .vol-side { min-width: 0; }
+/* ⚠️ 2026-10-12 起源码次序是 `[问数, 中栏, 几何]`（投出去时问数在前），
+   所以页③ 的三个栏位**必须显式定死** —— 靠自动排列的话会变成
+   问数在左、几何在右，而那是反的。 */
+.vol-ask { min-width: 0; grid-column: 3; }
+.vol-geom { min-width: 0; grid-column: 1; }
 /* `position: relative` 是给角上那枚时刻当落点的（画布铺满这一栏的内容盒）。 */
-.vol-stage { min-width: 0; position: relative; }
+.vol-stage { min-width: 0; position: relative; grid-column: 2; }
+/* 页⑤ 那一档只剩中栏：一栏的栅格模板，且中栏本来就该铺满。 */
+.vol-grid.stage-only { grid-template-columns: minmax(0, 1fr); }
+/* 色标：一条横条，两端各一个端点读数。 */
+.stage-scale {
+  display: flex; align-items: center; gap: var(--gap-s);
+  margin-top: var(--gap-m);
+}
+.scale-bar { flex: 1 1 auto; height: 10px; border-radius: var(--radius); }
+.scale-end { font-size: var(--size-note); color: var(--ink-muted); white-space: nowrap; }
+.stage-axis { margin-top: var(--gap-s); }
 /* 画面右上角那枚时刻。落点是 `--gap-m`（卡片自己的内边距）再加一点点 ——
    画布铺满内容盒，所以这个位置正好是画面右上角往里缩一个 `--gap-s`。
    ⚠️ `pointer-events: none` 不能省：它压在画布上，挡住的正是鼠标悬停读温
