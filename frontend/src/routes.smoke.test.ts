@@ -151,7 +151,7 @@ describe('路由冒烟', () => {
     // 改回去（默认三维是裁定，不是测试的活）。
     await w.get('button[data-view="section"]').trigger('click')
     await flushPromises()
-    expect(w.text(), '切到断面后帧那一块还是没渲染出来').toContain('棚顶气象')
+    expect(w.text(), '切到断面后帧那一块还是没渲染出来').toContain('断面温度场')
     assertCleanText(w.text(), '/live（断面）')
   })
 

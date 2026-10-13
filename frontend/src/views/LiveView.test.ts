@@ -13,8 +13,8 @@
  * 从「常驻屏上」改成「折进『口径与出处』」：话一个字不丢，但要自己点开。
  * 再往下删（比如连折叠里那份也删）之前先回到规格书那五处看一眼。
  */
-import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 
 import { createMemoryHistory } from 'vue-router'
 
@@ -37,6 +37,10 @@ vi.mock('../charts/EChart.vue', () => ({
     name: 'EChart', props: ['option', 'height'], template: '<div class="chart-stub" />',
   },
 }))
+
+// 一个测试文件只许调一次（调第二次当场抛），且它设的是**整份文件**的钩子 ——
+// 与 `App.test.ts` 顶上那一句同一个处置，文件里两个 `describe` 一起用。
+enableAutoUnmount(afterEach)
 
 const calls: string[] = []
 
@@ -121,13 +125,33 @@ function stubFetch(frame = makeLiveFramePayload(),
   }))
 }
 
-/** 空态那一支挂着 `<RouterLink>`，所以每一处挂载都要带路由 ——
-   不给的话 Vue 按未知标签渲染并打警告，断言照样绿但每次都刷一遍。 */
+/**
+ * 页⑤ 的右栏投进 `App.vue` 渲染的 `<aside id="shell-side">`，
+ * 而这一组用例只挂 `LiveView` —— 那个落点不在文档里。
+ *
+ * ⚠️ **必须自己造一个。** 字符串选择器的 Teleport 落点是在 `document` 上
+ * 用 `querySelector` 找的：找不到时 Vue **静默不挂**（不报错、也不渲染在
+ * 别处），于是右栏整块消失，而每一条「它不该在屏上」的断言照样绿。
+ * 造在 `document.body` 上、每条用例后拆掉 —— 与 `routes.smoke.test.ts`
+ * 挂整个 `App` 走的是同一条路。
+ *
+ * 空态那一支挂着 `<RouterLink>`，所以每一处挂载都要带路由 ——
+ * 不给的话 Vue 按未知标签渲染并打警告，断言照样绿但每次都刷一遍。
+ */
 function mountLive() {
+  const side = document.createElement('div')
+  side.id = 'shell-side'
+  document.body.appendChild(side)
   return mount(LiveView, {
+    attachTo: document.body,
     global: { plugins: [createAppRouter(createMemoryHistory())] },
   })
 }
+
+/** 右栏那一个落点（`mountLive` 造的那个）。 */
+const sidePanel = (): HTMLElement => document.getElementById('shell-side')!
+
+afterEach(() => { document.getElementById('shell-side')?.remove() })
 
 beforeEach(() => {
   installEnvironment()
@@ -339,8 +363,8 @@ describe('LiveView', () => {
     expect(calls.some((c) => c.includes('/api/field/volume'))).toBe(false)
   })
 
-  it('指标行回来了三张，说的全是温度场的事，仍然不报帧数（2026-10-09 用户裁定）', async () => {
-    // 用户按参考图把指标卡要了回来，原话是「本帧时刻挪到指标卡」。
+  it('概览长条三格，说的全是温度场的事，仍然不报帧数（2026-10-09 用户裁定）', async () => {
+    // 用户按参考图把这一行要了回来，原话是「本帧时刻挪到指标卡」。
     // ⚠️ 但同一天早些时候那条「第几帧、一共多少帧没必要展示」**没被推翻** ——
     // 所以这里断的不只是「有三张」，还有「三张里没有一张说帧数」。
     stubFetch()
@@ -349,12 +373,15 @@ describe('LiveView', () => {
     await w.get('button[data-act="prepare"]').trigger('click')
     await flushPromises()
 
-    // 3 张主行 + 3 张「棚顶气象」（气温 / 湿度 / 光照）。
-    expect(w.findAll('.stat'), '指标卡不在').toHaveLength(6)
+    // 三格，一格都不说帧数。⚠️ 2026-10-12 起概览是一条长条
+    // （`OverviewStrip`），不再是 `StatRow` + `StatCard` 那一排；
+    // 三格的名字也照规格书 §六 那张表定稿（棚内平均温度 / 棚体三维温度场 /
+    // 更新时间），所以下面读的标签跟着换。
+    expect(w.findAll('.strip .cell'), '概览那一条不在').toHaveLength(3)
     const text = w.text()
-    expect(text).toContain('棚内均温')
+    expect(text).toContain('棚内平均温度')
     expect(text).toContain('三维温度场')
-    expect(text).toContain('本帧时刻')
+    expect(text).toContain('更新时间')
     // 本帧时刻走 `fmtTime`：同一个数在四页上是同一种写法，不把 ISO 的 T 印给人看。
     expect(text).toContain('2026-07-27 12:00')
     expect(text, '屏上还印着带 T 的时间戳').not.toContain('2026-07-27T')
@@ -367,9 +394,10 @@ describe('LiveView', () => {
     // 28.4），上面每一行照样全绿 —— 标签在，值也「看着像个温度」
     // （2026-10-09 终审 Important 2）。所以这里**读值**：替身里拱内均温 26.5 与
     // 棚顶气温 28.4 是两个不同的数，读 26.5 那句话就再也糊不过去。
-    const meanCard = w.findAll('.stat').find((s) => s.text().includes('棚内均温'))
-    expect(meanCard, '「棚内均温」那一张不在').toBeTruthy()
-    expect(meanCard!.find('.value').text(), '「棚内均温」印的不是本卷均温').toBe('26.5 °C')
+    const meanCell = w.findAll('.strip .cell')
+      .find((s) => s.text().includes('棚内平均温度'))
+    expect(meanCell, '「棚内平均温度」那一格不在').toBeTruthy()
+    expect(meanCell!.find('.value').text(), '那一格印的不是本卷均温').toBe('26.5 °C')
   })
 
   it('这一卷一个可用格子都没测到时，均温那一张说「不报数」，不说 0（终审 Important 2）', async () => {
@@ -381,9 +409,9 @@ describe('LiveView', () => {
     await flushPromises()
     await w.get('button[data-act="prepare"]').trigger('click')
     await flushPromises()
-    const card = w.findAll('.stat').find((s) => s.text().includes('棚内均温'))
-    expect(card, '「棚内均温」那一张不在').toBeTruthy()
-    expect(card!.find('.value').text(), 'null 被翻成了一个数').toBe('不报数')
+    const cell = w.findAll('.strip .cell').find((s) => s.text().includes('棚内平均温度'))
+    expect(cell, '「棚内平均温度」那一格不在').toBeTruthy()
+    expect(cell!.find('.value').text(), 'null 被翻成了一个数').toBe('不报数')
   })
 
   it('散文折进唯一一处「口径与出处」', async () => {
@@ -430,7 +458,10 @@ describe('LiveView', () => {
       w.find('button[data-view="volume"]').classes(), '默认没落在三维',
     ).toContain('on')
     // 三维那一块是懒加载的，等它真的上来（`vi.waitFor` 默认 1s 上限）。
-    await vi.waitFor(() => expect(w.text()).toContain('棚体三维温度场'))
+    // ⚠️ 等的是**三维那一块自己**（`.scene-wrap`），不是「棚体三维温度场」那个串：
+    // 2026-10-12 起概览第一格也叫这个名字，那一句于是变成「一进页面就成立」的
+    // 条件，后面的断言会在三维还没上来的时候就跑（这一条会因此变得什么都挡不住）。
+    await vi.waitFor(() => expect(w.find('.scene-wrap').exists()).toBe(true))
     // ⚠️ 原先这里断的是「断面图不存在」。现在底栏那条沿棚均温曲线**两档都在**，
     // 所以断的是**数量**：三维这一支只有那一张（1），断面那一支是两张（2）。
     // 断「存在」的话，「两张都挂着」这条错法会绿。
@@ -443,10 +474,10 @@ describe('LiveView', () => {
     await flushPromises()
     expect(w.find('button[data-view="section"]').classes()).toContain('on')
     expect(w.findAll('.chart-stub'), '切到断面却没有断面图').toHaveLength(2)
-    expect(w.text(), '切到断面了，三维那一块还留在下面').not.toContain('棚体三维温度场')
+    expect(w.find('.scene-wrap').exists(), '切到断面了，三维那一块还留在下面').toBe(false)
   })
 
-  it('本帧时刻挪进指标卡，走 `fmtTime`，不在三维的角上了', async () => {
+  it('本帧时刻在概览条上，走 `fmtTime`，不在三维的角上了', async () => {
     // 2026-10-09 第二轮用户裁定：「本帧时刻挪到指标卡」。第一轮的处置是
     // 把它印到三维影像的角上（`show-clock`），这一轮挪回来。
     // 「手上这一屏画的是哪一刻」是温度场唯一的元信息，值得一直看得见 ——
@@ -458,38 +489,44 @@ describe('LiveView', () => {
     await flushPromises()
 
     expect(w.text(), '屏上还印着带 T 的时间戳').not.toContain('2026-07-27T')
-    const stat = w.findAll('.stat').find((s) => s.text().includes('本帧时刻'))
-    expect(stat, '「本帧时刻」那一张不在').toBeTruthy()
+    // ⚠️ 这一格 2026-10-12 起叫「更新时间」（规格书 §六 那张表）。
+    const stat = w.findAll('.strip .cell').find((s) => s.text().includes('更新时间'))
+    expect(stat, '「更新时间」那一格不在').toBeTruthy()
     expect(stat!.text()).toContain('2026-07-27 12:00')
 
     // 三维那一块懒加载上来之后，角上那份**不该**再有 —— 同一件事印两处，
-    // 迟早有一处是旧的。
-    await vi.waitFor(() => expect(w.text()).toContain('棚体三维温度场'))
+    // 迟早有一处是旧的。⚠️ 等的是 `.scene-wrap`，理由同上一条。
+    await vi.waitFor(() => expect(w.find('.scene-wrap').exists()).toBe(true))
     expect(w.find('.stage-clock').exists(), '角上那份还留着').toBe(false)
   })
 
-  it('底栏两块是棚顶气象与沿棚均温，两档视图下都在', async () => {
-    // 参考图下方的两块。2026-10-09 第二轮之前「棚顶气象」只挂在断面那张卡里，
-    // 切到三维就没了 —— 而它是**帧**的属性，与看哪一块无关。
+  it('底栏两块是环境参数与沿棚均温，两档视图下都在', async () => {
+    // 参考图下方那两块。⚠️ 2026-10-12 用户裁定「照参考图换掉」：
+    // 左块由「棚顶气象」换成「环境参数（棚体与周边）」。**这是一次内容的
+    // 净损失**，明写在这里 —— 数据仍在 `/api/live/frame/{n}` 的返回体里
+    // （`bg_temp` / `bg_rh` / `bg_light`），只是这一屏不再印。
     stubFetch()
     const w = mountLive()
     await flushPromises()
     await w.get('button[data-act="prepare"]').trigger('click')
     await flushPromises()
 
-    expect(w.text()).toContain('棚顶气象')
-    expect(w.text()).toContain('气温')
+    expect(w.text()).toContain('环境参数')
+    expect(w.text(), '棚顶气象撤走了，却还在屏上').not.toContain('棚顶气象')
+    expect(w.text()).toContain('拱跨宽')
+    expect(w.text()).toContain('拱顶高')
     expect(w.text()).toContain('沿棚均温')
+    // 几何是两个**真数**：后端给的拱跨宽与拱顶高（不是参考图的 18.0 / 6.0）。
+    expect(w.text()).toContain('2.10 m')
+    expect(w.text()).toContain('1.30 m')
     // 均温的口径句要在（它是这一屏最容易看错的那个数）。
-    // ⚠️ 计划这一行写的是 `toContain('拱内')` —— 那个词只在注释里出现过
+    // ⚠️ 断的是「都不进平均」而不是「拱内」：后者只在注释里出现过
     // （`liveMeanCurve.ts`、`types.ts`），模板上一个字都没有，永远绿不了。
-    // 改断「都不进平均」：它**只**出现在均温那一句口径里，底栏那条曲线的
-    // 口径句没有它 —— 断「拱形以内」的话两句都有，等于没断细。
     expect(w.text()).toContain('都不进平均')
 
     await w.get('button[data-view="section"]').trigger('click')
     await flushPromises()
-    expect(w.text(), '切到断面，棚顶气象就没了').toContain('棚顶气象')
+    expect(w.text(), '切到断面，环境参数就没了').toContain('环境参数')
     expect(w.text()).toContain('沿棚均温')
   })
 
@@ -506,14 +543,130 @@ describe('LiveView', () => {
     await flushPromises()
     await w.get('button[data-act="prepare"]').trigger('click')
     await flushPromises()
-    await vi.waitFor(() => expect(w.text()).toContain('棚体三维温度场'))
+    // ⚠️ 等的是右栏那一块**自己**（那两行说明撤掉之后，接管它们的就是右栏
+    // 那张卡）。等「棚体三维温度场」那个串的话，2026-10-12 起概览第一格也叫
+    // 这个名字，条件一进页面就成立，下面的断言会跑在三维还没上来的时候。
+    await vi.waitFor(() => expect(sidePanel().textContent).toContain('棚体示意长度'))
 
     expect(w.text(), '壳长那句说明还占着画面的地方')
       .not.toContain('拱壳按拱形截面示意')
     expect(w.text()).not.toContain('测了这么长')
-    // 接管它的那一句还在。
-    expect(w.text(), '「棚体示意」的警示跟着那两行一起没了')
+    // 接管它的那一句还在**右栏**里（左栏那一块 2026-10-12 搬进外壳了）。
+    expect(sidePanel().textContent, '「棚体示意」的警示跟着那两行一起没了')
       .toContain('棚体示意长度')
+  })
+
+  it('右栏三张卡在三维那一档上齐了，且问数在最上面', async () => {
+    // 规格书 §三 D8 那张表：问数（两档）/ 几何与剖切（只三维）/ 视图控制（只三维）。
+    stubFetch()
+    const w = mountLive()
+    await flushPromises()
+    await w.get('button[data-act="prepare"]').trigger('click')
+    await flushPromises()
+    await vi.waitFor(() => expect(sidePanel().textContent).toContain('棚体示意长度'))
+
+    const side = sidePanel()
+    expect(side.textContent, '右栏里没有坐标查询').toContain('查一个坐标')
+    expect(side.textContent).toContain('棚体示意长度')
+    expect(side.textContent).toContain('三维视图控制')
+    // ⚠️ 次序也钉上：问数在最上面（参考图那张表的次序）。
+    const cards = Array.from(side.children) as HTMLElement[]
+    expect(cards[0]!.textContent, '问数那一张不在最上面').toContain('查一个坐标')
+    // 九枚视角按钮在右栏里，不在画布角上 —— 同一组按钮换了摆法。
+    expect(side.querySelectorAll('[data-view-act]')).toHaveLength(9)
+    // ⚠️ 反面：画布上那层叠层不该同时还在（同一组按钮印两处）。
+    expect(w.find('.scene-wrap .view-ctl').exists(), '画布角上那份还留着').toBe(false)
+  })
+
+  it('断面那一档上右栏只剩问数那一张', async () => {
+    // 几何与剖切、视图控制服务的是三维，断面档上没有它们的事（规格书 D8）。
+    stubFetch()
+    const w = mountLive()
+    await flushPromises()
+    await w.get('button[data-act="prepare"]').trigger('click')
+    await flushPromises()
+    await w.get('button[data-view="section"]').trigger('click')
+    await flushPromises()
+
+    const side = sidePanel()
+    expect(side.textContent, '断面档的右栏里没有坐标查询').toContain('查一个坐标')
+    expect(side.textContent, '几何那一块跟着断面来了').not.toContain('棚体示意长度')
+    expect(side.textContent, '视图控制跟着断面来了').not.toContain('三维视图控制')
+  })
+
+  it('断面档的坐标查询走同一套判定，并把吸附后的坐标写出来', async () => {
+    // ⚠️「做真的，只在右栏报数」（用户裁定）。吸附走 `snapIndex`、
+    // 回答走 `interpretPick` / `pickText` —— 三条都是全前端唯一那处。
+    // 这一条断的是「真的答了、且答的是**吸附后**的坐标」。
+    //
+    // 输进去的三个数**一个都不是格点上的数**，这一条才挡得住东西：
+    //   x 0.8 → 最近格点 0.70（不是第 0 个 0.00）
+    //   y 8.6 → 最近的棚位 p2（不是第 0 个 p1）
+    //   z 0.8 → 最近格点 0.70
+    // 若 y 被吞掉（写死 sheds[0]），断到的会是 p1；若吸附退化成取首格，
+    // x 会写成 0.00 —— 两种错法各有一个断言接着。
+    // ⚠️ 答案的形状是「棚位名 + 吸附后的 x、z」，与「点一个格子」之后那份
+    // 读数（`readout`）**一模一样**：这一档里 y 的名字就是 p1/p2/p3。
+    stubFetch()
+    const w = mountLive()
+    await flushPromises()
+    await w.get('button[data-act="prepare"]').trigger('click')
+    await flushPromises()
+    await w.get('button[data-view="section"]').trigger('click')
+    await flushPromises()
+
+    const side = sidePanel()
+    const inputs = side.querySelectorAll('input[type="number"]')
+    expect(inputs, '断面档右栏里没有三个坐标框').toHaveLength(3)
+    // 用 VTU 的 setValue 走真事件，别直接改 DOM 的 value。
+    const ask = w.findAllComponents({ name: 'SectionAsk' })[0]!
+    await ask.findAll('input')[0]!.setValue('0.8')
+    await ask.findAll('input')[1]!.setValue('8.6')
+    await ask.findAll('input')[2]!.setValue('0.8')
+    await ask.get('button').trigger('click')
+    await flushPromises()
+
+    expect(side.textContent, '问了却没答').toContain('现场重算')
+    expect(side.textContent, 'y = 8.6 没吸附到最近那个棚位 p2').toContain('p2')
+    expect(side.textContent, 'x = 0.8 没吸附到 0.70').toContain('x 0.70 m')
+    expect(side.textContent, 'z = 0.8 没吸附到 0.70').toContain('z 0.70 m')
+    expect(side.textContent, '坐标超范围时该说的是那句话').not.toContain('超出这一帧的范围')
+  })
+
+  it('超出范围的坐标不吸附，直接把话说清楚', async () => {
+    // ⚠️ 绝不从范围外吸进来：吸到最近的边上格点，屏幕上写的还是「最近格点」，
+    // 而用户以为自己问的是 100 米处 —— 一个不是他问的答案，看起来却完全正常。
+    stubFetch()
+    const w = mountLive()
+    await flushPromises()
+    await w.get('button[data-act="prepare"]').trigger('click')
+    await flushPromises()
+    await w.get('button[data-view="section"]').trigger('click')
+    await flushPromises()
+
+    const ask = w.findAllComponents({ name: 'SectionAsk' })[0]!
+    await ask.findAll('input')[0]!.setValue('0.7')
+    await ask.findAll('input')[1]!.setValue('3')
+    await ask.findAll('input')[2]!.setValue('99')
+    await ask.get('button').trigger('click')
+    await flushPromises()
+    expect(sidePanel().textContent).toContain('超出这一帧的范围')
+  })
+
+  it('概览那一条是长条，不是一排等宽卡片', async () => {
+    // 规格书 §六 版面纪律：三格不用 `StatRow` + `StatCard`（那是页① 的规矩）。
+    stubFetch()
+    const w = mountLive()
+    await flushPromises()
+    await w.get('button[data-act="prepare"]').trigger('click')
+    await flushPromises()
+    expect(w.find('.strip').exists(), '概览不是长条').toBe(true)
+    expect(w.findAll('.stat'), '`StatCard` 又回来了').toHaveLength(0)
+    // ⚠️ 规格书 §三 D10：概览三格**不印**「（切割 y = 18.00）」。
+    // 后端没有「当前剖切位置」这个数，印它就得在前端编一个 ——
+    // 而编出来的数会在屏上冒充后端给的事实。参考图上那一格是切面视图才有的，
+    // 这一屏演的是三维全场。
+    expect(w.text(), '概览里编了一个剖切位置').not.toContain('切割')
   })
 })
 
