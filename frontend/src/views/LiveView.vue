@@ -592,10 +592,9 @@ function runAsk(q: { x: number; y: number; z: number }): void {
           </div>
           <!-- ⚠️ 这两格是**后端算好的真几何**（本数据集里是 2.10 m 与 1.30 m），
                不是参考图上那个更大的跨度 —— 那一个是沿棚长方向的走廊跨度。
-               见 `routes/field.py::volume_payload`。 -->
-          <p class="note reading">
-            拱跨宽与拱顶高由后端给，是棚体的几何常量。腔内的平均温度见左边那个环。
-          </p>
+               见 `routes/field.py::volume_payload`。
+               ⚠️ 2026-10-16 第二回：原先压在这两格底下有一句口径说明，撤进
+               页脚的「口径与出处」了 —— 与均温那一句同一条处置。 -->
         </Card>
 
         <Card>
@@ -609,10 +608,9 @@ function runAsk(q: { x: number; y: number; z: number }): void {
                扫描是逐页扫整页文本的，一句来路不明的错误文案正是最容易带进
                禁字形的地方。 -->
           <p v-else class="note state">正在取这一帧的沿棚均温…</p>
-          <p class="note reading">
-            沿棚位每 3 m 采一片，每一片取拱形以内、实测带以内的平均。
-            它说的是「这一棚从头到尾哪儿热」，与断面图说的「这一片里哪儿热」不是一回事。
-          </p>
+          <!-- ⚠️ 这一格原来压着一句口径说明，2026-10-16 第二回连同左块那一句
+               一起撤进页脚的「口径与出处」了：这一屏要三块同屏不滚动，
+               而底栏是全屏最高的那一块，两句话就是将近五十像素。 -->
         </Card>
       </div>
 
@@ -671,6 +669,17 @@ function runAsk(q: { x: number; y: number; z: number }): void {
       <p class="note">
         均温只算拱形以内、z 不高于 {{ zLimitText }} m 的那些格子。拱外没有定义，
         再往上那一条是按外推补出来的，都不进平均。
+      </p>
+      <!-- ⚠️ 下面两句 2026-10-16 第二回从底栏那两张卡上撤下来的。**同一个处置**
+           （降级不是删除）：底栏是全屏最高的一块，两句话压在卡片底下就是将近
+           五十像素，而这一屏的账压在「三块同屏」上。`LiveView.test.ts` 里
+           断这两句的那两条**照样绿** —— 内容在 DOM 里。 -->
+      <p class="note">
+        拱跨宽与拱顶高由后端给，是棚体的几何常量。腔内的平均温度见左边那个环。
+      </p>
+      <p class="note">
+        沿棚位每 3 m 采一片，每一片取拱形以内、实测带以内的平均。
+        它说的是「这一棚从头到尾哪儿热」，与断面图说的「这一片里哪儿热」不是一回事。
       </p>
       <p class="note">
         数据集末 144 帧留了出（2026-07-27 12:00 起），模型只在其余 1164 帧上标定过一次。
@@ -772,7 +781,10 @@ function runAsk(q: { x: number; y: number; z: number }): void {
 /* 选中项是**交互态**（2026-10-12），同 `ModeSwitch.vue` 那一处。 */
 .seg button.on { background: var(--interact); color: var(--on-face); }
 .seg button:disabled { cursor: not-allowed; }
-.why { margin-top: var(--gap-l); }
+/* 2026-10-16 第二回：上边距从 `--gap-l`（28）收到 `--gap-m`（16）。
+   这一屏的每一像素都在「三块同屏」那张账上，而这一条与上面那块只差 12px
+   的呼吸 —— 收掉它看得出来才怪。 */
+.why { margin-top: var(--gap-m); }
 .why summary { font-size: var(--size-label); color: var(--ink-muted); cursor: pointer; }
 .why > p { margin-top: var(--gap-s); }
 /* 环境参数那两格。左边一个环、右边两行几何 —— 环要占地方，几何只要两行。 */

@@ -628,11 +628,14 @@ onBeforeUnmount(() => {
 
    ⚠️ **上下限都写在这儿，一条链只写一处**（`LiveView.vue` 那条 `.stage`
    刻意不写下限，`App.vue` 那条也刻意不写「窗口高减多少」）：
-   · 下限 260px —— 再矮就是一条看不出棚体的缝（规格书 §九 第一条风险）。
-     顶到它之后这一屏由外壳那条 `overflow-y: auto` 滚，而不是继续压三维。
+   · 下限 200px —— 2026-10-16 用户第二次看过屏之后从 260 收到 200（原话
+     「棚体三维温度场的画布太大了」）。这个数**不是**「矮到多少还好看」，
+     是「这一屏的账还剩多少」：非画布那一摞实测 632px（1920 / 1600 两个
+     宽度下一样），用户那个窗口（1920×944）给中栏 836px，画布就只剩 204。
+     再往上加回来，底栏那两块就会重新掉到折线以下。
    · 上限 460px —— 就是**原来那一档**。今天的高度是天花板，不是地板：
      窗口再高也不把画布拉得比改动前更大（`fit.test.ts` 那几条比例是照这一档
-     定的）。于是「够高就长到今天的样，够矮就收到 260」。
+     定的）。于是「够高就长到今天的样，够矮就收到 200」。
 
    ⚠️ 弹性靠**逐层的 `flex`** 传，不靠 `height: 100%`。后者要求每一层祖先
    都有确定高度，中间断一节就静默变成 0（画面直接没了）；前者断一节只是
@@ -640,7 +643,7 @@ onBeforeUnmount(() => {
 
    ⚠️ 页③ 不挂这个类：它走的仍是上面那条写死的 460px，逐像素不变。 */
 .scene-wrap.stretch { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
-.scene-wrap.stretch > .scene { flex: 1 1 auto; height: auto; min-height: 260px; max-height: 460px; }
+.scene-wrap.stretch > .scene { flex: 1 1 auto; height: auto; min-height: 200px; max-height: 460px; }
 /* 视角按钮：压在画面**右上角**。
    锚点是**画布盒子**自己（`.scene-wrap` 是 `position: relative`，画布铺满它），
    所以缩进取 `--gap-s` 就到画面里侧了 —— `VolumeView` 那个 `.stage-clock`

@@ -107,7 +107,7 @@ describe('页⑤ 的版面钩子', () => {
     expect(vs, '画布那一层没接收 stretch').toMatch(/\.scene-wrap\.stretch/)
     // 下限保画面不是一条缝；上限就是**改动前那一档**（今天的高度是天花板，
     // 不是地板 —— `fit.test.ts` 那几条比例是照 460 定的）。
-    expect(vs, '画布没有下限，会缩成一条缝').toMatch(/\.scene-wrap\.stretch\s*>\s*\.scene\s*\{[^}]*min-height:\s*260px/)
+    expect(vs, '画布没有下限，会缩成一条缝').toMatch(/\.scene-wrap\.stretch\s*>\s*\.scene\s*\{[^}]*min-height:\s*200px/)
     expect(vs, '画布没有上限，会拉得比改动前更大').toMatch(/\.scene-wrap\.stretch\s*>\s*\.scene\s*\{[^}]*max-height:\s*460px/)
     // ⚠️ 页③ 那一条**一个字符都不许动**：写死的 460px 仍在原处。
     expect(vs, '页③ 那一档写死的高度被改掉了')
