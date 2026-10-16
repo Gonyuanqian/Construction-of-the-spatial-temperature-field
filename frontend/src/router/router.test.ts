@@ -15,11 +15,11 @@ describe('路由', () => {
     }
   })
 
-  it('/ 落到页①', async () => {
+  it('/ 落到作战总览', async () => {
     const router = createAppRouter(createMemoryHistory())
     await router.push('/')
     await router.isReady()
-    expect(router.currentRoute.value.path).toBe('/data')
+    expect(router.currentRoute.value.path).toBe('/overview')
   })
 
   it('不认识的路径也回到页①，不是白屏', async () => {

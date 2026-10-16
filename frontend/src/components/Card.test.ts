@@ -4,6 +4,17 @@ import { mount } from '@vue/test-utils'
 import Card from './Card.vue'
 
 describe('卡片外壳', () => {
+  it('展开后可用 Escape 收起，保留插槽内容', async () => {
+    const w = mount(Card, { slots: { default: '<p>图表内容</p>' } })
+    await w.get('button').trigger('click')
+    expect(w.get('button').attributes('aria-expanded')).toBe('true')
+    expect(w.classes()).toContain('is-expanded')
+    await w.trigger('keydown', { key: 'Escape' })
+    expect(w.classes()).not.toContain('is-expanded')
+    expect(w.text()).toContain('图表内容')
+    w.unmount()
+  })
+
   it('把插槽里的东西原样收进来', () => {
     const w = mount(Card, { slots: { default: '<p class="inside">内容</p>' } })
     expect(w.find('.card').exists()).toBe(true)

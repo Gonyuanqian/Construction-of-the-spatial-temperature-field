@@ -18,15 +18,17 @@
  * （spec 2026-10-03 §5.1）。搬上来的第二个理由更硬：`/live` 收起导航，
  * 导航不在时原来那一行也跟着没了 —— 实时那一屏恰恰最需要确认后端是哪一个。
  */
-import { onMounted } from 'vue'
+import { onMounted, watch } from 'vue'
 
 import { getJson } from '../api/client'
 import { useAsync } from '../composables/useAsync'
 import { MODELS, SYSTEM_TITLE } from '../design/copy'
 
+const props = withDefaults(defineProps<{ demo?: boolean }>(), { demo: false })
 const health = useAsync(() => getJson<{ status: string; version: string }>('/api/health'))
 
-onMounted(() => void health.run())
+onMounted(() => { if (!props.demo) void health.run() })
+watch(() => props.demo, (demo) => { if (!demo) void health.run() })
 </script>
 
 <template>
@@ -50,7 +52,8 @@ onMounted(() => void health.run())
         </svg>
       </RouterLink>
       <p class="backend">
-        <template v-if="health.error.value">后端：{{ health.error.value }}</template>
+        <template v-if="demo">演示预览：模拟数据</template>
+        <template v-else-if="health.error.value">后端：{{ health.error.value }}</template>
         <template v-else-if="health.data.value">
           后端：{{ health.data.value.status }}，库版本
           <span class="num">{{ health.data.value.version }}</span>

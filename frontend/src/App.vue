@@ -51,7 +51,7 @@ onMounted(() => { void dataset.probe() })
  * 真取一次数。拿它换的是「已经导过数据集的人不会先看见一屏『先导入数据集』」。
  * 两害相权，取后者 —— 一瞬的取数没人看得见，一瞬的假空态每个人都会看见。
  */
-const gate = computed(() => dataset.state.value === 'missing' && route.path !== '/data')
+const gate = computed(() => dataset.state.value === 'missing' && !['/data', '/overview'].includes(route.path))
 
 /** 训练模式最后停留的那一页。切回来还回这里 —— 演示时不用重新点一遍。 */
 const lastTrainPath = ref('/data')
@@ -91,12 +91,17 @@ watchEffect(() => {
 </script>
 
 <template>
-  <TitleBar />
+  <div class="ambient" aria-hidden="true"><div class="light-ribbon" /><div class="particles" /><div class="floor-grid" /></div>
+  <TitleBar :demo="route.path === '/overview' && route.query.demo === '1'" />
   <ModeSwitch v-model="mode" />
   <div class="body">
     <NavRail :items="railItems" />
     <main class="page">
-      <RouterView v-if="!gate" :key="dataset.version.value" />
+      <RouterView v-if="!gate" :key="dataset.version.value" v-slot="{ Component, route: currentRoute }">
+        <Transition name="view">
+          <component :is="Component" :key="currentRoute.fullPath" v-bind="currentRoute.path === '/overview' ? { demo: currentRoute.query.demo === '1' } : {}" />
+        </Transition>
+      </RouterView>
       <NoDataset v-else />
     </main>
   </div>
