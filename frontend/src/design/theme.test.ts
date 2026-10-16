@@ -70,6 +70,8 @@ const DARK_COLOR_TOKENS = [
   '--card', '--card-2', '--face-dim', '--header', '--ink', '--ink-muted',
   '--interact', '--leaf', '--leaf-soft', '--nav-blue', '--nav-tint', '--net',
   '--ok', '--on-face', '--paper', '--shadow', '--steel', '--unknown-stripe',
+  // 页⑤ 精修（2026-10-16）：一条只描边的青、一个标题字色、两档发光。
+  '--edge', '--glow-edge', '--glow-lift', '--title-ink',
 ].sort()
 
 /** 版式那一块。深浅不是字号的事，也不是栏宽的事 —— 所以两块分开守。 */
@@ -147,5 +149,30 @@ describe('实时那一档的令牌', () => {
     const fresh = [...light.matchAll(
       /--(header|on-face|face-dim|interact|ok|card-2)\s*:\s*#/g)].map((m) => m[1])
     expect(fresh, '浅色档给新令牌写了新色号').toEqual([])
+  })
+
+  it('页⑤ 精修那四个新令牌，浅色档也全部取等值', () => {
+    // 与上一条同一个理由、同一份纪律：这一轮的令牌只给实时那一屏用，
+    // 而「只给实时用」这件事**在浅色档里要看得见** —— 取等值就是那个证据。
+    // 写成一套新值不会让任何一条断言变红（页①②③④ 根本不引这四个名字），
+    // 也就没人会发现「只改实时屏」这条规矩已经破了。
+    const light = lightBlock()
+    expect(light).toMatch(/--edge:\s*var\(--leaf\)\s*;/)
+    expect(light).toMatch(/--title-ink:\s*var\(--on-face\)\s*;/)
+    expect(light).toMatch(/--glow-edge:\s*var\(--shadow\)\s*;/)
+    expect(light).toMatch(/--glow-lift:\s*var\(--shadow\)\s*;/)
+    // 反面：这四个名字在浅色档里一个六位色值都不许有。
+    const fresh = [...light.matchAll(
+      /--(edge|title-ink|glow-edge|glow-lift)\s*:\s*#/g)].map((m) => m[1])
+    expect(fresh, '浅色档给精修令牌写了新色号').toEqual([])
+  })
+
+  it('实时那一档的 `--edge` 是一条**只描边**的青，与 `--leaf` 不是同一个值', () => {
+    // 两个都叫青、都在同一屏上：`--leaf` #34D3C4 是「强调」（左边线、图章、
+    // 激活底），`--edge` 更电一点、**只用来描边与发光，从不当任何一块面**。
+    // 写成同一个值屏上也能看，但那条分工就没了 —— 而这一轮要的正是分工。
+    const b = darkBlocks()[0]!
+    expect(hexOf(b, '--edge')).toBe('00CFFF')
+    expect(hexOf(b, '--edge')).not.toBe(hexOf(b, '--leaf'))
   })
 })
