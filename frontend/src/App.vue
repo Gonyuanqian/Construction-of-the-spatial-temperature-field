@@ -100,7 +100,7 @@ watchEffect(() => {
        与「现在在哪一页」仍然不可能对不上。 -->
   <ModeSwitch v-if="!isLive" v-model="mode" />
   <div class="body" :class="{ live: isLive }">
-    <NavRail :items="railItems" />
+    <NavRail :items="railItems" :variant="isLive ? 'live' : 'plain'" />
     <!-- ⚠️ 右栏的**落点**。位置在源码里放在 `main` **前面**：
          字符串选择器的 Teleport 是在挂载期用 `document.querySelector` 找的，
          落点必须在那一页的组件挂起来之前就进文档 —— 放在后面能跑通全靠

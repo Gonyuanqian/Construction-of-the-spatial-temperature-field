@@ -70,8 +70,8 @@ const DARK_COLOR_TOKENS = [
   '--card', '--card-2', '--face-dim', '--header', '--ink', '--ink-muted',
   '--interact', '--leaf', '--leaf-soft', '--nav-blue', '--nav-tint', '--net',
   '--ok', '--on-face', '--paper', '--shadow', '--steel', '--unknown-stripe',
-  // 页⑤ 精修（2026-10-16）：一条只描边的青、一个标题字色、两档发光。
-  '--edge', '--glow-edge', '--glow-lift', '--title-ink',
+  // 页⑤ 精修（2026-10-16）：一条只描边的青、一个标题字色、两档发光、一条淡青线。
+  '--edge', '--glow-edge', '--glow-lift', '--title-ink', '--edge-line',
 ].sort()
 
 /** 版式那一块。深浅不是字号的事，也不是栏宽的事 —— 所以两块分开守。 */
@@ -161,9 +161,11 @@ describe('实时那一档的令牌', () => {
     expect(light).toMatch(/--title-ink:\s*var\(--on-face\)\s*;/)
     expect(light).toMatch(/--glow-edge:\s*var\(--shadow\)\s*;/)
     expect(light).toMatch(/--glow-lift:\s*var\(--shadow\)\s*;/)
-    // 反面：这四个名字在浅色档里一个六位色值都不许有。
+    // 左栏右缘那条线：浅色档的左栏没有它，取的是 `transparent`。
+    expect(light).toMatch(/--edge-line:\s*transparent\s*;/)
+    // 反面：这几个名字在浅色档里一个六位色值都不许有。
     const fresh = [...light.matchAll(
-      /--(edge|title-ink|glow-edge|glow-lift)\s*:\s*#/g)].map((m) => m[1])
+      /--(edge|title-ink|glow-edge|glow-lift|edge-line)\s*:\s*#/g)].map((m) => m[1])
     expect(fresh, '浅色档给精修令牌写了新色号').toEqual([])
   })
 

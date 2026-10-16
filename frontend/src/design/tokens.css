@@ -102,6 +102,9 @@
   --title-ink: var(--on-face); /* 系统标题的字色 */
   --glow-edge: var(--shadow);  /* 一条边那点光 */
   --glow-lift: var(--shadow);  /* 浮起来一整行那点光 */
+  /* 左栏右边缘那条线。浅色档取 `transparent`：那一档的左栏**没有**这条线 ——
+     「同等于没有」才是这一档的现状，写成一条看得见的线就是把四页一起改了。 */
+  --edge-line: transparent;
 
   /* 版式（2026-10-12）。⚠️ 浅色这一档**必须是「按现状取等值」**，不是新写一套：
      页①②③④ 的标题条高度由内容撑，写死一个 px 就会把四页一起改了。 */
@@ -145,7 +148,7 @@
      --paper --card --card-2 --ink --ink-muted --steel --leaf --leaf-soft
      --nav-tint --nav-blue --net --shadow --unknown-stripe
      --header --on-face --face-dim --interact --ok
-     --edge --title-ink --glow-edge --glow-lift
+     --edge --title-ink --glow-edge --glow-lift --edge-line
 
    ⚠️ **`--leaf` 在这一档仍然是青**（`#34D3C4`），**不是**规格书 §四.3 字面写的
    `#041A35`。理由是数过的：`var(--leaf)` 在六个页面上有**十处**当强调色用
@@ -201,6 +204,11 @@
      变成「这一行多了一圈边」，而不是「这一行亮着」。 */
   --glow-edge: 0 0 8px rgba(0, 207, 255, 0.55);
   --glow-lift: 0 0 16px rgba(0, 207, 255, 0.30);
+  /* 左栏右边缘那条「低透明度青色分隔线」（用户第二部分原话）。
+     ⚠️ 它必须是**自己的一个令牌**，不能写成「`--edge` 再叠一层 opacity」：
+     那条线是栏的 `border-right`，而 opacity 是整件元素的事 —— 压在栏上，
+     连带把整列的图标与文字一起压淡了。 */
+  --edge-line: rgba(0, 207, 255, 0.25);
   --shadow: 0 0 0 1px rgba(52, 211, 196, 0.16), 0 0 18px rgba(52, 211, 196, 0.08);
   /* 「无测量带」的斜纹：浅色那一档是**深色**墨 16% 压在纸上。同一个值压在
      深蓝底上等于没有 —— 于是斜纹整片消失，而「这块是外推的」那句话还挂在

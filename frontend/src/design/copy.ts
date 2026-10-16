@@ -6,6 +6,8 @@
  * 这个名字同时出现在 copy.ts、index.html 和若干组件里 —— 写死三份就会漂成两个名字，
  * 而验收时看到的正是它。所以有一条测试扫全仓来守。
  */
+import type { IconName } from './icons'
+
 export const SYSTEM_TITLE = '棚式空间温度场重建系统'
 
 /**
@@ -43,41 +45,47 @@ export const NAV_ITEMS = [
 ] as const
 
 /**
- * 实时模式那一屏左栏里的五条（2026-10-09 用户裁定三项，2026-10-12 照参考图补成五项）。
+ * 实时模式那一屏左栏里的四条（2026-10-09 用户裁定三项，2026-10-12 照参考图补成
+ * 五项，2026-10-16 精修时合并成四项）。
  *
- * 五项**都还没有页面**，所以一律 `enabled: false`，与 `NAV_ITEMS` 里「影响分析」
- * 同一套形状：留位、写明理由、不做成空页（`spec 2026-10-04 §二.4`）。
+ * **「首页」并进了「实时监测」**（2026-10-16 用户裁定：「首页就是实时监测，
+ * 把这两个合在一起留一个就行」）。合并之后这一屏上终于**有了对象可选** ——
+ * 参考图上那个高亮态才落得下来。名字取「实时监测」而不是「首页」：`/`
+ * 在这个系统里已经 redirect 到 `/data`（数据导入页），叫「首页」却跳去实时屏，
+ * 名实分家。参考图那一条写的是「首页」，此处**有意不照图**。
+ *
+ * 后三项**都还没有页面**，所以一律 `enabled: false`，与 `NAV_ITEMS` 里
+ * 「影响分析」同一套形状：留位、写明理由、不做成空页（`spec 2026-10-04 §二.4`）。
  *
  * ⚠️ **不是把 `NAV_ITEMS` 改掉**：训练模式那四页的左栏仍然是流水线那四项，
  * 标签、次序、`enabled` 一个都不动（`App.test.ts` 按 `NAV_ITEMS` 推导着断言）。
  * 这一份只走 `App.vue` → `NavRail` 的 `items`。
  *
- * ⚠️ 中间那两项（实时监测 / 三维可视化）**不是这一屏自己的入口** ——
- * 这一屏已经在演实时了。它们是参考图给的位置，说的是「实时这一块将来不止一屏」。
- * 写清楚是为了下一个人别把它们当成重复的导航。
+ * ⚠️ 「三维可视化」这一项**不是这一屏自己的入口** —— 三维就在这一屏中间。
+ * 它是参考图给的位置，说的是「实时这一块将来不止一屏」。写清楚是为了下一个人
+ * 别把它当成重复的导航。
  *
- * ⚠️ 五句 `why` 的长度都要大于 10 个字符 —— `guards.test.ts` 有一条守卫
- * 扫「未开放项必带理由」，`LIVE_NAV_ITEMS` 也在它扫的名单里。
+ * ⚠️ 后三句 `why` 的长度都要大于 10 个字符 —— `guards.test.ts` 有一条守卫
+ * 扫「未开放项必带理由」，`LIVE_NAV_ITEMS` 也在它扫的名单里。已开放的那一项
+ * 按 `NAV_ITEMS` 的老规矩是空串（它没有「为什么没开」可写）。
+ *
+ * `icon` 是 `design/icons.ts` 里的名字。**只有这一份带图标**：训练侧那四页的
+ * 左栏没有图标（用户 2026-10-16 裁的是实时那一屏）。
  */
 export const LIVE_NAV_ITEMS = [
   {
-    key: 'home', label: '首页', to: '/', enabled: false,
-    why: '演示屏上留的位置。这一屏在演示什么，就由这一屏自己说。',
+    key: 'live', label: '实时监测', to: '/live', enabled: true, icon: 'pulse', why: '',
   },
   {
-    key: 'live', label: '实时监测', to: '/live-monitor', enabled: false,
-    why: '演示屏上留的位置。这一屏本身就是实时监测，入口留给将来多棚并列时再开。',
-  },
-  {
-    key: 'volume', label: '三维可视化', to: '/volume', enabled: false,
+    key: 'volume', label: '三维可视化', to: '/volume', enabled: false, icon: 'cube',
     why: '演示屏上留的位置。三维就在这一屏中间，单独一整页留给将来调视角用。',
   },
   {
-    key: 'history', label: '历史数据', to: '/history', enabled: false,
+    key: 'history', label: '历史数据', to: '/history', enabled: false, icon: 'clock',
     why: '演示屏上留的位置。先把这一屏演示完，再谈回看与追溯。',
   },
   {
-    key: 'settings', label: '系统设置', to: '/settings', enabled: false,
+    key: 'settings', label: '系统设置', to: '/settings', enabled: false, icon: 'gear',
     why: '演示屏上留的位置。这一屏的控件都在页面上，没有要设的东西。',
   },
 ] as const
@@ -263,4 +271,9 @@ export interface RailItem {
   readonly to: string
   readonly enabled: boolean
   readonly why: string
+  /**
+   * `design/icons.ts` 里的图标名。**可选** —— `NAV_ITEMS` 四项都没有，
+   * 它们渲染出来与改动前逐像素相同（图标是这一轮只给实时那一屏加的）。
+   */
+  readonly icon?: IconName
 }

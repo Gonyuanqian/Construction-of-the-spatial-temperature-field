@@ -168,9 +168,16 @@ describe('应用外壳', () => {
     // 让断言带着理由说话」。
     const rail = w.find('nav[aria-label="页面"]')
     expect(rail.exists(), '左栏没了').toBe(true)
-    expect(rail.findAll('a'), '占位项不该是链接').toEqual([])
+    // ⚠️ 2026-10-16 精修：「首页」与「实时监测」合并成一项，而这一项**是开着的**
+    // （指向本屏），所以这里由「一个 <a> 都没有」改成「恰好一个，且指向 /live」。
+    // 后三项仍是占位，一个都不许变成链接。
+    expect(rail.findAll('a').map((a) => a.attributes('href')), '占位项不该是链接')
+      .toEqual(['/live'])
     for (const item of LIVE_NAV_ITEMS) {
       expect(rail.text(), `${item.label} 不在`).toContain(item.label)
+    }
+    // 理由只有**未开放**的项才有（已开放项的 `why` 按 `NAV_ITEMS` 的老规矩是空串）。
+    for (const item of LIVE_NAV_ITEMS.filter((i) => !i.enabled)) {
       expect(rail.text(), `${item.label} 的理由看不见`).toContain(item.why)
     }
     // 反面：训练模式那四项**一项都不该出现在这一列**。少了这一条，

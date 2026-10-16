@@ -16,6 +16,9 @@
  * （spec §十三.2）——「把导航做成按钮」是这次唯一不能做的控件化改动。
  * 未开放项的理由必须**仍在这个 nav 里**，`App.test.ts:74` 按 `rail.text()` 找它。
  */
+import { computed } from 'vue'
+
+import Icon from './Icon.vue'
 import { NAV_ITEMS, type RailItem } from '../design/copy'
 
 /**
@@ -23,17 +26,43 @@ import { NAV_ITEMS, type RailItem } from '../design/copy'
  * 所以那四页的左栏与改动前逐字相同。
  * 实时模式那一屏传 `LIVE_NAV_ITEMS`（见 `App.vue`）。
  */
-const props = withDefaults(defineProps<{ items?: readonly RailItem[] }>(), {
+const props = withDefaults(defineProps<{
+  items?: readonly RailItem[]
+  /**
+   * 这一列长什么样。**默认 `'plain'`（卡片列）** —— 页①②③④ 一个属性都不传，
+   * 所以那四页的左栏与改动前逐像素相同。
+   *
+   * `'live'` 是 2026-10-16 精修那一档：连续的菜单行（图标在左、文字在右，
+   * 选中项左缘一道青条），与参考图一致。
+   *
+   * ⚠️ 为什么是**加一个可选属性**而不是另写一个组件：这一列的形状钉在
+   * `App.test.ts` 与 `NavRail.test.ts` 上（仍是 `nav[aria-label="页面"]`、
+   * 导航项仍是 `<a>`、未开放项的理由仍在这个 nav 里），另写一个就得分叉两份
+   * 守卫；而分叉出来的那一份，正是最容易在半年后没跟上的一处。
+   */
+  variant?: 'plain' | 'live'
+}>(), {
   items: () => NAV_ITEMS,
+  variant: 'plain',
 })
+
+const isLive = computed(() => props.variant === 'live')
 </script>
 
 <template>
-  <nav class="rail" aria-label="页面">
+  <nav class="rail" :class="{ live: isLive }" aria-label="页面">
     <template v-for="item in props.items" :key="item.key">
-      <RouterLink v-if="item.enabled" class="item" :to="item.to">{{ item.label }}</RouterLink>
+      <!-- 图标只在有名字时画（`NavRail` 的两份清单里只有实时那一份带名字）。
+           图标在左、文字在右 —— 用的是 flex 的次序，不是 `order`。 -->
+      <RouterLink v-if="item.enabled" class="item" :to="item.to">
+        <Icon v-if="item.icon" :name="item.icon" class="ico" />
+        <span class="label">{{ item.label }}</span>
+      </RouterLink>
       <template v-else>
-        <span class="item off">{{ item.label }}</span>
+        <span class="item off">
+          <Icon v-if="item.icon" :name="item.icon" class="ico" />
+          <span class="label">{{ item.label }}</span>
+        </span>
         <span class="why note">{{ item.why }}</span>
       </template>
     </template>
@@ -73,8 +102,11 @@ const props = withDefaults(defineProps<{ items?: readonly RailItem[] }>(), {
   overflow-y: auto;
 }
 /* 每一项是一张卡（2026-10-06 用户裁定）。圆角与阴影走全站那一档
-   （spec §四：全站只有一档），这里不新开第二种卡。 */
-.item {
+   （spec §四：全站只有一档），这里不新开第二种卡。
+   ⚠️ 2026-10-16：这一套现在挂在 **`:not(.live)`** 上 —— 实时那一屏的左栏
+   改成了连续的菜单行（用户第二部分要求）。那是**有意推翻** 2026-10-06
+   那条「每一项是一张卡」，不是漏改；训练侧那四页仍是卡片列。 */
+.rail:not(.live) .item {
   display: block;
   padding: var(--gap-s) 10px;
   background: var(--card);
@@ -99,4 +131,75 @@ const props = withDefaults(defineProps<{ items?: readonly RailItem[] }>(), {
 .rule { border: 0; border-top: var(--rule); width: 100%; margin: var(--gap-m) 0 0; }
 .rail-extra:empty { display: none; }
 .rail-extra { margin-top: var(--gap-m); display: flex; flex-direction: column; gap: var(--gap-s); }
+
+/* ── 页⑤ 精修（2026-10-16）：实时那一屏的左栏 ────────────────────────
+   行，不是卡：项高统一、通到两边（左边那道高亮条要贴着栏的边缘），
+   默认态是**透明的深蓝底**、浅蓝的字与低亮度的线框图标。
+   ⚠️ 卡片那一套改挂在 `.rail:not(.live)` 上了（见上）。 */
+.rail.live {
+  /* 行要通到边上，所以内边距从**列**挪到了**行**上。 */
+  padding: 0;
+  gap: 0;
+  /* 右边缘那条低透明度的青线。
+     ⚠️ 用的是 `--edge-line`（一个带 alpha 的青），不是「`--edge` 加 opacity」：
+     opacity 是整件元素的事，而这条线是**栏的边框**。
+     也正因为走 `border-right` 而不是一条绝对定位的伪元素，它不会跟着内容滚 ——
+     `.rail` 是 `overflow-y: auto`，伪元素会滚走，边框不会。
+     `box-sizing: border-box` 是全局的（`base.css`），所以栏宽仍是 210px。 */
+  border-right: 1px solid var(--edge-line);
+}
+.rail.live .item {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-s);
+  /* 用户给的是 52–58px，取中间。用 `min-height` 而不是 `height`：
+     窄屏上文字折行时写死高度会把字切掉（`--titlebar-h` 那条同一个理由）。 */
+  min-height: 54px;
+  padding: 0 var(--gap-m) 0 var(--gap-l);
+  background: transparent;
+  border-radius: 0;
+  color: var(--ink-muted);
+  font-size: var(--size-body);
+  /* 悬停要「平滑过渡」（用户原话）。只过渡这两个会变的属性：
+     写 `all` 会把布局属性也带上，那是在为一件不会变的事付钱。 */
+  transition: background-color 0.18s ease, color 0.18s ease;
+  /* 选中项左缘那道青条要贴在这一行的边上。 */
+  position: relative;
+}
+/* 悬停：比页底亮一档的深蓝。⚠️ 占位项不参与 —— 它点不动，给反馈是在骗人。 */
+.rail.live .item:not(.off):hover {
+  background: var(--card);
+  color: var(--ink);
+}
+/* 图标默认是三成半暗。⚠️ 走 `opacity` 而不是另一个颜色：图标是 `currentColor`
+   上色的（`Icon.vue`），压暗它就等于压暗那一行的字，而字不该跟着暗。 */
+.rail.live .item .ico { opacity: 0.75; }
+
+/* 选中态：亮蓝的底 + 左缘一道青 + 外发光 + 图标文字提亮（用户第二部分要求）。 */
+.rail.live .item.router-link-active {
+  background: var(--nav-blue);
+  color: var(--on-face);
+  font-weight: var(--w-strong);
+  box-shadow: var(--glow-lift);
+}
+/* 左缘那道 3px 的青条。
+   ⚠️ 它 2026-10-06 被**撤掉**过一次，当时的理由是「底色已经说明是这一项，
+   再插一根同色的竖条是同一句话说了两遍」。2026-10-16 用户点名要它回来，
+   而且两处都变了：当年是同色的竖标，现在是与底色**不同色**的青。
+   所以那句话不再成立 —— 底色说「是这一项」，这道青说「这一屏是活的」。 */
+.rail.live .item.router-link-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--edge);
+}
+.rail.live .item.router-link-active .ico { opacity: 1; }
+
+/* 未开放项那三句理由。⚠️ 暂时**留着可见**（见本轮要求采集 R9）——
+   参考图上那三行是干净的，所以页⑤ 的左栏会比参考图多三行小字。
+   这是「默认不动没被点名的东西」，已向用户点出、等他点头。 */
+.rail.live .why { padding: 0 var(--gap-m) var(--gap-s) var(--gap-l); }
 </style>
