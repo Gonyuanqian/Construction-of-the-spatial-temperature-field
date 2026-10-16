@@ -41,7 +41,9 @@ const SRC = fileURLToPath(new URL('..', import.meta.url))
  * ⚠️ 它只对**页面**成立：组件里有的是纯控件与读数，一句 `p.note` 都没有是正常的。
  *
  * ⚠️ 这条守卫**够不着**两处，说清楚：① `p.sub` 这类换个类名的写法
- *   （`OverviewStrip` 的副文案就是）；② `scene/VolumeView.vue` 这种大组件 ——
+ *   （`OverviewStrip` 那三句副文案原先就是这么绕过去的，2026-10-16 连元素
+ *   一起撤了，所以**当下没有实例** —— 但盲区还在，下一个人新加一个 `p.xxx`
+ *   照样绕得过去）；② `scene/VolumeView.vue` 这种大组件 ——
  *   它不在这一份清单里，理由是它的 `p.note` 全都落在 `fieldset.rail-box` 内
  *   或带 `state`，而把它加进来会让那条防空转断言变成一句修辞。
  */

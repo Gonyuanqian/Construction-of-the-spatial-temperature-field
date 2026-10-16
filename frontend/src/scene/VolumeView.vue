@@ -108,6 +108,27 @@ const props = withDefaults(defineProps<{
    *   `VolumeView.test.ts` 里那一组自己造落点，正是防这一手。
    */
   panels?: 'all' | 'shell'
+  /**
+   * 这一块要不要**把高度交给外面分配**（2026-10-16 页⑤ 一屏装三块）。
+   *
+   * ⚠️ **默认关**，与 `showClock` / `showNotes` / `showViewControls` / `panels`
+   * 同一条规矩：默认值取「页③ 现在什么样」，页③ 因此一个字符都不用改。
+   * 页③ 那一屏的高度是它自己说了算的（画布写死 460px），没有外面可让。
+   *
+   * 真的做法只是往三层各挂一个 `stretch` 类，然后由样式逐层
+   * `flex: 1 1 auto` + `min-height: 0` 把「会长会缩」一路送到画布 ——
+   * 中间断一节也不会报错，只是那一层退回自己写死的高度（页面上表现为
+   * 「三维没跟着变」，最难查的一种）。上下限都写在 `VolumeScene.vue` 那两条里：
+   * 下限 260px 保画面不是一条缝，上限 460px 就是今天的高度。
+   *
+   * ⚠️ 传的是这个开关，**不是一个高度**。高度由窗口算 —— 在这里传一个
+   * 常数，那个数在有人往页⑤ 加一块时会悄悄过期，而屏上只是「三维矮了」。
+   *
+   * ⚠️ 它只对 `panels === 'shell'`（一栏）这一档有意义：三栏那一档的
+   * 中栏高度由左右两栏里最高的那个决定，不在这一条的射程里。
+   * 页⑤ 两个都传，所以屏上一直是单栏。
+   */
+  stretch?: boolean
 }>(), {
   // 默认**摆**：页③ 一直摆着，页⑤ 显式关掉。默认值取「页③ 现在什么样」，
   // 于是页③ 一个字符都不用改 —— 这次裁定动的是页⑤。
@@ -117,6 +138,8 @@ const props = withDefaults(defineProps<{
   // 默认取「页③ 现在什么样」——与 `showClock` / `showNotes` / `showViewControls`
   // 同一条规矩：改哪一页由**页**说，不由这一块替两页一起定。
   panels: 'all',
+  // 同上：默认关，页③ 与改动前逐像素相同。
+  stretch: false,
 })
 
 const volume = useAsync(() => getJson<VolumePayload>(
@@ -317,7 +340,10 @@ function runQuery() {
 </script>
 
 <template>
-  <div class="block">
+  <!-- `stretch` 那三层（这个根、`.vol-grid`、`.vol-stage`）加上 `VolumeScene`
+       根上透传的那一层，合起来才是「外面的高度分配一路到画布」。
+       少挂哪一层，画布就退回自己写死的 460px —— 不报错，只是不跟着缩。 -->
+  <div class="block" :class="{ stretch }">
     <div class="row head">
       <h3>棚体三维温度场</h3>
       <span v-if="volume.data.value" class="tag">
@@ -353,7 +379,7 @@ function runQuery() {
            而投出去的次序正好就是参考图要的「问数在前」。
            `VolumeView.test.ts` 的 `columns()` 按**类名**取栏，不按位置 ——
            按位置取的话源码次序一改就会读反，而它给出的每一条断言照样绿。 -->
-      <div class="vol-grid" :class="{ 'stage-only': panels === 'shell' }">
+      <div class="vol-grid" :class="{ 'stage-only': panels === 'shell', stretch }">
         <Teleport to="#shell-side" :disabled="panels === 'all'">
           <Card class="vol-side vol-ask">
             <table v-if="readout">
@@ -397,7 +423,7 @@ function runQuery() {
           </Card>
         </Teleport>
 
-        <Card class="vol-stage">
+        <Card class="vol-stage" :class="{ stretch }">
           <!-- 画面角上那枚时刻（2026-10-09 用户裁定）。它读的是**载荷自己的**
                `time`，不是外面传进来的 `clockTime`：这枚读数回答的是「画面上
                这一屏是哪一刻」，而两者错开的那一秒（正在构体）正是它最该说话
@@ -410,6 +436,7 @@ function runQuery() {
           </p>
           <VolumeScene
             ref="scene"
+            :class="{ stretch }"
             :spec="spec" :payload="volume.data.value" :picked="shown" :cut-y="cutAt"
             :show-view-controls="showViewControls"
             @hover="onHover" @pick="onPick" @ready="onSceneReady"
@@ -543,4 +570,24 @@ function runQuery() {
 /* 右栏比原来那一整行窄得多，三个坐标框放不下就折行 —— 不折的话它们会把
    右栏撑破（`min-width: 0` 只保证格子不撑破，格子里的内容还是会溢出来）。 */
 .vol-side .row { flex-wrap: wrap; }
+
+/* ── 把高度让给外面（2026-10-16 页⑤ 一屏装三块） ──────────────────────
+   这三条 + `VolumeScene.vue` 里那两条，是「会长会缩」从页面一路通到画布的
+   全部。逐层 `display: flex; flex-direction: column` 是因为 flex 的
+   `flex: 1 1 auto` 只在 flex 容器里认；`min-height: 0` 是每一层**能缩**的
+   前提（flex 子项默认不低于内容）。少任何一条，那一层就卡在自己写死的
+   高度上，画布跟着不缩 —— 而屏上只表现为「三维没变」，不报错。
+
+   ⚠️ 只在 `stretch` 那一档生效。页③ 不挂这个类，这几条一个字都不落在它身上。
+   ⚠️ `.vol-grid` 在这里**换成 flex 列**（它平时是栅格）：`stretch` 只配
+   `panels="shell"` 用，那一档本来就只有一栏，列与栅格等价。三栏那一档
+   `align-items: start` 那条规矩因此不受影响。 */
+.block.stretch {
+  display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
+  /* 这一块的下边距在页⑤ 由 `.stage` 与 `.foot` 之间那条 `margin-top` 管，
+     留着它是白占 44px —— 而这一屏的每一像素都在账上。 */
+  margin-bottom: 0;
+}
+.vol-grid.stretch { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.vol-stage.stretch { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 </style>

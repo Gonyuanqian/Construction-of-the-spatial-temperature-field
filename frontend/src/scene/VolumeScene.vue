@@ -622,6 +622,25 @@ onBeforeUnmount(() => {
 .scene-wrap { position: relative; }
 .scene { width: 100%; height: 460px; cursor: crosshair; }
 .scene :deep(canvas) { display: block; width: 100%; height: 100%; }
+/* ── 把高度让给外面（2026-10-16 页⑤ 一屏装三块） ──────────────────────
+   `VolumeView` 传一个 `stretch` 类下来（属性透传落在 `.scene-wrap` 这个根
+   上），于是画布不再自己写死 460px，改由外面那条竖排弹性列分配。
+
+   ⚠️ **上下限都写在这儿，一条链只写一处**（`LiveView.vue` 那条 `.stage`
+   刻意不写下限，`App.vue` 那条也刻意不写「窗口高减多少」）：
+   · 下限 260px —— 再矮就是一条看不出棚体的缝（规格书 §九 第一条风险）。
+     顶到它之后这一屏由外壳那条 `overflow-y: auto` 滚，而不是继续压三维。
+   · 上限 460px —— 就是**原来那一档**。今天的高度是天花板，不是地板：
+     窗口再高也不把画布拉得比改动前更大（`fit.test.ts` 那几条比例是照这一档
+     定的）。于是「够高就长到今天的样，够矮就收到 260」。
+
+   ⚠️ 弹性靠**逐层的 `flex`** 传，不靠 `height: 100%`。后者要求每一层祖先
+   都有确定高度，中间断一节就静默变成 0（画面直接没了）；前者断一节只是
+   回到自己写死的那一档。两者都不报错，但坏起来差得远。
+
+   ⚠️ 页③ 不挂这个类：它走的仍是上面那条写死的 460px，逐像素不变。 */
+.scene-wrap.stretch { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.scene-wrap.stretch > .scene { flex: 1 1 auto; height: auto; min-height: 260px; max-height: 460px; }
 /* 视角按钮：压在画面**右上角**。
    锚点是**画布盒子**自己（`.scene-wrap` 是 `position: relative`，画布铺满它），
    所以缩进取 `--gap-s` 就到画面里侧了 —— `VolumeView` 那个 `.stage-clock`

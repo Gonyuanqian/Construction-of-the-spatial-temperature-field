@@ -9,17 +9,22 @@ import GaugeDial from './GaugeDial.vue'
 import OverviewStrip from './OverviewStrip.vue'
 
 const CELLS = [
-  { key: 'mean', label: '棚内平均温度', value: '26.5 °C', sub: '拱形以内', tone: 'plain' as const },
-  { key: 'scene', label: '棚体三维温度场', value: '已生成', sub: '这一帧的体网格', tone: 'ok' as const },
+  { key: 'mean', label: '棚内平均温度', value: '26.5 °C', tone: 'plain' as const },
+  { key: 'scene', label: '棚体三维温度场', value: '已生成', tone: 'ok' as const },
 ]
 
 describe('OverviewStrip', () => {
-  it('一格一行，按 key 渲染，值是原样的字符串', () => {
+  it('一格两行：标签、值。按 key 渲染，值是原样的字符串', () => {
     const w = mount(OverviewStrip, { props: { cells: CELLS } })
     expect(w.findAll('.cell')).toHaveLength(2)
     expect(w.text()).toContain('棚内平均温度')
     expect(w.text()).toContain('26.5 °C')
-    expect(w.text()).toContain('拱形以内')
+    // ⚠️ 2026-10-16 用户裁定：每格那**第三行副文案**（原先就是 `.sub` 那一行，
+    // 「拱形以内、z 不高于 1.10 m」那几句）整块撤了 —— 页⑤ 的中央那一屏要
+    // 三块同屏不滚动，每格一行就是几十像素。反面在这儿钉一条：那个类一旦
+    // 回来，这一屏的账就得重算，而它在屏上只表现为「底栏又看不见了」。
+    expect(w.find('.sub').exists(), '`.sub` 那一行又回来了').toBe(false)
+    expect(w.findAll('.cell')[0]!.element.children, '一格不止两行了').toHaveLength(2)
   })
 
   it('语气走类名，不做任何判断', () => {

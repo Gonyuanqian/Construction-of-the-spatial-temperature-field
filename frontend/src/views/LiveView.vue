@@ -327,28 +327,30 @@ const readout = computed(() => {
  * 三格。**值全部是已经格式化好的字符串**，语气也在这里定 ——
  * `OverviewStrip` 不认识页⑤，只按 `tone` 上一个类名。
  *
- * ⚠️ 副文案（`sub`）装的是各自**已有的真话**，不印参考图那个
- * 「（切割 y = 18.00）」（规格书 §三 D10）：这一屏演的是三维全场，
- * 后端没有「当前剖切位置」这个数，也不该为它编一个。
+ * ⚠️ 2026-10-16 用户裁定：每格那第三行副文案（「拱形以内、z 不高于 1.10 m」
+ * 等三句）**整块删掉**，`OverviewStrip` 那边连 `.sub` 那个元素一起撤了。
+ * 理由是这一屏的版面：三维 / 环境参数 / 沿栅均温三块要**同屏不滚动**，
+ * 每格省下一行就是几十像素。三句真话的去处分别是 —— 均温那一句搬进了页脚的
+ * 「口径与出处」；「这一帧的体网格」在三维那一块的卡片里本来就写着；
+ * 「实时数据，动态更新」说了等于没说（它旁边就是「更新时间」那一格）。
+ *
+ * ⚠️ 参考图那个「（切割 y = 18.00）」仍然**不印**（规格书 §三 D10，没被推翻）：
+ * 这一屏演的是三维全场，后端没有「当前剖切位置」这个数，也不该为它编一个。
  */
 type Cell = {
-  key: string; label: string; value: string; sub: string; tone: 'plain' | 'ok' | 'warn'
+  key: string; label: string; value: string; tone: 'plain' | 'ok' | 'warn'
 }
 
 const overview = computed<readonly Cell[]>(() => [
   {
-    key: 'mean', label: '棚内平均温度', value: meanText.value,
-    sub: `拱形以内、z 不高于 ${zLimitText.value} m`, tone: 'plain',
+    key: 'mean', label: '棚内平均温度', value: meanText.value, tone: 'plain',
   },
   {
     key: 'scene', label: '棚体三维温度场', value: sceneText.value,
-    sub: '这一帧的体网格',
     tone: sceneText.value === '取数失败' ? 'warn' : (sceneText.value === '已生成' ? 'ok' : 'plain'),
   },
   {
-    key: 'time', label: '更新时间', value: frameTimeText.value,
-    // ⚠️ 不许用 ` · `（禁字形表里有它）。
-    sub: '实时数据，动态更新', tone: 'plain',
+    key: 'time', label: '更新时间', value: frameTimeText.value, tone: 'plain',
   },
 ])
 
@@ -395,7 +397,15 @@ function runAsk(q: { x: number; y: number; z: number }): void {
 </script>
 
 <template>
-  <section>
+  <!-- ⚠️ 2026-10-16：根这一层带 `class="live"`，为的是 `.live` / `.stage`
+       那两条竖排弹性列的规则（见本文件末尾那一段样式）。`App.vue` 在实时
+       那一档把中栏也摆成了一条 flex 列 —— 两头接上，三维那一块才有高度可分。
+
+       ⚠️ 这段注释里**不许出现那个样式的标签名**（`style`）：`prose.test.ts`
+       用 `indexOf` 找它来切模板段，注释里写一个就把扫描段截在这儿，
+       于是那条守卫会以「一个 p.note 都没有」报红 —— 而它其实是被饿着了。
+       这一条已经踩过一次（2026-10-16）。 -->
+  <section class="live">
     <h2>实时模式</h2>
 
     <p v-if="error" role="alert" class="alert">{{ error }}</p>
@@ -504,10 +514,6 @@ function runAsk(q: { x: number; y: number; z: number }): void {
            一律不带 `prov` 图章：三格上的数都是这次请求现算的，印三个
            一模一样的「算」是重复（与页① 同一年的同一条裁定）。 -->
       <OverviewStrip :cells="overview" />
-      <p class="note reading">
-        均温只算拱形以内、z 不高于 {{ zLimitText }} m 的那些格子。拱外没有定义，
-        再往上那一条是按外推补出来的，都不进平均。
-      </p>
 
       <!-- ⚠️ 两块**互斥**、共用一个位子（2026-10-09 第一轮用户裁定）：
            原先断面那张卡没有 `v-if` 拦着，切到三维就成了上下两条。
@@ -545,12 +551,19 @@ function runAsk(q: { x: number; y: number; z: number }): void {
            以及「画面仍是 X 的场」那句说的都是它）。
            ⚠️ `show-notes` 仍然关掉（2026-10-09 用户裁定）：那两行口径说明
            撤下来之后，顶住规格书 §5.3 那条要求的是右栏那个滑块的标题与读数。 -->
-      <VolumeView
-        v-else
-        source="live" :t-index="status?.cursor ?? 0"
-        panels="shell" :show-notes="false"
-        :clock-time="frame.data.value?.frame.time ?? ''"
-      />
+      <!-- ⚠️ 2026-10-16：三维那一块包进 `.stage` —— 它是这一屏**唯一**
+           会长会缩的那一格。`stretch` 让 `VolumeView` 把高度交给外面分配
+           （逐层 `flex` 传到画布，见那两个文件末尾的样式）。
+           ⚠️ 传的是 `stretch` 而不是一个高度：高度由窗口算，不由这里编一个
+           常数 —— 编出来的那个数在有人往这一屏加一块时会**悄悄**过期，
+           而屏上只表现为「三维矮了」，不报错。 -->
+      <div v-else class="stage">
+        <VolumeView
+          source="live" :t-index="status?.cursor ?? 0"
+          panels="shell" :show-notes="false" stretch
+          :clock-time="frame.data.value?.frame.time ?? ''"
+        />
+      </div>
 
       <!-- 底栏两块（2026-10-09 第二轮，照参考图下方那两块）；
            ⚠️ 2026-10-12 左块照参考图换成了「环境参数（棚体与周边）」
@@ -587,7 +600,10 @@ function runAsk(q: { x: number; y: number; z: number }): void {
 
         <Card>
           <h3>{{ MEAN_CURVE_TITLE }}</h3>
-          <EChart v-if="vCurve" :option="vCurve" height="240px" />
+          <!-- ⚠️ 高度 2026-10-16 从 240px 收到 150px：这一屏要三块同屏不滚动，
+               而这条曲线的形状在 150px 上照样读得出（它说的是「从头到尾哪儿热」
+               的趋势，不是要读刻度）。 -->
+          <EChart v-if="vCurve" :option="vCurve" height="150px" />
           <!-- ⚠️ 这一格**不印后端的原话**：它是底栏的次要一块，把一条接口错误
                原样摊在这里会盖过温度场。而 `routes.smoke.test.ts` 那条禁字形
                扫描是逐页扫整页文本的，一句来路不明的错误文案正是最容易带进
@@ -646,6 +662,16 @@ function runAsk(q: { x: number; y: number; z: number }): void {
       <p class="note" data-grading>
         图上一个格子只有三种回答：拱外无定义、无测量带里不报数、以及一个带出处的实测值。
       </p>
+      <!-- ⚠️ 均温那一句**原先常驻在概览条底下**，2026-10-16 用户裁定撤下来。
+           与原先把分级句折进这里是同一条处置：**降级不是删除** —— 话一个字
+           不丢，从「常驻」变成「点一下」。它撤得掉的理由是这一屏最容易看错的
+           那个数（均温）在下面那张环上、以及那一块的标题里都还标着是什么。
+           `LiveView.test.ts` 里断「都不进平均」的那一条**照样绿** ——
+           `<details>` 收起来，内容仍然在 DOM 里。 -->
+      <p class="note">
+        均温只算拱形以内、z 不高于 {{ zLimitText }} m 的那些格子。拱外没有定义，
+        再往上那一条是按外推补出来的，都不进平均。
+      </p>
       <p class="note">
         数据集末 144 帧留了出（2026-07-27 12:00 起），模型只在其余 1164 帧上标定过一次。
         这里一帧一帧把它们接进时间轴。
@@ -677,6 +703,26 @@ function runAsk(q: { x: number; y: number; z: number }): void {
 </template>
 
 <style scoped>
+/* ── 一屏装三块（2026-10-16 用户裁定） ─────────────────────────────────
+   用户报的：「棚体三维温度场、环境参数、沿栅均温这三个模块应该都能同时
+   显现出来，而现在后两块必须下滑才能显示。」
+
+   做法是一条**竖排的弹性列**：`App.vue` 在实时那一档把中栏（`.page`）也
+   摆成 flex 列，这里接上；`.stage`（三维那一块）是**唯一**那一格会长会缩的
+   成员，其余各块按自己的内容高。
+
+   ⚠️ `.live` 写 `flex: 1 0 auto`，那个 `0` 是关键：`flex-shrink: 0` 让
+   这一列**永远不缩到内容以下**。窗口够高时它被 `flex-grow` 拉满，于是
+   `.stage` 有富余可分，画布长高（上限 460px）；窗口不够高时它停在内容高，
+   于是多出来的部分由 `.page` 那条 `overflow-y: auto` 滚 —— 而不是把三维
+   压成一条缝。两头都不需要在这里写一个「窗口高减多少」的常数。
+
+   ⚠️ 没有 `.stage { min-height: … }`：下限写在**画布**那一层
+   （`VolumeScene.vue` 的 `.scene-wrap.stretch > .scene`），一条链只写一处。
+   在这里再写一个数，两个数迟早对不上，而屏上只是「三维的高度看着不对」。 */
+.live { display: flex; flex-direction: column; flex: 1 0 auto; }
+.stage { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+
 .block { margin-bottom: var(--gap-xl); }
 .row { display: flex; gap: var(--gap-s); align-items: center; }
 .head { justify-content: space-between; }

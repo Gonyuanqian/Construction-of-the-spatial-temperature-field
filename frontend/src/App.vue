@@ -149,6 +149,11 @@ watchEffect(() => {
 }
 .body.live > .rail { grid-area: 1 / 1 / 2 / 2; }
 .body.live > .page { grid-area: 1 / 2 / 2 / 3; }
+/* ⚠️ 2026-10-16：中栏在实时这一档还是一条**竖排的弹性列**（页⑤ 要三块同屏，
+   见 `LiveView.vue` 那两条）。`.page` 自己的 `overflow-y: auto` **原样保留**
+   —— 装得下就不滚，顶到里面各块的下限才滚。这一条与上面 `.page` 那条写在
+   两个选择器里不是重复：`.page` 是所有页共用的，这一条只管实时那一档。 */
+.body.live > .page { display: flex; flex-direction: column; }
 /* 右栏自己是一个竖排的列：里面那几张卡的间距由这里的 `gap` 说了算，
    页⑤ 因此不必给每张卡再写一个下边距。 */
 .shell-side {
