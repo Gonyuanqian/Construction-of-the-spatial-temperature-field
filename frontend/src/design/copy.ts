@@ -28,6 +28,7 @@ export const MODES = [
  * （spec 2026-10-04 §二.4）。
  */
 export const NAV_ITEMS = [
+  { key: 'overview', label: '作战总览', to: '/overview', enabled: true, why: '' },
   { key: 'data', label: '数据导入与检查', to: '/data', enabled: true, why: '' },
   { key: 'train', label: '模型训练', to: '/train', enabled: true, why: '' },
   // 位置留在这里而不是排到最后：四页的次序**本身是信息** ——

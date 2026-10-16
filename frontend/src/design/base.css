@@ -62,3 +62,78 @@ button.on { background: var(--leaf); color: var(--paper); border-color: var(--le
     transition-duration: 0.01ms !important;
   }
 }
+
+/* 驾驶舱环境层：仅 transform / opacity 动画，不占布局和交互。 */
+#app { position: relative; isolation: isolate; }
+.ambient { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; background: radial-gradient(ellipse at 55% -20%, var(--leaf-soft), transparent 65%); }
+.light-ribbon { position: absolute; width: 85vw; height: 30vh; left: 10%; top: 25%; background: linear-gradient(115deg, transparent 25%, var(--grid) 48%, transparent 65%); filter: blur(35px); transform: rotate(-20deg); animation: ribbon-flow 28s ease-in-out infinite alternate; }
+/* 每层独立平铺，终点恰好移动一个纹理周期，循环时位置与速度连续。
+   只合成 transform，避免大背景重绘和 alternate 折返。 */
+.particles { position: absolute; inset: 0; contain: strict; }
+.particles::before, .particles::after {
+  content: ''; position: absolute; inset: -240px; pointer-events: none;
+  will-change: transform; backface-visibility: hidden;
+}
+.particles::before {
+  background-image: radial-gradient(circle, var(--leaf) 1px, transparent 2px);
+  background-size: 137px 157px; opacity: .2;
+  animation: particle-near 42s linear infinite;
+}
+.particles::after {
+  background-image: radial-gradient(circle, var(--ink) 1px, transparent 2px);
+  background-size: 233px 211px; background-position: 65px 85px; opacity: .12;
+  animation: particle-far 76s linear infinite;
+}
+.floor-grid { position: absolute; left: -30%; right: -30%; height: 65%; bottom: -35%; background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px); background-size: 60px 60px; transform: perspective(550px) rotateX(62deg); mask-image: linear-gradient(transparent, var(--ink)); }
+.titlebar { position: relative; min-height: 78px; background: linear-gradient(90deg, transparent, var(--leaf-soft), transparent) !important; border-bottom: var(--rule); }
+.titlebar::after { content: ''; position: absolute; bottom: -1px; left: 25%; right: 25%; height: 1px; background: linear-gradient(90deg, transparent, var(--leaf), transparent); }
+.titlebar h1 { color: var(--net) !important; letter-spacing: .15em !important; text-shadow: 0 0 24px var(--glow); }
+.titlebar .backend { color: var(--ink-muted); max-width: 260px; overflow-wrap: anywhere; }
+.titlebar .to-models { color: var(--leaf); padding: 8px; border: var(--rule); }
+.modes { min-height: 54px; background: var(--glass); }
+.body { gap: 20px !important; padding-top: 20px !important; }
+.rail { margin-left: 20px; padding: 20px 12px !important; border: var(--rule); border-radius: var(--radius); background: var(--glass) !important; }
+.rail::before { content: 'WORKSPACE / 工作空间'; color: var(--ink-muted); font-family: var(--font-num); font-size: 11px; letter-spacing: .12em; margin: 0 8px 18px; }
+.rail .item { padding: 14px 12px; border: 1px solid transparent; box-shadow: var(--shadow); background: transparent; transition: transform 320ms var(--ease-cockpit); }
+.rail .item::before { content: '◇'; display: inline-block; margin-right: 10px; color: var(--leaf); transform: perspective(90px) rotateY(30deg); }
+.rail .item.router-link-active { background: var(--leaf-soft); color: var(--ink); border-color: var(--steel); }
+.rail .item:hover:not(.off) { transform: translateX(3px); }
+.rail .why { font-size: 11px; opacity: .7; }
+.page { position: relative; padding-bottom: 30px; }
+.page h2 { padding: 5px 30px 5px 12px; border-left: 3px solid var(--leaf); margin-bottom: 20px; letter-spacing: .08em; color: var(--net); text-shadow: 0 0 18px var(--glow); }
+.page h3 { color: var(--ink); padding-right: 22px; }
+.stat { position: relative; border: var(--rule); background: var(--glass) !important; padding: 20px !important; overflow: hidden; transition: transform 320ms var(--ease-cockpit); }
+.stat::after { content: ''; position: absolute; height: 2px; bottom: 0; left: 15%; right: 15%; background: linear-gradient(90deg, transparent, var(--leaf), transparent); opacity: .7; }
+.stat:hover { transform: translateY(-4px); }
+.stat .value { color: var(--net); text-shadow: 0 0 20px var(--glow); margin-top: 8px; }
+.stats { gap: 18px !important; margin-bottom: 24px !important; }
+button, select, input { accent-color: var(--leaf); }
+button { min-height: 32px; transition: transform 320ms var(--ease-cockpit), opacity 320ms var(--ease-cockpit); }
+button:hover:not(:disabled) { transform: translateY(-1px); }
+button:active:not(:disabled) { transform: scale(.97); }
+button svg, .to-models svg { transform: perspective(100px) rotateY(-22deg); }
+select, input:not([type=range]):not([type=file]) { background: var(--card); color: var(--ink); border: var(--rule); border-radius: var(--radius); padding: 6px 10px; }
+a { color: var(--leaf); }
+th { color: var(--ink-muted); background: var(--nav-tint); }
+th, td { padding: 10px 12px; }
+tr:hover td { background: var(--grid); }
+.chart { border-radius: var(--radius); }
+.view-enter-active, .view-leave-active { transition: opacity 320ms var(--ease-cockpit), transform 320ms var(--ease-cockpit); }
+.view-leave-active { position: absolute; left: 0; right: var(--gap-l); top: 0; pointer-events: none; }
+.view-enter-from { opacity: 0; transform: translateY(12px); }
+.view-leave-to { opacity: 0; transform: translateY(-6px); }
+@keyframes panel-breathe { 0%, 100% { opacity: .12; } 50% { opacity: .42; } }
+@keyframes ribbon-flow { from { transform: translate3d(-12%, -10%, 0) rotate(-20deg); opacity: .3; } to { transform: translate3d(18%, 20%, 0) rotate(-20deg); opacity: .65; } }
+@keyframes particle-near {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(137px, -157px, 0); }
+}
+@keyframes particle-far {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(-233px, -211px, 0); }
+}
+@media (max-width: 1100px) { .titlebar { grid-template-columns: 1fr !important; gap: 8px; } .titlebar h1, .titlebar .right { grid-column: 1 !important; justify-self: center; } .titlebar h1 { font-size: 22px; } }
+@media (max-width: 760px) { .body { flex-direction: column; padding: 10px !important; gap: 12px !important; } .rail { width: 100% !important; flex: 0 0 auto !important; margin: 0; max-height: 160px; padding: 8px !important; } .rail::before { display: none; } .rail .item { padding: 8px; } .rail .why { display: none; } .page { padding: 4px !important; } .modes { flex-wrap: wrap; padding: 10px !important; } .titlebar h1 { font-size: 18px; letter-spacing: .05em !important; } }
+@media (prefers-reduced-motion: reduce) { .ambient > *, .particles::before, .particles::after, .card::after { animation: none !important; } }
+
+.card.is-expanded > .chart { height: calc(100% - 110px) !important; min-height: 260px; }

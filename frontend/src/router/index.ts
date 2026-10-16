@@ -5,6 +5,7 @@ import {
 
 import { NAV_ITEMS } from '../design/copy'
 import DataView from '../views/DataView.vue'
+import OverviewView from '../views/OverviewView.vue'
 import FieldView from '../views/FieldView.vue'
 import ModelsView from '../views/ModelsView.vue'
 import TrainView from '../views/TrainView.vue'
@@ -18,7 +19,7 @@ import TrainView from '../views/TrainView.vue'
  * 构建能过、页面白屏。两页而已，直接引进来最省事。
  */
 const VIEWS: Record<string, Component> = {
-  data: DataView, train: TrainView, field: FieldView,
+  overview: OverviewView, data: DataView, train: TrainView, field: FieldView,
 }
 
 /**
@@ -57,7 +58,7 @@ export function createAppRouter(history?: RouterHistory): Router {
       { path: '/models/:id', name: 'model-detail', component: ModelsView },
       // `/` 与认不出的路径都落回页①：演示时最怕的是白屏，
       // 一个回到起点的跳转至少还看得见东西。
-      { path: '/', redirect: '/data' },
+      { path: '/', redirect: '/overview' },
       { path: '/:rest(.*)*', redirect: '/data' },
     ],
   })
