@@ -260,24 +260,30 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
     expect(hits).toEqual([])
   })
 
-  it('阴影只有一档，且必须写成 var(--shadow)', () => {
+  it('阴影只有一份闭名单，且必须写成令牌', () => {
     // spec §四 的三条判据之一：阴影只有一档。SaaS 套装的招牌正是
     // 「用阴影的深浅伪造层级」—— 所以这里不是禁阴影，是禁**第二种**阴影。
     // 与色值那条守卫同一个手法：钉在最便宜的地方（源码文本）。
+    //
+    // ⚠️ 2026-10-16 页⑤ 精修把这一条**从「只许 var(--shadow)」放宽成一份名单**。
+    // 这一轮要的是「发光边框」：一条 1px 高的分隔线要 8px 半径的光，一整行
+    // 浮起来的选中项要 16px —— 一个令牌写不出这两个。放宽的是**种类**，
+    // 不是纪律：名单是闭的，随手写一个 `0 0 12px rgba(...)` 照样红。
+    const SHADOWS = ['var(--shadow)', 'var(--glow-edge)', 'var(--glow-lift)']
     const hits: string[] = []
     for (const p of ALL_SRC.filter((x) => !x.endsWith('.test.ts'))) {
       const text = readFileSync(p, 'utf8')
       for (const m of text.matchAll(/box-shadow\s*:\s*([^;]+);/g)) {
         // `?? ''`：`tsconfig` 开着 noUncheckedIndexedAccess 时 `m[1]` 是
-        // `string | undefined`。取不到捕获组时给空串 —— 空串不等于
-        // `var(--shadow)`，于是照样被报出来，不会静默放过。
+        // `string | undefined`。取不到捕获组时给空串 —— 空串不在名单里，
+        // 于是照样被报出来，不会静默放过。
         const v = (m[1] ?? '').trim()
-        if (v !== 'var(--shadow)') {
-          hits.push(`${p.slice(SRC.length)}: box-shadow: ${v}`)
+        if (!SHADOWS.includes(v)) {
+          hits.push(`${p.slice(SRC.length)}: box-shadow: ${v}（不在这份名单里：${SHADOWS.join(' / ')}）`)
         }
       }
     }
-    expect(hits, '阴影只有一档，且只能写成 var(--shadow)：\n' + hits.join('\n'))
+    expect(hits, `阴影只有 ${SHADOWS.length} 档，且只能写成令牌：\n` + hits.join('\n'))
       .toEqual([])
   })
 })
