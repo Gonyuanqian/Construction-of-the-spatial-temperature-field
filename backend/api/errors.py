@@ -24,3 +24,13 @@ class NoDatasetError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__(NO_DATASET_DETAIL)
+
+
+#: 页⑤ 的两份数据源不在时说的话（2026-10-16 独立数据源）。
+#:
+#: 必须点出**该跑哪条命令**：这个文件是切分命令的产物、不进仓库，新克隆一份
+#: 仓库的人第一次打开页⑤ 撞到的就是它。一句「文件不见了」会让人去重导数据集，
+#: 而那份数据集跟页⑤ 没有关系。
+LIVE_SOURCE_MISSING_DETAIL = (
+    "实时模式的数据源还没切出来：backend/configs/live/ 下缺 train.xlsx 或 live.xlsx。"
+    "在仓库根跑一次 `python backend/scripts/make_live_source.py`。")

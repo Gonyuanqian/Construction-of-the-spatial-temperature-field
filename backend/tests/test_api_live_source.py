@@ -139,3 +139,23 @@ def test_没有当前数据集时_prepare_也建得起来_且_t0_是_1164(delive
     assert src.total == 144
     assert src.t_index_of(0) == 1164, "实时帧没有接在训练段尾部"
     assert src.advance_to(0) == 1164
+
+
+def test_页五_数据源不在时报的是一句人话(tmp_path, monkeypatch):
+    """规格 §9.2 第 6 条。
+
+    ⚠️ `/api/live/status` 的 docstring 写着「**永不失败**」。改造后它要读帧数，
+    文件不在时就会失败 —— 那句承诺作废了，取而代之的是：失败的时候说的必须
+    是一句**告诉人该跑哪条命令**的话，而不是一个裸 500。
+    """
+    monkeypatch.setattr(paths, "LIVE_FRAMES", tmp_path / "缺.xlsx")
+    deps.reset_cache()
+    live.reset_live_source()
+    client = TestClient(create_app(), raise_server_exceptions=False)
+
+    r = client.get("/api/live/status")
+
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert "make_live_source" in detail, "没告诉人该跑哪条命令"
+    assert "configs/live" in detail
