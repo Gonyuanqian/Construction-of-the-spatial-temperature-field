@@ -56,3 +56,24 @@ def test_文件不在时抛_FileNotFoundError(live_files, monkeypatch, tmp_path)
     monkeypatch.setattr(paths, "LIVE_FRAMES", tmp_path / "缺.xlsx")
     with pytest.raises(FileNotFoundError):
         deps.live_playback_dataset()
+
+
+def test_没有当前数据集时也能问出用哪一份模型(live_files, current_model):
+    """`live_train_dataset()` 当轴，`_CURRENT` 指到空 —— 页⑤ 重启后的那一刻。
+
+    ⚠️ 这条**今天会红**：`current_bundle()` 内部第一句就是 `get_train_dataset()`，
+    没有当前数据集时抛 `NoDatasetError`，页⑤ 的模型门跟着整页空掉。
+    """
+    deps.clear_current_dataset()
+    deps.reset_cache()
+    got = deps.current_bundle(ds=deps.live_train_dataset())
+    assert got.bundle is not None, "库里有当前模型，却问不出用哪一份"
+    assert got.source == "library"
+
+
+def test_不传_ds_时行为一个字不变():
+    """空态下老调用点照旧抛 —— 页③ 的语义没有被这次加法偷换。"""
+    deps.clear_current_dataset()
+    deps.reset_cache()
+    with pytest.raises(deps.NoDatasetError):
+        deps.current_bundle()

@@ -451,7 +451,8 @@ def _usable(bundle, ds: Dataset, groups: tuple[str, ...]) -> bool:
                      ds=ds, current_groups_sig=groups_signature(groups)).ok
 
 
-def current_bundle(groups: tuple[str, ...] | None = None) -> CurrentBundle:
+def current_bundle(groups: tuple[str, ...] | None = None,
+                   ds: Dataset | None = None) -> CurrentBundle:
     """**全站唯一一处回答「这次用哪一份模型」**（规格书 §5.4）。
 
     三档，按次序：
@@ -468,11 +469,19 @@ def current_bundle(groups: tuple[str, ...] | None = None) -> CurrentBundle:
     `load_for()` 读一次 794 KB 的 JSON 是同一个量级 —— 而相对 fit 的几十秒
     可以忽略。`PipelineCache` 的键里含 `bundle.created_at`，所以「换模型 →
     场自动重算」这条链路是现成的。
+
+    ⚠️ `ds` 是 2026-10-16 加的可选参数（页⑤ 独立数据源）：页⑤ 用的训练段是
+    `configs/live/train.xlsx`，而不是「当前数据集」切出来的那一段。**不传它就
+    完全照旧**（共享件只许加可选参数）。传了它时，`model_fit` 那句「在比的是
+    哪一份文件」取空串 —— 那条路本来就没有「当前数据集」可比，而它只影响
+    `why` 的措辞，不影响 `same_data`（那是签名比的）。
     """
     from . import models_store
     from tfield import config as C
     groups = tuple(C.DEFAULT_FEATURE_GROUPS if groups is None else groups)
-    ds = get_train_dataset()          # ← 模型认训练段，页① 认文件
+    explicit = ds is not None
+    if ds is None:
+        ds = get_train_dataset()      # ← 模型认训练段，页① 认文件
 
     b = unsaved_bundle()
     if b is not None and _usable(b, ds, groups):
@@ -496,7 +505,7 @@ def current_bundle(groups: tuple[str, ...] | None = None) -> CurrentBundle:
     fit = model_fit(dataset_sig=row.dataset_sig, groups_sig=row.groups_sig,
                     ds=ds, current_groups_sig=groups_signature(groups),
                     data_file=row.data_file,
-                    current_file=current_dataset_path().name)
+                    current_file="" if explicit else current_dataset_path().name)
     if not fit.same_groups:
         return CurrentBundle(bundle=None, source=None)
     # 报的是 `_BORROWED_NOTE` 这句**统一措辞**，不是 `fit.why` 那句带文件名的
