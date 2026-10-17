@@ -2,7 +2,9 @@
 
 **这个模块不碰数据集缓存、不建管线** —— 它读写的是库。兼容性判定要问
 `deps.get_train_dataset()` 拿当前训练段的签名（那是「现在在用的是哪一份」
-唯一的地方），也仅此而已。
+唯一的地方），也仅此而已。**没有当前数据集时**（2026-10-16 起）改用页⑤ 自己
+那份 `configs/live/train.xlsx` —— 页⑤ 已经不依赖「当前数据集」了，它的模型门
+不能还挂在同一个指针上。
 """
 from __future__ import annotations
 
@@ -13,7 +15,7 @@ from fastapi import APIRouter, Body, HTTPException
 from tfield import config as C
 from tfield.calibration import groups_signature
 
-from .. import deps, jobs, models_store, ported
+from .. import deps, jobs, models_store, paths, ported
 from ..errors import NoDatasetError
 from .calibration import _jsonable
 
@@ -79,7 +81,15 @@ def list_models() -> dict[str, Any]:
         ds = deps.get_train_dataset()
         current_file = deps.current_dataset_path().name
     except NoDatasetError:
-        ds, current_file = None, None
+        # 2026-10-16：没有当前数据集时，判定轴换成页⑤ **自己的**训练段。
+        # 理由：页⑤ 从这一天起不依赖「当前数据集」，而它的模型门是
+        # `usableModels(...).length > 0`（只看 `compatible`）—— 不接这一步，
+        # 闸门放行了，用户还是被另一张卡挡在门外。
+        try:
+            ds = deps.live_train_dataset()
+            current_file = paths.LIVE_TRAIN.name
+        except (NoDatasetError, FileNotFoundError):
+            ds, current_file = None, None
 
     mid = models_store.current_id()
     rows: list[dict[str, Any]] = []

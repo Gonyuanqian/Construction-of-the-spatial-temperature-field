@@ -135,12 +135,23 @@ WHITELIST = frozenset({"deps.py"})
 #: `compatible` 与 `deps._usable` 是两套「对得上」的定义，一行按别的特征组标出来
 #: 的模型列表说「能用」、构场却拒绝，屏上一个字不提。判据收到 `model_fit` 一处
 #: 之后，路由**必须**能从这儿拿到它。
+#: `live_train_dataset` / `live_playback_dataset` 是第十二、十三个
+#: （2026-10-16 页⑤ 独立数据源那批加的），理由**与 `get_train_dataset` /
+#: `get_live_frames` 那一族逐字同形**：两个函数体各只有一句
+#: `get_dataset(paths.LIVE_TRAIN / LIVE_FRAMES)`，不绕过缓存、不另开判定。
+#: 它们进名单**不是为了给 `api/` 开方便门**，而是相反的：页⑤ 的两份文件必须
+#: 有**具名出口**，否则 `api/live.py` 与 `routes/models.py` 只能各自写一遍
+#: `deps.get_dataset(paths.LIVE_*)` —— 路径从哪个属性取、要不要整份读，就会在
+#: 两处各有一份口径。⚠️ `on_dataset_change` 那一条里「消费者只有 `api/live.py`」
+#: 那句在 2026-10-16 之后也不再成立：`api/live.py` 已经**不再**登记自己了。
+#:
 #: ⚠️ 放行一条**规则**上的例外要看得更紧：往后再有人想往这份名单里加一个「纯函数」
 #: 之外的出口，先回答「它有没有可能自己建缓存/加载器」。
 ALLOWED_FROM_DEPS = frozenset({
     "get_dataset", "get_pipeline", "get_train_dataset", "get_live_frames",
     "_build_pipeline", "current_dataset_path", "probe_dataset", "install_dataset",
     "on_dataset_change", "current_bundle", "model_fit",
+    "live_train_dataset", "live_playback_dataset",
 })
 
 #: 与 `api.deps` 无关的、任何位置都不许直接取用的通用黑名单（直取后端库/缓存类）。
@@ -399,7 +410,7 @@ def test_没开_future_的模块_注解是求值的_照抓():
     assert len(got) == 1 and "ModelFit" in got[0], got
 
 
-def test_白名单只有那十个出口():
+def test_白名单只有那十三个出口():
     """白名单是一份**写死的声明**。它悄悄变长，是这道守卫失效的第一种方式。
 
     第三、第四、第五个（`get_train_dataset` / `get_live_frames` / `_build_pipeline`）
@@ -428,9 +439,16 @@ def test_白名单只有那十个出口():
     ⚠️ 它进名单不是为了「方便」，是为了**把判据收到一处** —— 2026-10-10 之前
     `/api/models` 与 `deps._usable` 是两套「对得上」的定义，列表说能用、
     构场的路却拒绝。理由见常量旁边。
+
+    第十二、十三个（`live_train_dataset` / `live_playback_dataset`，2026-10-16
+    页⑤ 独立数据源那批加）回到**「纯读入口」那一族**：各一句
+    `get_dataset(paths.LIVE_*)`，不绕过缓存。⚠️ 加它们是要**收口径**而不是开门：
+    页⑤ 的两份文件必须只有一个具名出口，否则 `api/live.py` 与 `routes/models.py`
+    会各自写一遍「路径从哪个属性取、整份读还是切」。
     """
     assert ALLOWED_FROM_DEPS == frozenset({
         "get_dataset", "get_pipeline", "get_train_dataset", "get_live_frames",
         "_build_pipeline", "current_dataset_path", "probe_dataset", "install_dataset",
         "on_dataset_change", "current_bundle", "model_fit",
+        "live_train_dataset", "live_playback_dataset",
     })

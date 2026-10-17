@@ -14,6 +14,7 @@ import pathlib
 import sys
 import threading
 
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
@@ -334,7 +335,7 @@ def test_借来的那一行选得中_而且真的拿去构场(client):
     assert got.mismatch_note, "借来的必须如实报出来"
 
 
-def test_没有数据集时列表降级_不是_409(client, finish_job):
+def test_没有数据集时列表降级_不是_409(client, finish_job, monkeypatch, tmp_path):
     """⭐ 规格书 D5：这一格原来走 409（`get_train_dataset` 抛 `NoDatasetError`）。
 
     「模型库」这个动作在没有数据集时整页打不开，是这一轮要消掉的事 ——
@@ -347,6 +348,11 @@ def test_没有数据集时列表降级_不是_409(client, finish_job):
     """
     finish_job()
     row = client.post("/api/models", json={"name": "x"}).json()
+    # ⚠️ 把页⑤ 那根轴**打掉**：这条要测的是「两根轴都不在」那一档。
+    # 不打的话，开发机上一旦跑过 `make_live_source.py`，`configs/live/train.xlsx`
+    # 就在，列表会改走页⑤ 那根轴 —— 这条用例的结果从此取决于**这台机器跑没跑过
+    # 那条命令**，而那不是它要测的东西。
+    monkeypatch.setattr(paths, "LIVE_TRAIN", tmp_path / "缺.xlsx")
     deps.clear_current_dataset()
     r = client.get("/api/models")
     assert r.status_code == 200, "没有数据集时模型库该降级，不是 409"
@@ -369,3 +375,48 @@ def test_数据库连不上时列表接口报_500_并把原话带出来(raw_clie
     monkeypatch.setenv("TFIELD_MYSQL_PORT", "1")
     r = raw_client.get("/api/models")
     assert r.status_code == 500
+
+
+# ── 页⑤ 的判定轴（规格 §9.3） ──
+
+#: 判定轴只要「读得出来」就够 —— `model_fit` 只拿 `ds.signature` 比，
+#: 不碰场、不碰管线。所以一条 6 行的小样本足以当轴。
+TIMES = pd.date_range("2026-07-27 11:30", periods=6, freq="5min")
+
+
+def test_没有当前数据集时_判定轴换成页五那一份(client, finish_job, monkeypatch,
+                                        synthetic_dataset):
+    """规格 §9.3 第 1 条。`_CURRENT` 空、`live/train.xlsx` 在 —— 重启后的页⑤。
+
+    ⚠️ 不接这一步的话：闸门放行了，页⑤ 仍被**另一张卡**挡住
+    （「还没有能用的模型 / 库里现在还没有」），而那与实时源在不在没关系。
+    """
+    finish_job()                       # 「刚跑完那一份」，随后被保存进库
+    made = client.post("/api/models", json={"name": "x"}).json()
+    monkeypatch.setattr(paths, "LIVE_TRAIN", synthetic_dataset(TIMES, name="train.xlsx"))
+    deps.clear_current_dataset()
+    deps.reset_cache()
+
+    body = client.get("/api/models").json()
+
+    assert body["dataset_file"] == "train.xlsx", "「在比的是哪一份」说错了"
+    assert body["dataset_sig"] is not None
+    mine = [x for x in body["rows"] if x["id"] == made["id"]][0]
+    assert mine["compatible"] is True, "特征组对得上就该能用 —— 数据集那一轴只报不拦"
+    assert mine["why"].startswith("数据来源不同"), "换了轴，理由那句要说出来"
+
+
+def test_两根轴都不在时退回今天那一档(client, finish_job, monkeypatch, tmp_path):
+    """规格 §9.3 第 2 条：`_CURRENT` 空、`live/train.xlsx` 也不在 → `has_artifact`。"""
+    finish_job()
+    row = client.post("/api/models", json={"name": "x"}).json()
+    monkeypatch.setattr(paths, "LIVE_TRAIN", tmp_path / "缺.xlsx")
+    deps.clear_current_dataset()
+    deps.reset_cache()
+
+    body = client.get("/api/models").json()
+
+    assert body["dataset_file"] is None
+    mine = [x for x in body["rows"] if x["id"] == row["id"]][0]
+    assert mine["compatible"] is True
+    assert mine["why"] == ""
