@@ -14,7 +14,11 @@ import pytest
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(BACKEND), str(BACKEND / "scripts")]
 
-from api import deps, paths                       # noqa: E402
+from fastapi.testclient import TestClient         # noqa: E402
+
+from api import deps, live, paths                 # noqa: E402
+from api.main import create_app                   # noqa: E402
+from tfield.data.loader import test_data_path     # noqa: E402
 
 BEFORE = pd.date_range("2026-07-27 11:30", periods=6, freq="5min")   # 训练那半
 AFTER = pd.date_range("2026-07-27 12:00", periods=4, freq="5min")    # 实时那半
@@ -77,3 +81,61 @@ def test_不传_ds_时行为一个字不变():
     deps.reset_cache()
     with pytest.raises(deps.NoDatasetError):
         deps.current_bundle()
+
+
+# ── 验收：页⑤ 与「当前数据集」无关（规格书 §9.2） ──
+
+
+FIXTURE_SKIP = pytest.mark.skipif(
+    not test_data_path().exists(), reason="数据集不在（与 test_api_live.py 同一口径）")
+
+
+@pytest.fixture
+def delivered_live_files(tmp_path, monkeypatch):
+    """把**交付数据集**现切一份到 `tmp_path`，并把 `paths.LIVE_*` 指过去。
+
+    ⚠️ 收起时两句都要有：`reset_cache()` 放掉按旧路径缓存的 `Dataset`，
+    `reset_live_source()` 放掉那个抓着旧帧表的单例 —— 少一句，下一条用例就会
+    从这一条的残留上读，红绿取决于跑的顺序。
+    """
+    from make_live_source import make_live_source
+    live_dir = tmp_path / "live"
+    make_live_source(test_data_path(), live_dir)
+    monkeypatch.setattr(paths, "LIVE_TRAIN", live_dir / "train.xlsx")
+    monkeypatch.setattr(paths, "LIVE_FRAMES", live_dir / "live.xlsx")
+    deps.reset_cache()
+    live.reset_live_source()
+    yield
+    deps.reset_cache()
+    live.reset_live_source()
+
+
+@FIXTURE_SKIP
+def test_没有当前数据集时_status_是_200(delivered_live_files):
+    """**这一份规格书的验收第一条。** 改造前它收到 409。"""
+    deps.clear_current_dataset()
+    client = TestClient(create_app(), raise_server_exceptions=False)
+
+    r = client.get("/api/live/status")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["total"] == 144
+
+
+@FIXTURE_SKIP
+def test_没有当前数据集时_prepare_也建得起来_且_t0_是_1164(delivered_live_files):
+    """验收第 2、3、4 条。⚠️ `prepare()` 真的要 fit 一次（10~21 s）。
+
+    这条是这一份计划里**唯一**的慢用例。它换来的是「重启后页⑤ 真的能演」
+    这句话有一次真的执行过 —— 其余几条都只断言接口的形态，断不出「fitting
+    的时候没有去问 `_CURRENT`」。
+    """
+    deps.clear_current_dataset()
+    src = live.get_live_source()
+
+    src.prepare()
+
+    assert src._t0 == 1164
+    assert src.total == 144
+    assert src.t_index_of(0) == 1164, "实时帧没有接在训练段尾部"
+    assert src.advance_to(0) == 1164

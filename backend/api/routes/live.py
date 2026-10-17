@@ -10,7 +10,7 @@
 `test_没准备之前_status_字段是_idle_且不动管线` 钉着的一条性质，
 而且没有一个 GET 带副作用。
 
-**帧号 n 与 `t_index` 不是一回事**：`n` 是留出段的下标（0..143），
+**帧号 n 与 `t_index` 不是一回事**：`n` 是 `configs/live/live.xlsx` 的下标（0..143），
 `t_index` 是**管线时间轴**上的下标（1164..1307）。转接在 `LiveSource.t_index_of`
 里，一个地方做完 —— 这个文件里凡是要算场的地方都拿 `advance_to(n)` 的返回值，
 不自己写 `+ 1164`。
@@ -137,7 +137,8 @@ def get_frame(
     _check_preset(preset)                     # 参数坏就别走帧
     # ⚠️ `t_index` **不是 n** —— 实时帧接在训练段尾部（第 0 帧是 1164）。
     # 拿 n 当 t_index 不报错，只是取到训练段那一帧的场，而 `frame.time`
-    # 写的是留出段的时间。`t_index_of` 那儿的注释把代价写全了。
+    # 写的是 `configs/live/live.xlsx` 那一帧的时间。`t_index_of` 那儿的注释
+    # 把代价写全了。
     t_index = _advance(src, n)
     payload = sections_payload(src.pipeline, t_index=t_index, preset=preset,
                                monotonic=monotonic)

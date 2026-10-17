@@ -6,9 +6,15 @@
 """
 from __future__ import annotations
 
+import pathlib
+import sys
+
 import numpy as np
 import pandas as pd
 import pytest
+
+BACKEND = pathlib.Path(__file__).resolve().parents[1]
+sys.path[:0] = [str(BACKEND), str(BACKEND / "scripts")]
 
 import conftest
 from api import deps, live
@@ -43,22 +49,27 @@ def src(clock) -> live.LiveSource:
 
 
 @pytest.fixture(autouse=True)
-def _library(current_model, monkeypatch):
-    """这一整个文件都要求模型库里存着交付那一份模型（见 `tests/conftest.py`）。
+def _live_files(tmp_path, monkeypatch, current_model):
+    """页⑤ 的两份数据源：**现切一份到 `tmp_path`**，并且**不再设当前数据集**。
 
-    2026-10-08 起 `LiveSource.prepare()` 与页③ 走**同一条判定**
-    （`deps.current_bundle()`），而本文件里凡是要 `prepare()` 的用例都因此
-    要读一次库。库空着也不报错 —— `prepare()` 会拿兜底参数把管线建起来、
-    场照样画得出来，只是参数不是标定出来的那一套；`test_验收折_接口的数与
-    直接调库逐位相等` 那条正好会因为这个差距而红，其余的会静默地测错东西。
+    ⚠️ 2026-10-16 之前这里有一句 `deps.set_current_dataset(paths.dataset_path())`：
+    `LiveSource.prepare()` 要经 `deps.get_train_dataset()`，那条路在指针为空时
+    抛 `NoDatasetError`。改造后实时源读的是 `configs/live/` 两个固定文件，
+    那句话的理由已经消失 —— 留着它反而会让「页⑤ 与当前数据集无关」这件事
+    在测试里永远测不到。
 
-    ⚠️ 它同时把「当前数据集」指过去：`src` 夹具是**函数级、不走 autouse**，
-    而 `LiveSource.prepare()` 要经 `deps.get_train_dataset()`，那条路在指针
-    为空时抛 `NoDatasetError`。本文件没有别的夹具设它。
+    切出来的是**交付数据集**本身，所以 `144 / 1164 / 1307` 这些数一个都不用改：
+    切点没动，切法也没动。
     """
+    from make_live_source import make_live_source
     from api import paths
-    deps.set_current_dataset(paths.dataset_path())
-    return current_model
+    live_dir = tmp_path / "live"
+    make_live_source(test_data_path(), live_dir)
+    monkeypatch.setattr(paths, "LIVE_TRAIN", live_dir / "train.xlsx")
+    monkeypatch.setattr(paths, "LIVE_FRAMES", live_dir / "live.xlsx")
+    deps.reset_cache()
+    yield current_model
+    deps.reset_cache()
 
 
 def test_没准备之前_status_字段是_idle_且不动管线(src, monkeypatch):
@@ -184,7 +195,14 @@ def test_prepare_之后管线是训练段那份(src):
     src.prepare()
     assert src.pipeline.n_times == 1164
     assert src.pipeline.n_live == 0
-    assert "-h20260727T1200" in src.pipeline.ds.signature
+    # 2026-10-16 起拟合轴是 `configs/live/train.xlsx` 那**整份文件**，不再是由
+    # 当前数据集切出来的训练段 —— 所以它没有 `-h20260727T1200` 那个派生前缀，
+    # 比的是「用的是不是一个东西」（缓存按路径记，同一个对象）。
+    from api import deps
+    assert src.pipeline.ds is deps.live_train_dataset()
+    # 「借来的」在页⑤ 上是零信息（比对面是「当前数据集」，页⑤ 没有它），
+    # 而 `LiveView.vue` 会把它当一句话显示出来 —— 所以 `prepare()` 抹掉它。
+    assert src.pipeline.mismatch_note == ""
 
 
 # ── 七条接口 ──
@@ -322,7 +340,9 @@ def test_验收折_接口的数与直接调库逐位相等(client):
     client.post("/api/live/start", params={"from_n": 3})   # 同上：真时钟推不动 cursor
     body = client.get("/api/live/frame/3").json()
 
-    ds = deps.get_train_dataset()
+    # 2026-10-16 起页⑤ 拟合的是**它自己那份文件**（`configs/live/train.xlsx`），
+    # 不再是从当前数据集切出来的训练段 —— oracle 跟着换，否则比的是另一条路径。
+    ds = deps.live_train_dataset()
     train_n = len(ds.wide)                     # 训练段长度：实时帧接在它后面
     # 训练段那一份包（已重签成本机指纹），见 `conftest._delivered_bundle`。
     cfg = conftest.delivered_train_bundle().config()
