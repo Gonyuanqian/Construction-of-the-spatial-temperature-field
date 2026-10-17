@@ -693,9 +693,13 @@ function runAsk(q: { x: number; y: number; z: number }): void {
       <!-- 正在用的那一份包不是为当前这份数据标的时的那句话。**逐字来自后端**
            （`deps._BORROWED_NOTE` → 载荷的 `mismatch_note`），前端不另写一句
            —— 与页③ 同一句，同一个来源。对得上时它是空串，这一格不印。
-           ⭐ 这一档 2026-10-10 才有：在那之前「不是为这份数据标的」的模型
-           在这一屏上**根本走不进来**（闸门卡在数据集签名上），而实时模式
-           本来就是拿一份别人标好的模型去套没见过的数据。 -->
+
+           ⚠️ 2026-10-16 起这一格在页⑤ 上**恒不印**：页⑤ 的轴换成了
+           `configs/live/train.xlsx`（规格书 2026-10-16），它不是「当前数据集
+           切出来的训练段」，与包上那个逐机指纹**不可能**相同 —— 那句话对它
+           永远为真、也就零信息。后端 `LiveSource.prepare()` 已经把它抹成空串。
+           这一格留着不删：它是**载荷的形状**（同一个 `sections_payload`），
+           页③ 也用它；哪天页⑤ 的轴再变，它就自动又活了。 -->
       <p v-if="frame.data.value?.mismatch_note" class="note">
         {{ frame.data.value.mismatch_note }}
       </p>

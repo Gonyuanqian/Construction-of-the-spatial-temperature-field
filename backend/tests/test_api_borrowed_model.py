@@ -11,6 +11,10 @@
     · 本地的      → `calibrated=True` 且 `mismatch_note` 是**空串**
     · 借来的      → `calibrated=True` 且 `mismatch_note` **有话**（就在这里）
 
+⚠️ 页⑤ 是**例外**（2026-10-16）：它的轴是 `configs/live/train.xlsx`，不是当前
+数据集切出来的训练段，所以「借来的」对它永远为真、也就零信息 —— `prepare()`
+把那句话抹掉了。这条例外的理由写在那条用例自己的 docstring 里。
+
 ⚠️ 全程只 `fit()` **一次**：四个用例共用同一份数据集、同一组特征、同一个包，
 `PipelineCache` 的键因此相同（键里不含请求参数）。
 
@@ -115,9 +119,23 @@ def test_页四那一卷也把借来说出来(client, _borrowed):
     assert b["mismatch_note"] == deps._BORROWED_NOTE
 
 
-def test_实时那一帧也把借来说出来(client, _borrowed):
-    """页⑤ 单独说得着：它的管线是 `LiveSource` 自己那一份（键里不含帧数），
-    与页③ 的不是同一个对象 —— 第三档落地时最容易漏的就是这条另开的分支。"""
+def test_实时那一帧不再挂借来的那句话(client, _borrowed):
+    """⚠️ **2026-10-16 起这条反过来**（页⑤ 独立数据源那次改造）。
+
+    原先它证明「页⑤ 另开的那条管线分支也得把第三档说出来」。改造之后页⑤ 不再
+    从当前数据集切训练段，而是整份读 `configs/live/train.xlsx` —— 那个文件和
+    交付包**不可能**同指纹（`dataset_signature` 掺绝对路径与 mtime，见 R5），
+    于是 `_borrowed()` 对它**永远**为真。一句话永远为真就是零信息，而它在
+    `LiveView.vue:699` 上是**真的会显示**的一行字。
+
+    更糟的是它字面为假：`configs/live/train.xlsx` 与当前数据集的训练段**逐帧
+    相同**（1164 × 52，`make_live_source` 就是按这个切出来的）。屏上说
+    「参数不是用当前这份数据标出来的」，而那就是同一批行。
+    规格书 §五末句写的也是「页⑤ 不显示它」。所以 `prepare()` 把它抹掉。
+
+    ⚠️ 页③④ 那两条**不动**：它们的轴仍是「当前数据集切出来的训练段」，
+    那时「借来的」才是个有真假可言的判断。
+    """
     client.post("/api/live/prepare")
     # ⚠️ `start` 这一下不是客套：`frame/{n}` 要求 cursor 已经走到 n
     # （`_require_walked`），而真时钟在测试里推不动它。与 `test_api_live.py`
@@ -125,4 +143,4 @@ def test_实时那一帧也把借来说出来(client, _borrowed):
     client.post("/api/live/start", params={"from_n": 3})
     b = client.get("/api/live/frame/3").json()
     assert b["calibrated"] is True
-    assert b["mismatch_note"] == deps._BORROWED_NOTE
+    assert b["mismatch_note"] == "", "页⑤ 那句话现在是零信息，且字面为假"

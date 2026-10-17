@@ -52,12 +52,21 @@ onMounted(() => { void dataset.probe() })
  * 真取一次数。拿它换的是「已经导过数据集的人不会先看见一屏『先导入数据集』」。
  * 两害相权，取后者 —— 一瞬的取数没人看得见，一瞬的假空态每个人都会看见。
  */
-const gate = computed(() => dataset.state.value === 'missing' && route.path !== '/data')
+/**
+ * ⚠️ 2026-10-16：`/live` 从这道闸门里**放行**。页⑤ 从这一天起读
+ * `configs/live/` 下两份固定文件，与「当前数据集」没有关系；而 `configs/live/`
+ * 存在**不算**「有数据集」—— 算进去的话页②③④ 会在没导入时跟着亮，而那三页
+ * 拿的是另一份数据。代价：重启后页⑤ 能用、页① 仍写「先导入数据集」，
+ * 两个页面各说各话。这是**有意**的：它们确实各用各的数据源。
+ */
+const isLive = computed(() => route.path.startsWith('/live'))
+
+const gate = computed(() => dataset.state.value === 'missing'
+  && route.path !== '/data'
+  && !isLive.value)
 
 /** 训练模式最后停留的那一页。切回来还回这里 —— 演示时不用重新点一遍。 */
 const lastTrainPath = ref('/data')
-
-const isLive = computed(() => route.path.startsWith('/live'))
 
 /** 写进去就是一次跳转；`ModeSwitch` 是 `v-model`，所以走 setter。 */
 const mode = computed({

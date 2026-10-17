@@ -315,13 +315,32 @@ describe('数据集闸门与重挂载', () => {
     useDataset().reset()
   })
 
-  for (const path of ['/train', '/field', '/live']) {
+  for (const path of ['/train', '/field']) {
     it(`空态下 ${path} 说的是「先导入数据集」`, async () => {
       stubCounting(409)
       const w = await mountAt(path)
       expect(w.text()).toContain('先导入数据集')
     })
   }
+
+  it('空态下 /live 照常渲染页⑤ —— 它有自己的数据源', async () => {
+    // 规格 2026-10-16 §6.1（R7）：`configs/live/` **不算**「有数据集」。
+    // 把实时源也算进去的话，页②③④ 会跟着亮起来，而那三页拿的是**另一份**
+    // 数据 —— 屏上会同时存在两套「当前数据」，谁也说不清哪套是哪套。
+    //
+    // ⚠️ 代价写在明面上：重启后打开页⑤ 能用，页① 仍写「先导入数据集」。
+    // 两个页面各说各话是**有意**的 —— 它们今天确实各用各的数据源。
+    stubCounting(409)
+    const w = await mountAt('/live')
+    // ⚠️ **不能只等 `flushPromises()`**：`/live` 是懒加载的，那一块 chunk 在
+    // **宏任务**边界才解析完（同文件第 152 行那段注释）。而「等不到它」与
+    // 「闸门放行了」在 `not.toContain` 下长得一模一样 —— 所以要**正面**断言
+    // 页⑤ 自己的东西出来了，不能让这条用例靠「什么都没渲染」变绿。
+    await vi.waitFor(() => {
+      expect(w.text()).toContain('棚体三维温度场')
+    })
+    expect(w.text()).not.toContain('先导入数据集')
+  })
 
   it('空态下页① 照常渲染它自己的内容（那一页就是入口）', async () => {
     stubCounting(409)

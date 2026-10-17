@@ -131,9 +131,14 @@ def test_保存那一路会把成品写进同一行(client, empty, ds, tiny_job)
     assert mine and mine[0]["has_artifact"] is True
 
 
-def test_没有数据集时_有成品的行仍然可用(client, empty, ds):
+def test_没有数据集时_有成品的行仍然可用(client, empty, ds, monkeypatch, tmp_path):
     """⭐ 规格书 D5/D6：`GET /api/models` 不再需要数据集。有成品的那一行
     照样 `compatible` —— 它的参数**已经固化**，不需要那份数据才存在。
+
+    ⚠️ 把页⑤ 那根轴**也打掉**（`monkeypatch` 那两句）：2026-10-16 起没有当前
+    数据集时列表改用 `configs/live/train.xlsx` 判定，而那台机器上跑过一次
+    `make_live_source.py` 就有了 —— 不打的话，这条用例测的「两根轴都没有」那一档
+    会悄悄换成「页⑤ 那根轴在」那一档，结果取决于这台机器跑没跑过那条命令。
     """
     bundle = dataclasses.replace(conftest.delivered_train_bundle(),
                                  trend_params=dict(TINY_TREND))
@@ -145,6 +150,7 @@ def test_没有数据集时_有成品的行仍然可用(client, empty, ds):
                            paths.dataset_path().name,
                            artifact=ref.capture().to_bytes())
 
+    monkeypatch.setattr(paths, "LIVE_TRAIN", tmp_path / "缺.xlsx")
     deps.clear_current_dataset()
     try:
         body = client.get("/api/models").json()
@@ -159,11 +165,16 @@ def test_没有数据集时_有成品的行仍然可用(client, empty, ds):
     assert got[0]["why"] == "", "能用就不该有一句理由"
 
 
-def test_没有数据集时_没成品的行说得出为什么(client, empty, ds):
-    """`why` 是那句话，不是空串、也不是 `null` —— 前端不用判两种空。"""
+def test_没有数据集时_没成品的行说得出为什么(client, empty, ds, monkeypatch,
+                                        tmp_path):
+    """`why` 是那句话，不是空串、也不是 `null` —— 前端不用判两种空。
+
+    同上：页⑤ 那根轴必须打掉，否则测的是「页⑤ 那根轴在」那一档。
+    """
     empty.save_model("没成品的一份", conftest.delivered_train_bundle(), ds,
                      paths.dataset_path().name)
 
+    monkeypatch.setattr(paths, "LIVE_TRAIN", tmp_path / "缺.xlsx")
     deps.clear_current_dataset()
     try:
         body = client.get("/api/models").json()
