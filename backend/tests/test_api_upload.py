@@ -84,11 +84,13 @@ def _rewrite(dst: pathlib.Path, *, day: str | None = None) -> pathlib.Path:
 
 
 def _minimal(dst: pathlib.Path) -> pathlib.Path:
-    """小到极点的数据集：**切点前后各留一行**，两侧都非空。
+    """小到极点的数据集：**切点前后各留一行**。
 
-    ⚠️ 计划里写的是「只剩一个时刻」。那做不到 —— 切点校验要求两侧都非空，
-    而一个时刻必然有一侧是空的，于是那样造出来的只会是「被拒」的例子，
-    与这条测试要证的事（**不预跑管线**，见 §4.2 的取舍）正好相反。
+    ⚠️ 计划里写的是「只剩一个时刻」。那做不到 —— 一个时刻必然有一侧是空的，
+    于是那样造出来的只会是「被拒」的例子，与这条测试要证的事（**不预跑管线**，
+    见 §4.2 的取舍）正好相反。
+    （2026-10-16 起上传只查训练段非空，但这里仍然要两行：这条样本要证的是
+    「极小的、管线 train 不起来的文件也能导入」。）
     两行是这个取舍的最小例子：能导入，但库的管线一定 train 不起来。
 
     只截「建模对齐数据」与「插值标记」两张逐行的表；其余 sheet 原样带过去，
@@ -212,23 +214,25 @@ def test_目标文件被占用时报_409_且不改系统(client, uploads_dir):
 # ── T7 切点校验 ──
 
 
-def test_切点校验_留出段为空被拒(client, uploads_dir):
-    """T7：造一份时间范围在 2026-01 的 xlsx → 400。
+def test_切点校验_留出段为空不再被拒(client, uploads_dir):
+    """裁定 B 的**字面**在这里被有意推翻（规格 R6）。
 
-    全部行都早于切点 → **留出段空**。detail 里要同时出现这份数据集的范围与
-    切点常量，否则用户拿到的是一句「不合法」加一个不知道怎么改。
+    裁定①之后，用户上传的**就是** `train.xlsx`，而它的留出段按定义是空的。
+    还按「两侧都必须非空」拦，正常演示的第一步就会被拒。
+
+    ⚠️ 这份样本（全部行挪到 2026-01）训练段是满的 —— 它要证明的正是
+    「留出段空」这一条**不再**是拒绝理由。
     """
     early = _rewrite(uploads_dir / "tmp-early.xlsx", day="2026-01-05 00:00:00")
     r = post(client, early.read_bytes(), name="一月的.xlsx")
-    assert r.status_code == 400, r.text
-    detail = r.json()["detail"]
-    assert "2026-01-05" in detail
-    assert HOLDOUT_CUTOFF.strftime("%Y-%m-%d") in detail
+    assert r.status_code == 200, f"上传 train.xlsx 这种文件被拒了：{r.text}"
 
 
 def test_切点校验_训练段为空被拒(client, uploads_dir):
-    """同上，另一侧。**两侧都要判** —— 只判一侧的话，另一侧空了会到
-    页②③ 的管线深处才炸，报出来的错离现场很远。
+    """整份都在切点之后 → **训练段空** → 400。
+
+    ⚠️ 这是放开之后**唯一**还拦着的那一侧：一份整份落在切点之后的文件，
+    模型没有可学的部分。它顺手挡住了「用户交一份只含留出段的数据来训练」。
     """
     late = _rewrite(uploads_dir / "tmp-late.xlsx", day="2026-08-05 00:00:00")
     r = post(client, late.read_bytes(), name="八月的.xlsx")
