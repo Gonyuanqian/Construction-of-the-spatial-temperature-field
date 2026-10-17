@@ -35,7 +35,7 @@ from tfield.data.types import Dataset
 from tfield.features import build_features
 from tfield.pipeline import FieldPipeline, PipelineConfig
 
-from . import models_store
+from . import models_store, paths
 from .errors import NoDatasetError
 
 Capacity = int
@@ -602,6 +602,27 @@ def get_live_frames(path: pathlib.Path | str | None = None,
                     cutoff: pd.Timestamp = HOLDOUT_CUTOFF) -> pd.DataFrame:
     """**留出段**：实时模式一帧一帧接进时间轴的那 144 行（时间升序）。"""
     return _holdout(path, cutoff).live
+
+
+def live_train_dataset() -> Dataset:
+    """页⑤ 那条管线**拟合用的轴**：`configs/live/train.xlsx`，整份，不切。
+
+    ⚠️ 它**不经过 `_holdout`**：这份文件**本身就是**训练那一半，再切一次只会
+    得到「训练段 1164 + 留出段 0」。
+
+    ⚠️ 写 `paths.LIVE_TRAIN` 这个**属性取值**，不能 `from .paths import LIVE_TRAIN`：
+    测试靠 `monkeypatch.setattr(paths, "LIVE_TRAIN", …)` 把它指到 `tmp_path`，
+    提前绑定会在 import 那一刻定型。
+    """
+    return get_dataset(paths.LIVE_TRAIN)
+
+
+def live_playback_dataset() -> Dataset:
+    """页⑤ 的**帧源**：`configs/live/live.xlsx`，整份，不切。
+
+    同上：这份文件本身就是留出那一半，切点在这条路径上一次都不参与。
+    """
+    return get_dataset(paths.LIVE_FRAMES)
 
 
 def reset_cache() -> None:
