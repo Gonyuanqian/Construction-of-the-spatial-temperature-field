@@ -28,7 +28,10 @@ from __future__ import annotations
 import dataclasses
 import os
 
+import pandas as pd
 import pytest
+
+from tfield import config as C
 
 #: 测试库。与 `tests/test_models_store.py` 用的是同一个 —— 那个文件是这条
 #: 约定的起点，这里的 `models_db` 就是它那个 `db` 夹具上移过来的。
@@ -292,3 +295,43 @@ def empty_now():
     empty_library()
     yield None
     seed_delivered_model()
+
+
+@pytest.fixture
+def synthetic_dataset(tmp_path):
+    """造一份**最小的合法数据集** xlsx（不碰交付那一份 —— 它不进仓库）。
+
+    52 列 = timestamp + 三个气象列 + 3 棚 × 8 测点 × (温度, 湿度)。
+    三张表齐全：`建模对齐数据` / `插值标记` / `测点字典` —— `load_dataset`
+    三张都读，缺一张当场抛，所以「只造宽表」在这里造不出能用的样本。
+
+    行数由调用方给：`synthetic_dataset(times)` 返回那个 xlsx 的路径。
+    """
+    def make(times, name: str = "synthetic.xlsx"):
+        ts = pd.to_datetime(list(times))
+        main: dict[str, object] = {C.COL_TIMESTAMP: ts}
+        main[C.BG_TEMP] = 20.0
+        main[C.BG_RH] = 60.0
+        main[C.BG_LIGHT] = 100.0
+        for shed in C.SHED_ORDER:
+            for pos in C.SENSOR_LAYOUT:
+                temp, rh = C.sensor_columns(shed, pos)
+                main[temp] = 20.0
+                main[rh] = 60.0
+        wide = pd.DataFrame(main)
+        # 「插值标记」在交付数据集里与宽表**同形**（52 列同名列），不是一张
+        # 只有 `is_interp` 的窄表 —— 照那个形状造，两边才算可比。
+        quality = wide.copy()
+        rows = []
+        for shed in C.SHED_ORDER:
+            for pos, (x, z, _layer) in C.SENSOR_LAYOUT.items():
+                temp, _rh = C.sensor_columns(shed, pos)
+                rows.append({"变量名": temp, "水平坐标(m)": x, "高度坐标(m)": z})
+        path = tmp_path / name
+        with pd.ExcelWriter(path) as w:
+            wide.to_excel(w, sheet_name=C.SHEET_MAIN, index=False)
+            quality.to_excel(w, sheet_name=C.SHEET_QUALITY, index=False)
+            pd.DataFrame(rows).to_excel(w, sheet_name=C.SHEET_DICT, index=False)
+        return path
+
+    return make
