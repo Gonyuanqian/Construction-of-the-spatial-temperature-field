@@ -26,7 +26,7 @@ describe('页⑤ 的版面钩子', () => {
     const app = read('App.vue')
     expect(app).toContain('id="shell-side"')
     expect(app, '落点没有只在实时那一档上').toMatch(/v-if="isLive"\s+id="shell-side"/)
-    expect(app, '模式开关没有两处（中央列那一处）').toMatch(/<ModeSwitch v-if="isLive"/)
+    expect(app, '实时模式开关没有移到左侧导航区').toMatch(/class="live-nav-stack"[^>]*>[\s\S]*?<ModeSwitch v-model="mode"\s*\/>/)
     // 三列是栅格，不是 flex —— 后者的第三列会跟着内容漂。
     expect(app).toMatch(/\.body\.live\s*\{[^}]*display:\s*grid/)
   })

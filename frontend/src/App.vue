@@ -102,14 +102,15 @@ watchEffect(() => {
 
 <template>
   <TitleBar />
-  <!-- ⚠️ **两处 `<ModeSwitch>` 是有意的**（2026-10-12 页⑤ 仪表盘）。
-       参考图的模式页签在**中央工作区顶上**，而不是横跨整屏；而页①②③④
-       那四页要维持现状（用户裁定「只需要改动实时模式的页面」）。
-       两个 `<ModeSwitch>` 共用一个 `v-model`，所以「开关显示哪个模式」
-       与「现在在哪一页」仍然不可能对不上。 -->
+  <!-- 训练模式开关保留在原位置；实时模式开关放到左侧导航上方，
+       让中央工作区获得完整高度。两个入口共用同一个路由驱动的 v-model。 -->
   <ModeSwitch v-if="!isLive" v-model="mode" />
   <div class="body" :class="{ live: isLive }">
-    <NavRail :items="railItems" :variant="isLive ? 'live' : 'plain'" />
+    <div v-if="isLive" class="live-nav-stack">
+      <ModeSwitch v-model="mode" />
+      <NavRail :items="railItems" variant="live" />
+    </div>
+    <NavRail v-else :items="railItems" variant="plain" />
     <!-- ⚠️ 右栏的**落点**。位置在源码里放在 `main` **前面**：
          字符串选择器的 Teleport 是在挂载期用 `document.querySelector` 找的，
          落点必须在那一页的组件挂起来之前就进文档 —— 放在后面能跑通全靠
@@ -118,7 +119,6 @@ watchEffect(() => {
          内容一超一屏就跟着滚出去，「参数栏」就不成立了（规格书 §三 D1）。 -->
     <aside v-if="isLive" id="shell-side" class="shell-side" />
     <main class="page">
-      <ModeSwitch v-if="isLive" v-model="mode" />
       <RouterView v-if="!gate" :key="dataset.version.value" />
       <NoDataset v-else />
     </main>
@@ -156,8 +156,11 @@ watchEffect(() => {
   grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--side-w);
   grid-template-rows: minmax(0, 1fr);
 }
-.body.live > .rail { grid-area: 1 / 1 / 2 / 2; }
+.body.live > .live-nav-stack { grid-area: 1 / 1 / 2 / 2; }
 .body.live > .page { grid-area: 1 / 2 / 2 / 3; }
+.live-nav-stack { display: flex; flex-direction: column; min-height: 0; }
+.live-nav-stack :deep(.modes) { justify-content: center; padding: var(--gap-m) 8px; }
+.live-nav-stack :deep(.rail.live) { width: auto; flex: 1 1 0; min-height: 0; }
 /* ⚠️ 2026-10-16：中栏在实时这一档还是一条**竖排的弹性列**（页⑤ 要三块同屏，
    见 `LiveView.vue` 那两条）。`.page` 自己的 `overflow-y: auto` **原样保留**
    —— 装得下就不滚，顶到里面各块的下限才滚。这一条与上面 `.page` 那条写在
@@ -184,7 +187,7 @@ watchEffect(() => {
     grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) auto;
   }
-  .body.live > .rail { grid-area: 1 / 1 / 3 / 2; }
+  .body.live > .live-nav-stack { grid-area: 1 / 1 / 3 / 2; }
   .body.live > .page { grid-area: 1 / 2 / 2 / 3; }
   .shell-side {
     grid-area: 2 / 2 / 3 / 3;

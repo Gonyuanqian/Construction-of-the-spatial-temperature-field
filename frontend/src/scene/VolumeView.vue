@@ -264,7 +264,7 @@ function nudge(cmd: ViewCmd): void {
 }
 
 /**
- * 色标那条横条。**颜色来自 `charts/scale.ts` 的采样点**，不在这里写色值 ——
+ * 色标渐变。**颜色来自 `charts/scale.ts` 的采样点**，不在这里写色值 ——
  * 全仓的十六进制只许出现在 `tokens.css` 与 `scale.ts`（`guards.test.ts` 钉着），
  * 而 `tempStops()` 正是那两个例外之一。于是屏上这条色标、三维纹理、
  * 与页②③ 的热图用的是**同一组** stops。
@@ -275,7 +275,7 @@ function nudge(cmd: ViewCmd): void {
 function scaleGradient(): string {
   const stops = tempStops()
   const n = stops.length - 1
-  return `linear-gradient(to right, ${
+  return `linear-gradient(to top, ${
     stops.map((c, i) => `${c} ${((i / n) * 100).toFixed(1)}%`).join(', ')
   })`
 }
@@ -344,7 +344,7 @@ function runQuery() {
        根上透传的那一层，合起来才是「外面的高度分配一路到画布」。
        少挂哪一层，画布就退回自己写死的 460px —— 不报错，只是不跟着缩。 -->
   <div class="block" :class="{ stretch }">
-    <div class="row head">
+    <div v-if="panels === 'all'" class="row head">
       <h3>棚体三维温度场</h3>
       <span v-if="volume.data.value" class="tag">
         {{ calibratedLabel(volume.data.value) }}
@@ -423,7 +423,7 @@ function runQuery() {
           </Card>
         </Teleport>
 
-        <Card class="vol-stage" :class="{ stretch }">
+        <Card class="vol-stage" :class="{ stretch, 'live-stage': panels === 'shell' }">
           <!-- 画面角上那枚时刻（2026-10-09 用户裁定）。它读的是**载荷自己的**
                `time`，不是外面传进来的 `clockTime`：这枚读数回答的是「画面上
                这一屏是哪一刻」，而两者错开的那一秒（正在构体）正是它最该说话
@@ -442,22 +442,23 @@ function runQuery() {
             @hover="onHover" @pick="onPick" @ready="onSceneReady"
           />
 
-          <!-- 页⑤ 才摆的两条画布外标记：色标与棚位两端（规格书 §六 版面纪律）。
-               ⚠️ **只有端点，没有中间的刻度**：0/6/12/18 m 那种刻度要在前端
-               把一个跨度等分 —— 那正是本仓不许的数值计算。可用的数就是载荷
-               自己报的 `vmin/vmax` 与 `y_min/y_max`，所以只印两端。
-               ⚠️ 它们是画布**外**的 HTML 叠层，不碰 `VolumeScene` 的几何，
-               页③ 也因此零影响。 -->
-          <template v-if="panels === 'shell' && volume.data.value">
-            <div class="stage-scale">
-              <span class="num scale-end">{{ volume.data.value.vmin.toFixed(1) }} °C</span>
-              <span class="scale-bar" :style="{ background: scaleGradient() }" />
-              <span class="num scale-end">{{ volume.data.value.vmax.toFixed(1) }} °C</span>
+          <!-- 实时页的标题、棚位范围和温度色标叠在画布上；训练页布局保持原样。 -->
+          <template v-if="panels === 'shell'">
+            <div class="stage-overlay-head">
+              <h3>棚体三维温度场</h3>
+              <p v-if="volume.data.value" class="note num stage-axis">
+                棚位 y {{ volume.data.value.y_min.toFixed(2) }} 至
+                {{ volume.data.value.y_max.toFixed(2) }} m
+              </p>
+              <span v-if="volume.data.value" class="tag">
+                {{ calibratedLabel(volume.data.value) }}
+              </span>
             </div>
-            <p class="note num stage-axis">
-              棚位 y {{ volume.data.value.y_min.toFixed(2) }} 至
-              {{ volume.data.value.y_max.toFixed(2) }} m
-            </p>
+            <div v-if="volume.data.value" class="stage-scale">
+              <span class="num scale-end">{{ volume.data.value.vmax.toFixed(1) }} °C</span>
+              <span class="scale-bar" :style="{ background: scaleGradient() }" />
+              <span class="num scale-end">{{ volume.data.value.vmin.toFixed(1) }} °C</span>
+            </div>
           </template>
         </Card>
 
@@ -491,11 +492,7 @@ function runQuery() {
           <!-- 三维视图控制那张卡**只在页⑤** 上出现：页③ 用的是压在画布角上
                的那一组（`showViewControls`），两处摆法共用一个 `ViewControls`。 -->
           <Card v-if="panels === 'shell'" class="vol-side">
-            <fieldset class="rail-box">
-              <legend>三维视图控制</legend>
-              <ViewControls :run="nudge" :ok="sceneOk" />
-              <p class="note">拖动鼠标可查看三维模型。</p>
-            </fieldset>
+            <ViewControls :run="nudge" :ok="sceneOk" layout="panel" />
           </Card>
         </Teleport>
       </div>
@@ -531,14 +528,25 @@ function runQuery() {
 .vol-stage { min-width: 0; position: relative; grid-column: 2; }
 /* 页⑤ 那一档只剩中栏：一栏的栅格模板，且中栏本来就该铺满。 */
 .vol-grid.stage-only { grid-template-columns: minmax(0, 1fr); }
-/* 色标：一条横条，两端各一个端点读数。 */
-.stage-scale {
-  display: flex; align-items: center; gap: var(--gap-s);
-  margin-top: var(--gap-m);
+/* 实时画布左上角标题与棚位范围。 */
+.stage-overlay-head {
+  position: absolute; z-index: 2;
+  top: var(--gap-m); left: var(--gap-m);
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--gap-s);
+  pointer-events: none;
 }
-.scale-bar { flex: 1 1 auto; height: 10px; border-radius: var(--radius); }
+.stage-overlay-head h3 { margin: 0; }
+.stage-axis { margin: 0; }
+/* 实时色标：竖条在画布最右侧，高温在上、低温在下。 */
+.stage-scale {
+  position: absolute; z-index: 2;
+  top: var(--gap-m); right: var(--gap-m); bottom: var(--gap-m);
+  display: flex; flex-direction: column; align-items: center; gap: var(--gap-s);
+  pointer-events: none;
+}
+.scale-bar { flex: 1 1 auto; width: 10px; min-height: 60px; border-radius: var(--radius); }
 .scale-end { font-size: var(--size-note); color: var(--ink-muted); white-space: nowrap; }
-.stage-axis { margin-top: var(--gap-s); }
+.vol-stage.live-stage :deep(.view-ctl) { top: auto; right: auto; bottom: var(--gap-s); left: var(--gap-s); }
 /* 画面右上角那枚时刻。落点是 `--gap-m`（卡片自己的内边距）再加一点点 ——
    画布铺满内容盒，所以这个位置正好是画面右上角往里缩一个 `--gap-s`。
    ⚠️ `pointer-events: none` 不能省：它压在画布上，挡住的正是鼠标悬停读温

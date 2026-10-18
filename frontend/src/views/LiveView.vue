@@ -41,6 +41,7 @@ import { interpretPick, pickText } from '../charts/pick'
 import { tempStops, valueToColor } from '../charts/scale'
 import Card from '../components/Card.vue'
 import GaugeDial from '../components/GaugeDial.vue'
+import Icon from '../components/Icon.vue'
 import OverviewStrip from '../components/OverviewStrip.vue'
 import SectionAsk from '../components/SectionAsk.vue'
 import { useAsync } from '../composables/useAsync'
@@ -572,22 +573,24 @@ function runAsk(q: { x: number; y: number; z: number }): void {
            只是这一屏不再印。要恢复，在右栏再加一张卡就行。
            ⚠️ 两块都挂在**帧**这一级，与「看哪一块」无关。 -->
       <div class="foot">
-        <Card>
-          <h3>环境参数（棚体与周边）</h3>
+        <Card class="env-card">
+          <div class="env-head">
+            <Icon name="thermometer" />
+            <h3>环境参数</h3>
+            <span class="note">（棚体与周边）</span>
+          </div>
           <div class="env">
             <GaugeDial
               :frac="meanFrac" :value-text="meanText" :arc-color="meanColor"
-              label="棚内平均温度"
+              label="棚内平均温度" :size="88"
             />
-            <div class="geom">
-              <p class="cell">
-                <span class="g-label">拱跨宽</span>
-                <span class="num g-value">{{ widthText }}</span>
-              </p>
-              <p class="cell">
-                <span class="g-label">拱顶高</span>
-                <span class="num g-value">{{ heightText }}</span>
-              </p>
+            <div class="geom-card">
+              <div class="geom-head"><Icon name="ruler" /><span class="g-label">拱跨宽</span></div>
+              <span class="num g-value">{{ widthText }}</span>
+            </div>
+            <div class="geom-card">
+              <div class="geom-head"><Icon name="cube" /><span class="g-label">拱顶高</span></div>
+              <span class="num g-value">{{ heightText }}</span>
             </div>
           </div>
           <!-- ⚠️ 这两格是**后端算好的真几何**（本数据集里是 2.10 m 与 1.30 m），
@@ -602,7 +605,7 @@ function runAsk(q: { x: number; y: number; z: number }): void {
           <!-- ⚠️ 高度 2026-10-16 从 240px 收到 150px：这一屏要三块同屏不滚动，
                而这条曲线的形状在 150px 上照样读得出（它说的是「从头到尾哪儿热」
                的趋势，不是要读刻度）。 -->
-          <EChart v-if="vCurve" :option="vCurve" height="150px" />
+          <EChart v-if="vCurve" :option="vCurve" height="min(150px, 14vh)" />
           <!-- ⚠️ 这一格**不印后端的原话**：它是底栏的次要一块，把一条接口错误
                原样摊在这里会盖过温度场。而 `routes.smoke.test.ts` 那条禁字形
                扫描是逐页扫整页文本的，一句来路不明的错误文案正是最容易带进
@@ -724,16 +727,14 @@ function runAsk(q: { x: number; y: number; z: number }): void {
    摆成 flex 列，这里接上；`.stage`（三维那一块）是**唯一**那一格会长会缩的
    成员，其余各块按自己的内容高。
 
-   ⚠️ `.live` 写 `flex: 1 0 auto`，那个 `0` 是关键：`flex-shrink: 0` 让
-   这一列**永远不缩到内容以下**。窗口够高时它被 `flex-grow` 拉满，于是
-   `.stage` 有富余可分，画布长高（上限 460px）；窗口不够高时它停在内容高，
-   于是多出来的部分由 `.page` 那条 `overflow-y: auto` 滚 —— 而不是把三维
-   压成一条缝。两头都不需要在这里写一个「窗口高减多少」的常数。
+   ⚠️ `.live` 必须允许 `flex-shrink`：否则它会坚持内容的自然高度，
+   `.page` 只能滚动，底下的环境参数与均温曲线就被推到首屏以外。
+   `.stage` 保持弹性，按窗口余量伸缩；画布高度上下限在 `VolumeScene.vue` 统一控制。
 
    ⚠️ 没有 `.stage { min-height: … }`：下限写在**画布**那一层
    （`VolumeScene.vue` 的 `.scene-wrap.stretch > .scene`），一条链只写一处。
    在这里再写一个数，两个数迟早对不上，而屏上只是「三维的高度看着不对」。 */
-.live { display: flex; flex-direction: column; flex: 1 0 auto; }
+.live { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; }
 .stage { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 
 .block { margin-bottom: var(--gap-xl); }
@@ -791,14 +792,30 @@ function runAsk(q: { x: number; y: number; z: number }): void {
 .why { margin-top: var(--gap-m); }
 .why summary { font-size: var(--size-label); color: var(--ink-muted); cursor: pointer; }
 .why > p { margin-top: var(--gap-s); }
-/* 环境参数那两格。左边一个环、右边两行几何 —— 环要占地方，几何只要两行。 */
-.env { display: flex; align-items: center; gap: var(--gap-l); }
-.geom { display: flex; flex-direction: column; gap: var(--gap-s); }
-.geom .cell { margin: 0; display: flex; align-items: baseline; gap: var(--gap-s); }
+/* 环境参数：温度环与两张几何卡片始终在同一排，收紧占用高度。 */
+.env-card { container-type: inline-size; }
+.env-head { display: flex; align-items: center; gap: var(--gap-s); margin-bottom: var(--gap-m); }
+.env-head :deep(.icon) { --icon-size: 22px; color: var(--edge); }
+.env-head .note { margin-left: -4px; }
+.env { display: grid; grid-template-columns: 88px repeat(2, minmax(0, 1fr)); align-items: stretch; gap: var(--gap-s); }
+.geom-card {
+  min-width: 0; min-height: 72px; padding: var(--gap-s) 6px;
+  display: flex; flex-direction: column; justify-content: center; gap: var(--gap-s);
+  border: 1px solid var(--steel); border-radius: var(--radius);
+}
+.geom-head { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.geom-head :deep(.icon) { --icon-size: 18px; flex: none; color: var(--interact); }
 .g-label { font-size: var(--size-label); color: var(--ink-muted); }
-.g-value { font-size: var(--size-h3); font-weight: var(--w-strong); }
+.g-value { font-size: var(--size-h3); font-weight: var(--w-strong); white-space: nowrap; }
+@container (max-width: 420px) {
+  .env { grid-template-columns: 88px repeat(2, minmax(0, 1fr)); gap: 4px; }
+  .geom-card { padding: var(--gap-s) 4px; }
+  .geom-head { gap: 2px; }
+  .geom-head :deep(.icon) { --icon-size: 16px; }
+  .g-label { font-size: var(--size-note); }
+  .g-value { font-size: var(--size-label); }
+}
 /* 右栏那张卡：它是 `<Teleport>` 投出去的那个落点里的一块，落点的 `gap`
    管卡片间距，这里只管卡片内部两组之间的间距。 */
 .side-card { display: flex; flex-direction: column; }
-@media (max-width: 1199px) { .env { gap: var(--gap-m); } }
 </style>

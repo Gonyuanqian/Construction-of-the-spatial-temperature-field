@@ -24,30 +24,28 @@ export function buildLiveMeanCurveOption(
   return {
     backgroundColor: 'transparent',
     animation: false,
-    title: {
-      text: MEAN_CURVE_TITLE,
-      left: 0,
-      top: 0,
-      textStyle: { color: p.ink, fontSize: p.chartTitle, fontWeight: 600 },
-    },
-    grid: { left: 56, right: 16, top: 40, bottom: 34 },
+    /* 标题由外层卡片承担，绘图区不要再重复画一遍；把腾出的高度还给曲线。 */
+    grid: { left: 70, right: 10, top: 8, bottom: 20 },
     xAxis: {
       type: 'value',
-      name: '棚位 / m',
-      nameTextStyle: { color: p.inkMuted, fontSize: p.chartAxis },
       axisLine: { lineStyle: { color: p.steel } },
       axisTick: { show: false },
-      axisLabel: { color: p.inkMuted, fontSize: p.chartAxis },
+      axisLabel: {
+        color: p.inkMuted, fontSize: p.chartAxis, hideOverlap: true,
+        formatter: '{value} m',
+      },
       splitLine: { show: false },
     },
     yAxis: {
       type: 'value',
-      name: '温度 / °C',
       // 不强制从 0 起：这一卷的均温可能只横跨两度，从 0 起就压平了。
       scale: true,
-      nameTextStyle: { color: p.inkMuted, fontSize: p.chartAxis },
+      splitNumber: 3,
       axisLine: { lineStyle: { color: p.steel } },
-      axisLabel: { color: p.inkMuted, fontSize: p.chartAxis },
+      axisLabel: {
+        color: p.inkMuted, fontSize: p.chartAxis, hideOverlap: true,
+        formatter: '{value} °C',
+      },
       splitLine: { lineStyle: { color: p.steel } },
     },
     tooltip: { trigger: 'axis' },

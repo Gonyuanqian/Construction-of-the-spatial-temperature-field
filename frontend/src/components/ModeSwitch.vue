@@ -61,8 +61,7 @@ const model = defineModel<string>({ default: 'train' })
 .seg .mode:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
 .seg .mode + .mode { border-left: 1px solid var(--steel); }
 /* 选中项是**交互态**：走 `--interact` / `--on-face`（2026-10-12）。
-   ⚠️ `ModeSwitch` 在实时那一屏上也渲染（模式开关挪进了中央列顶部），
-   留在 `--leaf` 上会在深蓝底上画出一片青 —— 与参考图那套层级对不上。 */
+   实时那一档使用深色导航区，因此继续走交互蓝，与参考图的层级一致。 */
 .seg .mode.on { background: var(--interact); color: var(--on-face); }
 .seg .mode.off { cursor: not-allowed; }
 </style>

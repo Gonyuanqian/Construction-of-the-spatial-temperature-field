@@ -22,6 +22,8 @@ const props = defineProps<{
   label: string
   /** 弧的颜色。空串 = 还没数，兜一个主色。 */
   arcColor?: string
+  /** 圆环直径（px）。 */
+  size?: number
 }>()
 
 const R = 34
@@ -31,8 +33,8 @@ const dash = computed(() => `${(CIRC * props.frac).toFixed(2)} ${CIRC.toFixed(2)
 </script>
 
 <template>
-  <div class="dial">
-    <svg viewBox="0 0 88 88" width="88" height="88" role="img"
+  <div class="dial" :style="{ '--dial-size': `${props.size ?? 104}px` }">
+    <svg viewBox="0 0 88 88" :width="props.size ?? 104" :height="props.size ?? 104" role="img"
          :aria-label="`${label} ${valueText}`">
       <circle class="track" cx="44" cy="44" :r="R" />
       <!-- ⚠️ 颜色走 `:style` 而不是 `stroke=` 属性：SVG 的表现属性不认
@@ -42,13 +44,15 @@ const dash = computed(() => `${(CIRC * props.frac).toFixed(2)} ${CIRC.toFixed(2)
               :stroke-dasharray="dash"
               :style="{ stroke: arcColor || 'var(--leaf)' }" />
     </svg>
-    <p class="value num">{{ valueText }}</p>
-    <p class="label">{{ label }}</p>
+    <div class="dial-copy" aria-hidden="true">
+      <p class="value num">{{ valueText }}</p>
+      <p class="label">{{ label }}</p>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.dial { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.dial { position: relative; width: var(--dial-size); height: var(--dial-size); flex: none; }
 .track { fill: none; stroke: var(--steel); stroke-width: 8; }
 /* 起点挪到正上方。`transform-origin` 用像素而不是 `center` 百分比：
    `viewBox` 是 88×88，圆心在 44,44 —— 百分比在两个方向一致时也对，
@@ -60,6 +64,11 @@ const dash = computed(() => `${(CIRC * props.frac).toFixed(2)} ${CIRC.toFixed(2)
   transform: rotate(-90deg);
   transform-origin: 44px 44px;
 }
-.value { margin: var(--gap-s) 0 0; font-size: var(--size-h3); font-weight: var(--w-strong); }
+.dial-copy {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px; text-align: center; pointer-events: none;
+}
+.value { margin: 0; font-size: var(--size-h3); font-weight: var(--w-strong); }
 .label { margin: 0; font-size: var(--size-note); color: var(--ink-muted); }
 </style>
