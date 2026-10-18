@@ -20,12 +20,14 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 
 import type { VolumePayload } from '../api/types'
 import { tempStops } from '../charts/scale'
+import ViewControls from '../components/ViewControls.vue'
 import { readPalette } from '../design/palette'
 import { FIT_FOV_DEG, boxOf, fitCamera, type WorldBox } from './fit'
 import { markerPoint, solveHover, type HoverHit, type HoverPick } from './hover'
 import { PAN_FRAC, YAW_STEP_DEG, ZOOM_STEP, panBy, yawAround, zoomBy,
          type Vec3 } from './orbit'
 import { rasterPlane, stripeIndexSet } from './raster'
+import type { ViewCmd } from './viewCmd'
 import type { VolumeSpec } from './volumeView'
 
 const props = defineProps<{
@@ -427,11 +429,6 @@ function onPointerLeave(): void {
   emit('hover', null)
 }
 
-/** 按钮能做的事。文字是屏上的字，键是接线用的。 */
-type ViewCmd =
-  | 'yaw-left' | 'yaw-right' | 'zoom-in' | 'zoom-out'
-  | 'pan-left' | 'pan-right' | 'pan-up' | 'pan-down' | 'reset'
-
 /**
  * 按一下按钮，把相机挪一格。
  *
@@ -571,6 +568,14 @@ watch(() => props.cutY, (v) => {
   if (clipPlane) clipPlane.constant = v
 })
 
+/**
+ * 页⑤ 的右栏要按这一组按钮，而它住在外壳的另一栏里 —— 所以相机动作得
+ * 有一个**对外**的入口。只暴露 `nudge` 一个：`camera` / `controls` /
+ * `scene` 是这一层的内部状态，暴露出去就是把「这一层只做 Three 的调用、
+ * 不做任何判断」那条边界拆了。
+ */
+defineExpose({ nudge })
+
 onBeforeUnmount(() => {
   teardown?.()
   teardown = null
@@ -600,30 +605,14 @@ onBeforeUnmount(() => {
          正是这里最可能出、也最难发现的错（不报错，只是按钮永远不出现）。
          建不起来的那一档由 `:disabled` 说，不由整组消失说。
 
+         ⚠️ 按钮那一组 2026-10-12 搬去了 `components/ViewControls.vue`
+         （页⑤ 的右栏要用同一组）。**这一层留着这层底与定位** ——
+         「压在画面右上角」是这一处摆法的事。
          ⚠️ 它压在画布上，而画布那片区域要接悬停读数（`.scene` 上的
          `@pointermove`）—— 所以只占右上角一小块。这与 `.stage-clock` 的
          `pointer-events: none` 正好相反：那一枚只读，这一组要能点。 -->
-    <div v-if="showViewControls" class="view-ctl" role="group" aria-label="视角">
-      <div class="ctl-row">
-        <span class="ctl-tag">旋转</span>
-        <button type="button" data-view-act="yaw-left" :disabled="!sceneReady" title="绕竖直轴左转" @click="nudge('yaw-left')">左转</button>
-        <button type="button" data-view-act="yaw-right" :disabled="!sceneReady" title="绕竖直轴右转" @click="nudge('yaw-right')">右转</button>
-      </div>
-      <div class="ctl-row">
-        <span class="ctl-tag">缩放</span>
-        <button type="button" data-view-act="zoom-in" :disabled="!sceneReady" title="相机靠近棚体" @click="nudge('zoom-in')">拉近</button>
-        <button type="button" data-view-act="zoom-out" :disabled="!sceneReady" title="相机远离棚体" @click="nudge('zoom-out')">推远</button>
-      </div>
-      <div class="ctl-row">
-        <span class="ctl-tag">平移</span>
-        <button type="button" data-view-act="pan-left" :disabled="!sceneReady" title="画面向左移" @click="nudge('pan-left')">左</button>
-        <button type="button" data-view-act="pan-right" :disabled="!sceneReady" title="画面向右移" @click="nudge('pan-right')">右</button>
-        <button type="button" data-view-act="pan-up" :disabled="!sceneReady" title="画面向上移" @click="nudge('pan-up')">上</button>
-        <button type="button" data-view-act="pan-down" :disabled="!sceneReady" title="画面向下移" @click="nudge('pan-down')">下</button>
-      </div>
-      <div class="ctl-row">
-        <button type="button" data-view-act="reset" :disabled="!sceneReady" title="回到自动取景" @click="nudge('reset')">复位</button>
-      </div>
+    <div v-if="showViewControls" class="view-ctl">
+      <ViewControls :run="nudge" :ok="sceneReady" />
     </div>
     <p v-if="unavailable" class="note">{{ unavailable }}</p>
   </div>
@@ -633,6 +622,24 @@ onBeforeUnmount(() => {
 .scene-wrap { position: relative; }
 .scene { width: 100%; height: 460px; cursor: crosshair; }
 .scene :deep(canvas) { display: block; width: 100%; height: 100%; }
+/* ── 把高度让给外面（2026-10-16 页⑤ 一屏装三块） ──────────────────────
+   `VolumeView` 传一个 `stretch` 类下来（属性透传落在 `.scene-wrap` 这个根
+   上），于是画布不再自己写死 460px，改由外面那条竖排弹性列分配。
+
+   ⚠️ 高窗口仍回到原先的 460px 上限；较矮窗口时按视口高度收至 120–200px，
+   为环境参数与沿棚均温留出可见空间。训练页不挂这个类，仍使用原始高度与取景比例。
+
+   ⚠️ 弹性靠**逐层的 `flex`** 传，不靠 `height: 100%`。后者要求每一层祖先
+   都有确定高度，中间断一节就静默变成 0（画面直接没了）；前者断一节只是
+   回到自己写死的那一档。两者都不报错，但坏起来差得远。
+
+   ⚠️ 页③ 不挂这个类：它走的仍是上面那条写死的 460px，逐像素不变。 */
+.scene-wrap.stretch { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.scene-wrap.stretch > .scene {
+  flex: 1 1 auto; height: auto;
+  min-height: clamp(120px, calc(100vh - 784px), 200px);
+  max-height: 460px;
+}
 /* 视角按钮：压在画面**右上角**。
    锚点是**画布盒子**自己（`.scene-wrap` 是 `position: relative`，画布铺满它），
    所以缩进取 `--gap-s` 就到画面里侧了 —— `VolumeView` 那个 `.stage-clock`
@@ -655,19 +662,4 @@ onBeforeUnmount(() => {
   border-radius: var(--radius);
   box-shadow: var(--shadow);
 }
-.ctl-row { display: flex; align-items: center; gap: 4px; }
-.ctl-tag { font-size: var(--size-label); color: var(--ink-muted); width: 2.6em; }
-.view-ctl button {
-  font: inherit;
-  font-size: var(--size-note);
-  cursor: pointer;
-  padding: 2px 8px;
-  color: var(--ink);
-  background: transparent;
-  border: var(--rule);
-  border-radius: var(--radius);
-}
-/* 场景没建起来时（没有 WebGL）九颗都灰着。灰而不是消失，是让「这一组存在、
-   只是现在用不了」看得出来 —— 与旁边那句「画不出来」的说明是一个意思。 */
-.view-ctl button:disabled { cursor: default; opacity: 0.4; }
 </style>

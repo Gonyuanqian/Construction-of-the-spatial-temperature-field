@@ -138,7 +138,7 @@ export function buildDiurnalResidualOption(
     type: 'heatmap',
     xAxisIndex: 2, yAxisIndex: 2,
     data: heat,
-    // 色标：正向 cividis（spec §8.1）。vmin/vmax 由数据定 ——
+    // 色标：正向 turbo（spec §8.1）。vmin/vmax 由数据定 ——
     // 这一格讲的是「同一棚内各层随时间的相对变化」，不是跨棚比较。
     itemStyle: { borderWidth: 0 },
   })
@@ -160,7 +160,7 @@ export function buildDiurnalResidualOption(
       show: true,
       // ⚠️ 必须写 seriesIndex。ECharts 5 的顶层 visualMap 默认作用于**所有**
       // series，数据维度默认取最后一个 —— 对折线来说最后一个维度正好也是温度，
-      // 于是两条折线会被 cividis 重染，而 lineStyle 里的调色板色还在，
+      // 于是两条折线会被色标重染，而 lineStyle 里的调色板色还在，
       // 「没有第八个颜色」那条测试会静默通过。钉死在热图这一条上。
       seriesIndex: heatIndex,
       min: finite.length ? Math.min(...finite) : 0,

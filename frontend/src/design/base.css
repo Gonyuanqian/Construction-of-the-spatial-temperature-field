@@ -52,9 +52,14 @@ button {
 }
 button:hover:not(:disabled) { border-color: var(--ink-muted); }
 button:disabled { color: var(--ink-muted); cursor: not-allowed; }
-button.on { background: var(--leaf); color: var(--paper); border-color: var(--leaf); }
+/* 激活的按钮走**交互色**而不是主色（2026-10-12 页⑤ 仪表盘）：实时那一档
+   主色是青（轮廓与强调），交互色是亮蓝 —— 用户给的分工是
+   「青色负责轮廓与强调，**亮蓝色负责交互**」。浅色那一档两者取等值，
+   所以页①②③④ 的按钮一个像素都不动。 */
+button.on { background: var(--interact); color: var(--on-face); border-color: var(--interact); }
 
-:focus-visible { outline: 2px solid var(--leaf); outline-offset: 2px; }
+/* 焦点环同一条：它在实时屏上要给的是「这里可以按」，不是「这里是强调」。 */
+:focus-visible { outline: 2px solid var(--interact); outline-offset: 2px; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

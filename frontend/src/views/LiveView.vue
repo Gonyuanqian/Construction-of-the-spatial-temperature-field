@@ -38,13 +38,17 @@ import EChart from '../charts/EChart.vue'
 import { buildLiveMeanCurveOption, MEAN_CURVE_TITLE } from '../charts/options/liveMeanCurve'
 import { buildSectionFieldOption, shedOfSeries } from '../charts/options/sectionField'
 import { interpretPick, pickText } from '../charts/pick'
+import { tempStops, valueToColor } from '../charts/scale'
 import Card from '../components/Card.vue'
-import StatCard from '../components/StatCard.vue'
-import StatRow from '../components/StatRow.vue'
+import GaugeDial from '../components/GaugeDial.vue'
+import Icon from '../components/Icon.vue'
+import OverviewStrip from '../components/OverviewStrip.vue'
+import SectionAsk from '../components/SectionAsk.vue'
 import { useAsync } from '../composables/useAsync'
 import { calibratedLabel, FIELD_MODEL, FIELD_VIEWS } from '../design/copy'
 import { fmtTime } from '../design/format'
 import { readPalette } from '../design/palette'
+import { snapIndex } from '../scene/hover'
 
 // 三维整块懒加载，`FieldView` 同款写法。占位用 `h()` 不用字符串模板：
 // 打包出来的 `vue` 是 runtime-only 的，`template:` 字符串在真跑时会抛，
@@ -242,25 +246,49 @@ const vCurve = computed(() => (
   summary.data.value ? buildLiveMeanCurveOption(summary.data.value, palette) : null
 ))
 
+/* ── 环境参数：均温的环 + 两格真几何（2026-10-12 规格书 §三 D6） ─────── */
+
 /**
- * 「棚顶气象」那三格。与 `show` 同一条规矩：`null` 就是「不报数」。
+ * 圆环那一条弧的比例。
  *
- * ⚠️ 计划把这三句摆在 `view` 那两行之后，这里改放在这一块 —— 上面那个小节
- * 标题（「指标行与底栏的文案」）点名的正是它们，摆在一起比夹在点选逻辑里
- * 读得顺。行为一个字节都没变。
+ * ⚠️ 这里算的是一个**显示比例**（哪一段弧填上），**不是温度** ——
+ *    全站「前端不做任何数值计算」那条约束管的是温度：读数一个都不是这里算的。
+ *    规格书 §三 D6 自己写着「弧长与颜色都来自载荷的 `vmin` / `vmax` 与 `mean`」，
+ *    所以它是被许可的那一处。
  */
-const bgTemp = computed(() => {
-  const v = frame.data.value?.frame.bg_temp
-  return v === null || v === undefined ? '不报数' : `${v.toFixed(1)} °C`
+const meanFrac = computed(() => {
+  const p = summary.data.value
+  const m = p?.mean
+  if (!p || m === null || m === undefined) return 0
+  const span = p.vmax - p.vmin
+  if (!(span > 0)) return 0
+  return Math.min(1, Math.max(0, (m - p.vmin) / span))
 })
-const bgRh = computed(() => {
-  const v = frame.data.value?.frame.bg_rh
-  return v === null || v === undefined ? '不报数' : `${v.toFixed(1)} %`
+
+/**
+ * 弧的颜色。**与色标用的是同一个函数、同一组 stops** ——
+ * 规格书 §三 D6 的原话是「**环就是一条弯过来的色标**」。
+ * 取不到数时给空串，环那一层会兜一个主色。
+ */
+const meanColor = computed(() => {
+  const p = summary.data.value
+  const m = p?.mean
+  if (!p || m === null || m === undefined) return ''
+  const [r, g, b] = valueToColor(m, p.vmin, p.vmax, tempStops())
+  return `rgb(${r}, ${g}, ${b})`
 })
-const bgLight = computed(() => {
-  const v = frame.data.value?.frame.bg_light
-  return v === null || v === undefined ? '不报数' : `${v.toFixed(0)} lux`
-})
+
+/**
+ * 两格几何。**后端算好的**（`shed_width` / `shed_height`）——
+ * 前端不做任何数值计算，所以两个端点即使都在手上也不许在这里相减。
+ * ⚠️ 名字是**拱跨宽**与**拱顶高**，不是「棚体长度」：那是沿棚长（y）的跨度。
+ */
+const widthText = computed(() => (
+  summary.data.value ? `${summary.data.value.shed_width.toFixed(2)} m` : '正在取'
+))
+const heightText = computed(() => (
+  summary.data.value ? `${summary.data.value.shed_height.toFixed(2)} m` : '正在取'
+))
 
 /* ── 断面 + 点选 ────────────────────────────────────────── */
 
@@ -293,10 +321,92 @@ const readout = computed(() => {
     text: pickText(interpretPick(f, p.shed, p.ix, p.iz), f.max_measured_z),
   }
 })
+
+/* ── 概览那一条（2026-10-12） ─────────────────────────────────────── */
+
+/**
+ * 三格。**值全部是已经格式化好的字符串**，语气也在这里定 ——
+ * `OverviewStrip` 不认识页⑤，只按 `tone` 上一个类名。
+ *
+ * ⚠️ 2026-10-16 用户裁定：每格那第三行副文案（「拱形以内、z 不高于 1.10 m」
+ * 等三句）**整块删掉**，`OverviewStrip` 那边连 `.sub` 那个元素一起撤了。
+ * 理由是这一屏的版面：三维 / 环境参数 / 沿栅均温三块要**同屏不滚动**，
+ * 每格省下一行就是几十像素。三句真话的去处分别是 —— 均温那一句搬进了页脚的
+ * 「口径与出处」；「这一帧的体网格」在三维那一块的卡片里本来就写着；
+ * 「实时数据，动态更新」说了等于没说（它旁边就是「更新时间」那一格）。
+ *
+ * ⚠️ 参考图那个「（切割 y = 18.00）」仍然**不印**（规格书 §三 D10，没被推翻）：
+ * 这一屏演的是三维全场，后端没有「当前剖切位置」这个数，也不该为它编一个。
+ */
+type Cell = {
+  key: string; label: string; value: string; tone: 'plain' | 'ok' | 'warn'
+}
+
+const overview = computed<readonly Cell[]>(() => [
+  {
+    key: 'mean', label: '棚内平均温度', value: meanText.value, tone: 'plain',
+  },
+  {
+    key: 'scene', label: '棚体三维温度场', value: sceneText.value,
+    tone: sceneText.value === '取数失败' ? 'warn' : (sceneText.value === '已生成' ? 'ok' : 'plain'),
+  },
+  {
+    key: 'time', label: '更新时间', value: frameTimeText.value, tone: 'plain',
+  },
+])
+
+/* ── 右栏：断面那一档的问数（2026-10-12 规格书 §三 D8） ─────────────── */
+
+/**
+ * 断面查询的答案。走的是与三维那边**同一套判定**：吸附 `snapIndex`、
+ * 回答 `interpretPick` / `pickText`（两处都是全前端唯一那处）。
+ *
+ * ⚠️ 断面的 y 不是连续轴，是**三个棚位**。所以 `snapIndex` 喂的是
+ * `frame.sheds` 的 y 列表，要的就是「最近的那个棚位」。
+ */
+const askAnswer = ref<{ where: string; text: string } | null>(null)
+const askError = ref('')
+
+/** 这一档能问的范围。拼的是载荷自己报的两个端点，不是这里算出来的界。 */
+const askRange = computed(() => {
+  const f = frame.data.value
+  if (!f) return '这一帧还没到，坐标范围暂时说不了。'
+  return `可用范围：x ${f.x[0].toFixed(2)} 至 ${f.x[f.x.length - 1].toFixed(2)} m，`
+    + `z ${f.z[0].toFixed(2)} 至 ${f.z[f.z.length - 1].toFixed(2)} m。`
+})
+
+function runAsk(q: { x: number; y: number; z: number }): void {
+  const f = frame.data.value
+  if (!f) return
+  const si = snapIndex(f.sheds.map((sh) => sh.y), q.y)
+  const ix = snapIndex(f.x, q.x)
+  const iz = snapIndex(f.z, q.z)
+  if (si === null || ix === null || iz === null) {
+    // **绝不从范围外吸进来**：吸到最近的边上格点，屏幕上写的还是「最近格点」，
+    // 而用户以为自己问的是 100 米处 —— 一个不是他问的答案，看起来却完全正常。
+    askAnswer.value = null
+    askError.value = `坐标超出这一帧的范围，没有可吸附的格点。${askRange.value}`
+    return
+  }
+  askError.value = ''
+  const shed = f.sheds[si]!
+  askAnswer.value = {
+    where: `${shed.shed}　x ${f.x[ix]!.toFixed(2)} m　z ${f.z[iz]!.toFixed(2)} m`,
+    text: pickText(interpretPick(f, shed.shed, ix, iz), f.max_measured_z),
+  }
+}
 </script>
 
 <template>
-  <section>
+  <!-- ⚠️ 2026-10-16：根这一层带 `class="live"`，为的是 `.live` / `.stage`
+       那两条竖排弹性列的规则（见本文件末尾那一段样式）。`App.vue` 在实时
+       那一档把中栏也摆成了一条 flex 列 —— 两头接上，三维那一块才有高度可分。
+
+       ⚠️ 这段注释里**不许出现那个样式的标签名**（`style`）：`prose.test.ts`
+       用 `indexOf` 找它来切模板段，注释里写一个就把扫描段截在这儿，
+       于是那条守卫会以「一个 p.note 都没有」报红 —— 而它其实是被饿着了。
+       这一条已经踩过一次（2026-10-16）。 -->
+  <section class="live">
     <h2>实时模式</h2>
 
     <p v-if="error" role="alert" class="alert">{{ error }}</p>
@@ -392,23 +502,19 @@ const readout = computed(() => {
            用户得往下翻才看得全，这一屏的版面因此没法按「一屏」来设计。
            页③ 一直是 `v-if` / `v-else`，只有实时这一屏漏了。
            `LiveView.test.ts` 里那条「切过去是换掉，不是接在下面」两侧都钉着。 -->
-      <!-- ⚠️ 2026-10-09 第二轮（参考图）：指标行回来了。用户原话
+      <!-- ⚠️ 2026-10-09 第二轮（参考图）：概览三格回来了。用户原话
            「本帧时刻挪到指标卡」—— 第一轮把它印到三维影像的角上，
-           这一轮挪回指标行：它落在指标行里，断面与三维**两档都看得见**，
+           第二轮挪回这一行：它落在这一行里，断面与三维**两档都看得见**，
            而角上那份只有三维那一档有。
-           ⚠️ 三张里一张都不报帧数：「第几帧、一共多少帧没必要展示」那条
+           ⚠️ 2026-10-12 起它是一条**长条**（`OverviewStrip`），不再是
+           「一排等宽卡片」（`StatRow` + `StatCard` 那一对是页① 的版面，
+           见规格书 §六）。三格的名字也跟着规格书那一张表定稿：
+           棚内平均温度 / 棚体三维温度场 / 更新时间。
+           ⚠️ 三格里一格都不报帧数：「第几帧、一共多少帧没必要展示」那条
            裁定没被推翻（`LiveView.test.ts` 两侧都钉着）。
-           一律不带 `prov` 图章：三张卡上的数都是这次请求现算的，印三个
+           一律不带 `prov` 图章：三格上的数都是这次请求现算的，印三个
            一模一样的「算」是重复（与页① 同一年的同一条裁定）。 -->
-      <StatRow>
-        <StatCard label="棚内均温" :value="meanText" />
-        <StatCard label="三维温度场" :value="sceneText" />
-        <StatCard label="本帧时刻" :value="frameTimeText" />
-      </StatRow>
-      <p class="note reading">
-        均温只算拱形以内、z 不高于 {{ zLimitText }} m 的那些格子。拱外没有定义，
-        再往上那一条是按外推补出来的，都不进平均。
-      </p>
+      <OverviewStrip :cells="overview" />
 
       <!-- ⚠️ 两块**互斥**、共用一个位子（2026-10-09 第一轮用户裁定）：
            原先断面那张卡没有 `v-if` 拦着，切到三维就成了上下两条。
@@ -431,69 +537,114 @@ const readout = computed(() => {
           <EChart v-if="v5" :option="v5" height="420px" @pick="onPick" />
           <p v-else class="note state">正在构这一帧的场…</p>
 
-          <table v-if="readout">
-            <tbody>
-              <tr><th>位置</th><td class="num">{{ readout.where }}</td></tr>
-              <tr><th>回答</th><td>{{ readout.text }}</td></tr>
-            </tbody>
-          </table>
-          <p v-else class="note state">点一个格子看它的读数。</p>
         </Card>
         <p v-else-if="frame.loading.value" class="note state">正在取这一帧…</p>
       </template>
 
       <!-- 三维那一块就是页③ 的那一块，取数口换成实时这条。切过去才懒加载它。
-           三个开关都在这一屏给：
-             · `show-notes` 关掉 —— 2026-10-09 第一轮用户裁定「这一段话也没必要
-               展示了」：画面上方那两行口径说明也撤了，画面顶上去。
-               规格书 §5.3「棚体示意」那条要求没丢，由左栏滑块的标题与读数接着。
-             · `show-view-controls` 打开 —— 第二轮用户裁定「旋转/缩放/平移按钮
-               可以做」。
-             · ⚠️ **不再传 `show-clock`** —— 第二轮把本帧时刻挪进了指标行，
-               角上那份留着就是同一件事印两处。
-             · ⚠️ `clock-time` **仍然要传**：它是 `VolumeView` 的必填 prop，而且
-               不走那枚钟也仍然读它 —— `VolumeView.vue:263` 那句「正在构体…」
-               括号里的时刻、以及 :165 那句「画面仍是 X 的场」，说的都是它。
-               计划给的模板漏了这一个 —— 少了它 `vue-tsc` 当场报
-               TS2345「Property 'clockTime' is missing … but required」
-               （2026-10-09 删掉这一行实测过一次，不是猜的），这里补回来。 -->
-      <VolumeView
-        v-else
-        source="live" :t-index="status?.cursor ?? 0"
-        show-view-controls :show-notes="false"
-        :clock-time="frame.data.value?.frame.time ?? ''"
-      />
+           ⚠️ 2026-10-12 起它还多带一个 `panels="shell"`：**只渲染中栏**，
+           问数 / 几何与剖切 / 视图控制三张卡投进外壳右栏
+           （`App.vue` 渲染的 `<aside id="shell-side">`）。
+           ⚠️ **画布角上那一组视角按钮这一屏不再打开** —— 它搬到右栏那张卡里
+           （`ViewControls`，与页③ 同一份实现），同一组按钮印两处迟早有一处是旧的。
+           ⚠️ `clock-time` **仍然要传**：它是 `VolumeView` 的必填 prop，
+           而且不走那枚钟也仍然读它（「正在构体…」括号里的时刻、
+           以及「画面仍是 X 的场」那句说的都是它）。
+           ⚠️ `show-notes` 仍然关掉（2026-10-09 用户裁定）：那两行口径说明
+           撤下来之后，顶住规格书 §5.3 那条要求的是右栏那个滑块的标题与读数。 -->
+      <!-- ⚠️ 2026-10-16：三维那一块包进 `.stage` —— 它是这一屏**唯一**
+           会长会缩的那一格。`stretch` 让 `VolumeView` 把高度交给外面分配
+           （逐层 `flex` 传到画布，见那两个文件末尾的样式）。
+           ⚠️ 传的是 `stretch` 而不是一个高度：高度由窗口算，不由这里编一个
+           常数 —— 编出来的那个数在有人往这一屏加一块时会**悄悄**过期，
+           而屏上只表现为「三维矮了」，不报错。 -->
+      <div v-else class="stage">
+        <VolumeView
+          source="live" :t-index="status?.cursor ?? 0"
+          panels="shell" :show-notes="false" stretch
+          :clock-time="frame.data.value?.frame.time ?? ''"
+        />
+      </div>
 
-      <!-- 底栏两块（2026-10-09 第二轮，照参考图下方那两块）。
-           ⚠️ 两块都挂在**帧**这一级，与「看哪一块」无关 —— 第一轮之前
-           「棚顶气象」只写在断面那张卡里，切到三维就没了，而它是帧的属性。 -->
+      <!-- 底栏两块（2026-10-09 第二轮，照参考图下方那两块）；
+           ⚠️ 2026-10-12 左块照参考图换成了「环境参数（棚体与周边）」
+           （规格书 §三 D7，用户裁定「照参考图换掉」）。**那是一次内容的净损失**：
+           棚顶那一组气象读数仍在 `/api/live/frame/{n}` 的返回体里，
+           只是这一屏不再印。要恢复，在右栏再加一张卡就行。
+           ⚠️ 两块都挂在**帧**这一级，与「看哪一块」无关。 -->
       <div class="foot">
-        <Card>
-          <h3>棚顶气象</h3>
-          <StatRow>
-            <StatCard compact label="气温" :value="bgTemp" />
-            <StatCard compact label="湿度" :value="bgRh" />
-            <StatCard compact label="光照" :value="bgLight" />
-          </StatRow>
-          <p class="note reading">
-            棚顶那一组气象读数，这一帧的后端原样给的。
-          </p>
+        <Card class="env-card">
+          <div class="env-head">
+            <Icon name="thermometer" />
+            <h3>环境参数</h3>
+            <span class="note">（棚体与周边）</span>
+          </div>
+          <div class="env">
+            <GaugeDial
+              :frac="meanFrac" :value-text="meanText" :arc-color="meanColor"
+              label="棚内平均温度" :size="88"
+            />
+            <div class="geom-card">
+              <div class="geom-head"><Icon name="ruler" /><span class="g-label">拱跨宽</span></div>
+              <span class="num g-value">{{ widthText }}</span>
+            </div>
+            <div class="geom-card">
+              <div class="geom-head"><Icon name="cube" /><span class="g-label">拱顶高</span></div>
+              <span class="num g-value">{{ heightText }}</span>
+            </div>
+          </div>
+          <!-- ⚠️ 这两格是**后端算好的真几何**（本数据集里是 2.10 m 与 1.30 m），
+               不是参考图上那个更大的跨度 —— 那一个是沿棚长方向的走廊跨度。
+               见 `routes/field.py::volume_payload`。
+               ⚠️ 2026-10-16 第二回：原先压在这两格底下有一句口径说明，撤进
+               页脚的「口径与出处」了 —— 与均温那一句同一条处置。 -->
         </Card>
 
         <Card>
           <h3>{{ MEAN_CURVE_TITLE }}</h3>
-          <EChart v-if="vCurve" :option="vCurve" height="240px" />
+          <!-- ⚠️ 高度 2026-10-16 从 240px 收到 150px：这一屏要三块同屏不滚动，
+               而这条曲线的形状在 150px 上照样读得出（它说的是「从头到尾哪儿热」
+               的趋势，不是要读刻度）。 -->
+          <EChart v-if="vCurve" :option="vCurve" height="min(150px, 14vh)" />
           <!-- ⚠️ 这一格**不印后端的原话**：它是底栏的次要一块，把一条接口错误
                原样摊在这里会盖过温度场。而 `routes.smoke.test.ts` 那条禁字形
                扫描是逐页扫整页文本的，一句来路不明的错误文案正是最容易带进
                禁字形的地方。 -->
           <p v-else class="note state">正在取这一帧的沿棚均温…</p>
-          <p class="note reading">
-            沿棚位每 3 m 采一片，每一片取拱形以内、实测带以内的平均。
-            它说的是「这一棚从头到尾哪儿热」，与断面图说的「这一片里哪儿热」不是一回事。
-          </p>
+          <!-- ⚠️ 这一格原来压着一句口径说明，2026-10-16 第二回连同左块那一句
+               一起撤进页脚的「口径与出处」了：这一屏要三块同屏不滚动，
+               而底栏是全屏最高的那一块，两句话就是将近五十像素。 -->
         </Card>
       </div>
+
+      <!-- 右栏（2026-10-12 规格书 §三 D8）。**三档都在的只有三维那一支**：
+           `VolumeView` 自己把三张卡投进 `#shell-side`；断面这一档它根本没挂载，
+           所以那一段由这里补上 —— 只有一张问数卡（几何与剖切、视图控制
+           服务的是三维，断面档上没有它们的事）。
+           ⚠️ **落点不在文档里时 Vue 静默不挂**：这一块会整块消失而不报错。
+           `LiveView.test.ts` 自己造落点，正是防这一手。 -->
+      <Teleport v-if="view === 'section'" to="#shell-side">
+        <Card class="side-card">
+          <fieldset class="rail-box">
+            <legend>问数</legend>
+            <table v-if="readout">
+              <tbody>
+                <tr><th>位置</th><td class="num">{{ readout.where }}</td></tr>
+                <tr><th>回答</th><td>{{ readout.text }}</td></tr>
+              </tbody>
+            </table>
+            <p v-else class="note state">点一个格子看它的读数。</p>
+          </fieldset>
+
+          <fieldset class="rail-box">
+            <legend>查一个坐标</legend>
+            <SectionAsk
+              :answer="askAnswer" :error="askError" :note="askRange"
+              @query="runAsk"
+            />
+          </fieldset>
+        </Card>
+      </Teleport>
     </template>
 
     <!-- 口径与出处：一页最多一处（spec §八）。收起来，但内容始终在 DOM 里。 -->
@@ -512,6 +663,27 @@ const readout = computed(() => {
       <p class="note" data-grading>
         图上一个格子只有三种回答：拱外无定义、无测量带里不报数、以及一个带出处的实测值。
       </p>
+      <!-- ⚠️ 均温那一句**原先常驻在概览条底下**，2026-10-16 用户裁定撤下来。
+           与原先把分级句折进这里是同一条处置：**降级不是删除** —— 话一个字
+           不丢，从「常驻」变成「点一下」。它撤得掉的理由是这一屏最容易看错的
+           那个数（均温）在下面那张环上、以及那一块的标题里都还标着是什么。
+           `LiveView.test.ts` 里断「都不进平均」的那一条**照样绿** ——
+           `<details>` 收起来，内容仍然在 DOM 里。 -->
+      <p class="note">
+        均温只算拱形以内、z 不高于 {{ zLimitText }} m 的那些格子。拱外没有定义，
+        再往上那一条是按外推补出来的，都不进平均。
+      </p>
+      <!-- ⚠️ 下面两句 2026-10-16 第二回从底栏那两张卡上撤下来的。**同一个处置**
+           （降级不是删除）：底栏是全屏最高的一块，两句话压在卡片底下就是将近
+           五十像素，而这一屏的账压在「三块同屏」上。`LiveView.test.ts` 里
+           断这两句的那两条**照样绿** —— 内容在 DOM 里。 -->
+      <p class="note">
+        拱跨宽与拱顶高由后端给，是棚体的几何常量。腔内的平均温度见左边那个环。
+      </p>
+      <p class="note">
+        沿棚位每 3 m 采一片，每一片取拱形以内、实测带以内的平均。
+        它说的是「这一棚从头到尾哪儿热」，与断面图说的「这一片里哪儿热」不是一回事。
+      </p>
       <p class="note">
         数据集末 144 帧留了出（2026-07-27 12:00 起），模型只在其余 1164 帧上标定过一次。
         这里一帧一帧把它们接进时间轴。
@@ -524,9 +696,13 @@ const readout = computed(() => {
       <!-- 正在用的那一份包不是为当前这份数据标的时的那句话。**逐字来自后端**
            （`deps._BORROWED_NOTE` → 载荷的 `mismatch_note`），前端不另写一句
            —— 与页③ 同一句，同一个来源。对得上时它是空串，这一格不印。
-           ⭐ 这一档 2026-10-10 才有：在那之前「不是为这份数据标的」的模型
-           在这一屏上**根本走不进来**（闸门卡在数据集签名上），而实时模式
-           本来就是拿一份别人标好的模型去套没见过的数据。 -->
+
+           ⚠️ 2026-10-16 起这一格在页⑤ 上**恒不印**：页⑤ 的轴换成了
+           `configs/live/train.xlsx`（规格书 2026-10-16），它不是「当前数据集
+           切出来的训练段」，与包上那个逐机指纹**不可能**相同 —— 那句话对它
+           永远为真、也就零信息。后端 `LiveSource.prepare()` 已经把它抹成空串。
+           这一格留着不删：它是**载荷的形状**（同一个 `sections_payload`），
+           页③ 也用它；哪天页⑤ 的轴再变，它就自动又活了。 -->
       <p v-if="frame.data.value?.mismatch_note" class="note">
         {{ frame.data.value.mismatch_note }}
       </p>
@@ -543,6 +719,24 @@ const readout = computed(() => {
 </template>
 
 <style scoped>
+/* ── 一屏装三块（2026-10-16 用户裁定） ─────────────────────────────────
+   用户报的：「棚体三维温度场、环境参数、沿栅均温这三个模块应该都能同时
+   显现出来，而现在后两块必须下滑才能显示。」
+
+   做法是一条**竖排的弹性列**：`App.vue` 在实时那一档把中栏（`.page`）也
+   摆成 flex 列，这里接上；`.stage`（三维那一块）是**唯一**那一格会长会缩的
+   成员，其余各块按自己的内容高。
+
+   ⚠️ `.live` 必须允许 `flex-shrink`：否则它会坚持内容的自然高度，
+   `.page` 只能滚动，底下的环境参数与均温曲线就被推到首屏以外。
+   `.stage` 保持弹性，按窗口余量伸缩；画布高度上下限在 `VolumeScene.vue` 统一控制。
+
+   ⚠️ 没有 `.stage { min-height: … }`：下限写在**画布**那一层
+   （`VolumeScene.vue` 的 `.scene-wrap.stretch > .scene`），一条链只写一处。
+   在这里再写一个数，两个数迟早对不上，而屏上只是「三维的高度看着不对」。 */
+.live { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; }
+.stage { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+
 .block { margin-bottom: var(--gap-xl); }
 .row { display: flex; gap: var(--gap-s); align-items: center; }
 .head { justify-content: space-between; }
@@ -589,9 +783,39 @@ const readout = computed(() => {
 .seg button:first-child { border-radius: var(--radius) 0 0 var(--radius); }
 .seg button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
 .seg button + button { border-left: 1px solid var(--steel); }
-.seg button.on { background: var(--leaf); color: var(--paper); }
+/* 选中项是**交互态**（2026-10-12），同 `ModeSwitch.vue` 那一处。 */
+.seg button.on { background: var(--interact); color: var(--on-face); }
 .seg button:disabled { cursor: not-allowed; }
-.why { margin-top: var(--gap-l); }
+/* 2026-10-16 第二回：上边距从 `--gap-l`（28）收到 `--gap-m`（16）。
+   这一屏的每一像素都在「三块同屏」那张账上，而这一条与上面那块只差 12px
+   的呼吸 —— 收掉它看得出来才怪。 */
+.why { margin-top: var(--gap-m); }
 .why summary { font-size: var(--size-label); color: var(--ink-muted); cursor: pointer; }
 .why > p { margin-top: var(--gap-s); }
+/* 环境参数：温度环与两张几何卡片始终在同一排，收紧占用高度。 */
+.env-card { container-type: inline-size; }
+.env-head { display: flex; align-items: center; gap: var(--gap-s); margin-bottom: var(--gap-m); }
+.env-head :deep(.icon) { --icon-size: 22px; color: var(--edge); }
+.env-head .note { margin-left: -4px; }
+.env { display: grid; grid-template-columns: 88px repeat(2, minmax(0, 1fr)); align-items: stretch; gap: var(--gap-s); }
+.geom-card {
+  min-width: 0; min-height: 72px; padding: var(--gap-s) 6px;
+  display: flex; flex-direction: column; justify-content: center; gap: var(--gap-s);
+  border: 1px solid var(--steel); border-radius: var(--radius);
+}
+.geom-head { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.geom-head :deep(.icon) { --icon-size: 18px; flex: none; color: var(--interact); }
+.g-label { font-size: var(--size-label); color: var(--ink-muted); }
+.g-value { font-size: var(--size-h3); font-weight: var(--w-strong); white-space: nowrap; }
+@container (max-width: 420px) {
+  .env { grid-template-columns: 88px repeat(2, minmax(0, 1fr)); gap: 4px; }
+  .geom-card { padding: var(--gap-s) 4px; }
+  .geom-head { gap: 2px; }
+  .geom-head :deep(.icon) { --icon-size: 16px; }
+  .g-label { font-size: var(--size-note); }
+  .g-value { font-size: var(--size-label); }
+}
+/* 右栏那张卡：它是 `<Teleport>` 投出去的那个落点里的一块，落点的 `gap`
+   管卡片间距，这里只管卡片内部两组之间的间距。 */
+.side-card { display: flex; flex-direction: column; }
 </style>

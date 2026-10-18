@@ -379,7 +379,8 @@ const failure = computed(() =>
 .seg button:first-child { border-radius: var(--radius) 0 0 var(--radius); }
 .seg button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
 .seg button + button { border-left: 1px solid var(--steel); }
-.seg button.on { background: var(--leaf); color: var(--paper); }
+/* 选中项是**交互态**（2026-10-12），同 `ModeSwitch.vue` 那一处。 */
+.seg button.on { background: var(--interact); color: var(--on-face); }
 .seg button:disabled { cursor: not-allowed; }
 .why { margin-top: var(--gap-l); }
 .why summary { font-size: var(--size-label); color: var(--ink-muted); cursor: pointer; }

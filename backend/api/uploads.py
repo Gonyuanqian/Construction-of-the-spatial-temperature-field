@@ -181,7 +181,7 @@ def accept(data: bytes, name: str, *, dest_dir: pathlib.Path) -> Uploaded:
 
 
 def _load_or_reject(path: pathlib.Path):
-    """用库的 loader 加载并校验切点两侧都非空。不通过就抛 `Rejected(400, ...)`。"""
+    """用库的 loader 加载并校验**训练段非空**。不通过就抛 `Rejected(400, ...)`。"""
     try:
         # 走 `deps.probe_dataset`（而不是直接 import `load_dataset`）：
         # 本仓的源码守卫规定 load_dataset 只许出现在 `api/deps.py`。
@@ -196,12 +196,14 @@ def _load_or_reject(path: pathlib.Path):
     if len(ts) == 0:
         raise Rejected(400, _NO_TIMES)
     hold = split_holdout(ds)
-    if len(hold.train.wide) == 0 or len(hold.live) == 0:
-        # 两侧空掉的表现**都不在导入这一步**：训练段空了，页②③ 会在管线深处炸；
-        # 留出段空了，实时模式没有帧源。那时报出来的错离现场很远，所以卡在这里。
+    # ⚠️ 2026-10-16 放开：只查**训练段**非空（规格 R6）。裁定①之后用户上传的
+    # 就是 `configs/live/train.xlsx`，而它的留出段**按定义**是空的 —— 还按
+    # 「两侧都必须非空」拦，正常演示的第一步就会被拒。
+    # 拦住的还在：整份落在切点之后的文件训练段为空，模型没有可学的部分。
+    if len(hold.train.wide) == 0:
         raise Rejected(
             400,
-            f"这份数据集是 {ts.iloc[0]} 到 {ts.iloc[-1]}，跨不到留出切点 "
-            f"{HOLDOUT_CUTOFF}：切完「训练段」与「留出段」必须都非空。",
+            f"这份数据集是 {ts.iloc[0]} 到 {ts.iloc[-1]}，整份都在留出切点 "
+            f"{HOLDOUT_CUTOFF} 之后：训练段是空的，模型没有可学的部分。",
         )
     return ds

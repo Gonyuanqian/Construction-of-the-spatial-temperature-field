@@ -4,6 +4,7 @@ import { createMemoryHistory } from 'vue-router'
 
 import NavRail from './NavRail.vue'
 import { createAppRouter } from '../router'
+import { LIVE_NAV_ITEMS } from '../design/copy'
 
 /**
  * `#rail-extra` 是页③ 的 `Teleport` 落点。它是一个**空容器** ——
@@ -53,5 +54,59 @@ describe('侧栏给页面留的落点', () => {
     for (const label of ['数据导入与检查', '模型训练', '空间温度场的构建', '影响分析']) {
       expect(w.text()).toContain(label)
     }
+  })
+})
+
+/**
+ * 页⑤ 精修（2026-10-16 用户第二部分要求）：实时那一屏的左栏不是卡片列，
+ * 是**连续的菜单行**（图标在左、文字在右，选中项左缘一道青条）。
+ *
+ * ⚠️ 这里断的仍只是**结构**（图标在不在、哪一项是链接、`live` 挂上没有）。
+ * 行高、那条青线、悬停过渡都是样式，jsdom 不做样式计算、看不见它们 ——
+ * 由 `design/liveShell.test.ts` 那份读源码的守卫钉着。
+ */
+describe('实时那一屏的左栏（精修）', () => {
+  beforeEach(() => { vi.restoreAllMocks(); stubFetch() })
+
+  /** 在 `/live` 上挂一枚「实时那一屏」形态的左栏。 */
+  async function mountLiveRail() {
+    const router = createAppRouter(createMemoryHistory())
+    await router.push('/live')
+    await router.isReady()
+    return mount(NavRail, {
+      props: { items: LIVE_NAV_ITEMS, variant: 'live' as const },
+      global: { plugins: [router] },
+    })
+  }
+
+  it('每一项左边都有一枚图标', async () => {
+    const w = await mountLiveRail()
+    const icons = w.findAll('.item .ico')
+    expect(icons, '四项该有四枚图标').toHaveLength(LIVE_NAV_ITEMS.length)
+    // 颜色走 `currentColor`：默认 / 悬停 / 选中三态的亮暗由**文字颜色**带着走。
+    for (const el of icons) expect(el.attributes('stroke')).toBe('currentColor')
+  })
+
+  it('只有本屏那一项是链接，而且它带着选中态', async () => {
+    const w = await mountLiveRail()
+    const links = w.findAll('a.item')
+    expect(links, '实时那一屏上应当恰好有一项可选').toHaveLength(1)
+    expect(links[0]!.attributes('href')).toBe('/live')
+    expect(links[0]!.classes(), '本屏那一项没带上选中态').toContain('router-link-active')
+  })
+
+  it('`live` 这个类只挂在这一档上', async () => {
+    // 卡片那一套挂在 `.rail:not(.live)` 上（2026-10-06 的裁定只对训练侧那四页
+    // 继续成立），所以这个类挂错了，训练侧就跟着变成菜单行。
+    const live = await mountLiveRail()
+    expect(live.get('nav').classes(), '实时那一屏的左栏没挂 live').toContain('live')
+
+    const plain = await mountRail()
+    expect(plain.get('nav').classes(), '训练侧的左栏也挂上了 live').not.toContain('live')
+  })
+
+  it('训练侧那四项一枚图标都没有 —— 那是四页一起改', async () => {
+    const w = await mountRail()
+    expect(w.findAll('.ico')).toHaveLength(0)
   })
 })

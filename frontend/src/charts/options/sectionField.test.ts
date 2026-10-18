@@ -123,12 +123,12 @@ describe('三格共享一个色标（Review Focus 4）', () => {
     expect(vm.outOfRange.opacity).toBeLessThan(0.5)
   })
 
-  it('色标的颜色来自唯一来源，且是正向 cividis', () => {
+  it('色标的颜色来自唯一来源，且是正向 turbo', () => {
     const o = opt(makePayload())
     const colors: string[] = o.visualMap.inRange.color
-    expect(colors).toHaveLength(7)
-    expect(colors[0]).toBe('#00224E')    // 低温 = 暗端
-    expect(colors[6]).toBe('#FFE945')    // 高温 = 亮端
+    expect(colors).toHaveLength(9)
+    expect(colors[0]).toBe('#30123B')    // 低温 = 暗端
+    expect(colors[8]).toBe('#7A0403')    // 高温 = 亮端
   })
 })
 

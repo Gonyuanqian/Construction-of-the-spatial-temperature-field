@@ -127,8 +127,8 @@ describe('两张温度图共用一个色标，差异图另用一个', () => {
     const o = opt(makePayload())
     const w = o.visualMap[0]
     expect(w.seriesIndex).toEqual([0, 4])
-    expect(w.inRange.color).toHaveLength(7)
-    expect(w.inRange.color[0]).toBe('#00224E')
+    expect(w.inRange.color).toHaveLength(9)
+    expect(w.inRange.color[0]).toBe('#30123B')
   })
 
   it('前两张图共用同一对 vmin/vmax', () => {

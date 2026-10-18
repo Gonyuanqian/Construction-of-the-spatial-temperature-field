@@ -61,11 +61,49 @@ async function mountApp() {
   return mount(App, { global: { plugins: [router] } })
 }
 
+// ⚠️ **一个测试文件只许调一次**（调第二次当场抛
+// `enableAutoUnmount cannot be called more than once` —— 2026-10-12 实跑撞上）。
+// 它设的是**整份文件**的钩子，所以抬到这里一次，下面两个 `describe` 一起用。
+enableAutoUnmount(afterEach)
+
 describe('应用外壳', () => {
   beforeEach(() => {
     installTokens()
     vi.restoreAllMocks()
   })
+
+  // ⚠️ 挂到 `/live` 会把 `theme-live` 加到 `documentElement` 上（`App.vue` 的
+  // `watchEffect`），**卸载时不会摘** —— 漏了它，后面每一条用例都跑在深色档上，
+  // 而 CSS 在 jsdom 里不生效、令牌又是手写的，所以**一条都不会红**。
+  // （`enableAutoUnmount` 那条在文件顶上，整份文件只调一次。）
+  afterEach(() => { document.documentElement.classList.remove('theme-live') })
+
+  /**
+   * 挂到某一路径上。⚠️ **必须挂在 `document.body` 上**：页③ 有一个
+   * `<Teleport to="#rail-extra">` 落点，页⑤ 新开的那个 `#shell-side` 同理 ——
+   * 字符串选择器的落点是在 **document** 上用 `querySelector` 找的，游离挂载时
+   * 找不到，Teleport 子树一个都不挂载（不报错）。
+   * 载荷走 `PAGE_PAYLOADS` 那一套真形状（这一个文件头已经在用它）：
+   * 这一组要断的正是「页⑤ 真的挂起来之后，外壳给右栏留了落点没有」。
+   *
+   * ⚠️ 与已有的 `mountApp()` 并列，**不去改它**：那个只会挂 `/`，改它会把
+   * 上面七八条既有用例一起挪到 `/live` 上去。
+   */
+  async function mountAt(path: string) {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const body = matchPayload(String(url))
+      if (body === undefined) {
+        return new Response('{"detail":"外壳测试不打这个接口"}', { status: 404 })
+      }
+      return new Response(JSON.stringify(body), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+    const router = createAppRouter(createMemoryHistory())
+    await router.push(path)
+    await router.isReady()
+    return mount(App, { attachTo: document.body, global: { plugins: [router] } })
+  }
 
   it('标题常驻，且用的是 copy.ts 那一个名字', async () => {
     stubFetch()
@@ -130,9 +168,16 @@ describe('应用外壳', () => {
     // 让断言带着理由说话」。
     const rail = w.find('nav[aria-label="页面"]')
     expect(rail.exists(), '左栏没了').toBe(true)
-    expect(rail.findAll('a'), '占位项不该是链接').toEqual([])
+    // ⚠️ 2026-10-16 精修：「首页」与「实时监测」合并成一项，而这一项**是开着的**
+    // （指向本屏），所以这里由「一个 <a> 都没有」改成「恰好一个，且指向 /live」。
+    // 后三项仍是占位，一个都不许变成链接。
+    expect(rail.findAll('a').map((a) => a.attributes('href')), '占位项不该是链接')
+      .toEqual(['/live'])
     for (const item of LIVE_NAV_ITEMS) {
       expect(rail.text(), `${item.label} 不在`).toContain(item.label)
+    }
+    // 理由只有**未开放**的项才有（已开放项的 `why` 按 `NAV_ITEMS` 的老规矩是空串）。
+    for (const item of LIVE_NAV_ITEMS.filter((i) => !i.enabled)) {
       expect(rail.text(), `${item.label} 的理由看不见`).toContain(item.why)
     }
     // 反面：训练模式那四项**一项都不该出现在这一列**。少了这一条，
@@ -174,15 +219,49 @@ describe('应用外壳', () => {
       expect(document.documentElement.classList.contains('theme-live')).toBe(false)
     })
   })
+
+  it('实时那一屏有三栏，且右栏是一个真的落点', async () => {
+    // ⚠️ 落点必须由**这一层**渲染（`Vue` 的字符串落点是在 `document` 上找的，
+    // 而页⑤ 的内容是 `<Teleport to="#shell-side">` 投进来的）。
+    // 少了它：右栏整块消失，**不报错**。
+    const w = await mountAt('/live')
+    await flushPromises()
+    const aside = w.find('#shell-side')
+    expect(aside.exists(), '外壳没有给右栏留落点').toBe(true)
+    // 三栏是一列栅格，不是 flex 里塞三块 —— 后者的第三列会跟着内容漂。
+    expect(aside.classes()).toContain('shell-side')
+  })
+
+  it('训练侧没有右栏那一列', async () => {
+    // 反面：只在 /live 上加一列是本轮的全部要求；页①②③④ 的 DOM 逐字不变。
+    const w = await mountAt('/data')
+    await flushPromises()
+    expect(w.find('#shell-side').exists(), '训练侧也多了一列').toBe(false)
+    expect(w.find('.body').classes(), '训练侧的外壳被改成三栏了').not.toContain('live')
+  })
+
+  it('实时模式开关放在左侧导航上方，训练侧入口保持原位', async () => {
+    const w = await mountAt('/live')
+    await flushPromises()
+    expect(w.find('.live-nav-stack nav[aria-label="模式"]').exists(),
+      '实时模式开关没有放到左侧导航上方').toBe(true)
+    expect(w.find('.page nav[aria-label="模式"]').exists(),
+      '实时模式开关仍占着中央画布的高度').toBe(false)
+    const train = await mountAt('/data')
+    await flushPromises()
+    expect(train.find('.page nav[aria-label="模式"]').exists(),
+      '训练侧的模式开关也被挪进去了').toBe(false)
+  })
 })
 
 
 describe('数据集闸门与重挂载', () => {
+  // `enableAutoUnmount(afterEach)` 2026-10-12 抬到文件顶上了 —— 一个文件只许调一次。
   // 外壳要挂到 document.body 上：页③ 有一个 `<Teleport to="#rail-extra">` 落点，
   // 而字符串选择器的落点是在 **document** 上用 `querySelector` 找的 ——
   // 游离挂载时找不到落点，Teleport 子树一个都不挂载，下一次重渲染就对着
   // 从未挂载的旧 vnode 调 `patchElement` → 崩。与 routes.smoke.test.ts 同一个理由。
-  enableAutoUnmount(afterEach)
+  // （挂载的收尾由文件顶上那一句 `enableAutoUnmount` 管。）
 
   const JSON_HEAD = { 'Content-Type': 'application/json' }
 
@@ -237,13 +316,32 @@ describe('数据集闸门与重挂载', () => {
     useDataset().reset()
   })
 
-  for (const path of ['/train', '/field', '/live']) {
+  for (const path of ['/train', '/field']) {
     it(`空态下 ${path} 说的是「先导入数据集」`, async () => {
       stubCounting(409)
       const w = await mountAt(path)
       expect(w.text()).toContain('先导入数据集')
     })
   }
+
+  it('空态下 /live 照常渲染页⑤ —— 它有自己的数据源', async () => {
+    // 规格 2026-10-16 §6.1（R7）：`configs/live/` **不算**「有数据集」。
+    // 把实时源也算进去的话，页②③④ 会跟着亮起来，而那三页拿的是**另一份**
+    // 数据 —— 屏上会同时存在两套「当前数据」，谁也说不清哪套是哪套。
+    //
+    // ⚠️ 代价写在明面上：重启后打开页⑤ 能用，页① 仍写「先导入数据集」。
+    // 两个页面各说各话是**有意**的 —— 它们今天确实各用各的数据源。
+    stubCounting(409)
+    const w = await mountAt('/live')
+    // ⚠️ **不能只等 `flushPromises()`**：`/live` 是懒加载的，那一块 chunk 在
+    // **宏任务**边界才解析完（同文件第 152 行那段注释）。而「等不到它」与
+    // 「闸门放行了」在 `not.toContain` 下长得一模一样 —— 所以要**正面**断言
+    // 页⑤ 自己的东西出来了，不能让这条用例靠「什么都没渲染」变绿。
+    await vi.waitFor(() => {
+      expect(w.text()).toContain('棚体三维温度场')
+    })
+    expect(w.text()).not.toContain('先导入数据集')
+  })
 
   it('空态下页① 照常渲染它自己的内容（那一页就是入口）', async () => {
     stubCounting(409)

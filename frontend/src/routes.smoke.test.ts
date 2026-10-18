@@ -151,7 +151,11 @@ describe('路由冒烟', () => {
     // 改回去（默认三维是裁定，不是测试的活）。
     await w.get('button[data-view="section"]').trigger('click')
     await flushPromises()
-    expect(w.text(), '切到断面后帧那一块还是没渲染出来').toContain('棚顶气象')
+    // ⚠️ 2026-10-12：「棚顶气象」撤走了（规格书 §三 D7，用户裁定「照参考图换掉」），
+    // 那条断言从此永远红。换上的钩子必须**这一轮之后仍然在屏上**，
+    // 而且要只属于断面那一支 —— 换成「环境参数」的话它在三维档上也有，
+    // 这一条就再也证明不了「帧那一块渲染出来了」。
+    expect(w.text(), '切到断面后帧那一块还是没渲染出来').toContain('断面温度场')
     assertCleanText(w.text(), '/live（断面）')
   })
 

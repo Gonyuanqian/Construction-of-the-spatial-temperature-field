@@ -79,6 +79,11 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
       '--size-h3', '--size-chart-axis', '--size-chart-title',
       // 残差图的柱子色（页②，2026-10-08 走查时从 `--steel` 换过来的）。
       '--bar',
+      // 页⑤ 仪表盘重做（2026-10-12）。登记的用处不是「存在」，是**被删掉会红**：
+      // 浅色那一档全部取等值，页①②③④ 一个像素不动。
+      '--header', '--on-face', '--face-dim', '--interact', '--card-2', '--ok',
+      // 版式那两个（同一轮）。标题条高度与右栏宽度只在 /live 上离开默认值。
+      '--titlebar-h', '--side-w',
     ]
     const missing = need.filter((t) => !css.includes(`${t}:`))
     expect(missing, `tokens.css 少了这些令牌：${missing.join('、')}`).toEqual([])
@@ -128,7 +133,10 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
     const base = readFileSync(join(SRC, 'design', 'base.css'), 'utf8')
     const focus = base.match(/:focus-visible\s*\{[^}]*\}/)?.[0] ?? ''
     expect(focus, 'base.css 里没有 :focus-visible 规则').not.toBe('')
-    expect(focus).toContain('var(--leaf)')
+    // ⚠️ 2026-10-12：焦点环从主色改到**交互色**（`base.css` 那一条）。
+    // 这条守卫守的是「被继承的那条还在、没被组件盖掉」，所以它跟着换算 —
+    // 不换的话它会指着 `base.css` 里一个已经不存在的值，从此永远红。
+    expect(focus).toContain('var(--interact)')
   })
 
   it('一排指标卡在窄屏上换行，不被压窄也不撑出横向滚动', () => {
@@ -202,13 +210,17 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
     expect(hexes, `palette.ts 不许重打色值：${hexes.join('、')}`).toEqual([])
   })
 
-  it('温度色标是正向 cividis，不是 cividis_r', () => {
+  it('温度色标是正向 turbo，不是它的反向', () => {
     const css = readFileSync(join(SRC, 'design', 'tokens.css'), 'utf8')
-    expect(css).toMatch(/--temp-scale:\s*cividis\s*;/)
+    expect(css).toMatch(/--temp-scale:\s*turbo\s*;/)
     // 全仓不许出现反向色标的名字 —— spec §8.1 记着这个坑：
     // 用反了的话图会整张读反，而屏上不会报任何错。
-    const bad = [...VUE, ...TS].filter((p) =>
-      readFileSync(p, 'utf8').includes('cividis_r'))
+    // ⚠️ 两个反向名一起扫：换 turbo 只是换了哪一条色标，
+    // 「反向」这件事本身照旧不该在仓里出现。
+    const bad = [...VUE, ...TS].filter((p) => {
+      const t = readFileSync(p, 'utf8')
+      return t.includes('cividis_r') || t.includes('turbo_r')
+    })
     expect(bad.map((p) => p.slice(SRC.length))).toEqual([])
   })
 
@@ -220,8 +232,11 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
     // charts/scale.ts 例外但**定点**：文件里的十六进制必须与两条色标的采样点
     // 集合**相等** —— 多一个（夹带了别的颜色）红，少一个（被删了）也红。
     // 早先这个例外挂在 options/diurnalResidual.ts 上，色标搬到 scale.ts 之后
-    // 必须一起搬：守卫指着一个不再含色值的文件，等于那七个值从此没人守。
-    const TEMP_STOPS = ['#00224E', '#12456F', '#4C6C7F', '#7C7B78', '#BE8353', '#EB9A31', '#FFE945']
+    // 必须一起搬：守卫指着一个不再含色值的文件，等于那九个值从此没人守。
+    // ⚠️ 2026-10-12 换 turbo 时**一起改**：漏改的话 `charts/scale.ts` 里那九个
+    // 新值会全部被判成「多出的色值」，而这个文件正好也在同一次提交里。
+    const TEMP_STOPS = ['#30123B', '#4675ED', '#1BCFD4', '#61FC6C', '#D1E834',
+      '#F6A12A', '#F04D02', '#B10A01', '#7A0403']
     const DELTA_STOPS = ['#053061', '#2166AC', '#4393C3', '#92C5DE', '#D1E5F0', '#F7F7F7',
       '#FDDBC7', '#F4A582', '#D6604D', '#B2182B', '#67001F']
     const TOKENS = 'design/tokens.css'
@@ -245,24 +260,30 @@ describe('设计令牌是颜色与字体的唯一来源', () => {
     expect(hits).toEqual([])
   })
 
-  it('阴影只有一档，且必须写成 var(--shadow)', () => {
+  it('阴影只有一份闭名单，且必须写成令牌', () => {
     // spec §四 的三条判据之一：阴影只有一档。SaaS 套装的招牌正是
     // 「用阴影的深浅伪造层级」—— 所以这里不是禁阴影，是禁**第二种**阴影。
     // 与色值那条守卫同一个手法：钉在最便宜的地方（源码文本）。
+    //
+    // ⚠️ 2026-10-16 页⑤ 精修把这一条**从「只许 var(--shadow)」放宽成一份名单**。
+    // 这一轮要的是「发光边框」：一条 1px 高的分隔线要 8px 半径的光，一整行
+    // 浮起来的选中项要 16px —— 一个令牌写不出这两个。放宽的是**种类**，
+    // 不是纪律：名单是闭的，随手写一个 `0 0 12px rgba(...)` 照样红。
+    const SHADOWS = ['var(--shadow)', 'var(--glow-edge)', 'var(--glow-lift)']
     const hits: string[] = []
     for (const p of ALL_SRC.filter((x) => !x.endsWith('.test.ts'))) {
       const text = readFileSync(p, 'utf8')
       for (const m of text.matchAll(/box-shadow\s*:\s*([^;]+);/g)) {
         // `?? ''`：`tsconfig` 开着 noUncheckedIndexedAccess 时 `m[1]` 是
-        // `string | undefined`。取不到捕获组时给空串 —— 空串不等于
-        // `var(--shadow)`，于是照样被报出来，不会静默放过。
+        // `string | undefined`。取不到捕获组时给空串 —— 空串不在名单里，
+        // 于是照样被报出来，不会静默放过。
         const v = (m[1] ?? '').trim()
-        if (v !== 'var(--shadow)') {
-          hits.push(`${p.slice(SRC.length)}: box-shadow: ${v}`)
+        if (!SHADOWS.includes(v)) {
+          hits.push(`${p.slice(SRC.length)}: box-shadow: ${v}（不在这份名单里：${SHADOWS.join(' / ')}）`)
         }
       }
     }
-    expect(hits, '阴影只有一档，且只能写成 var(--shadow)：\n' + hits.join('\n'))
+    expect(hits, `阴影只有 ${SHADOWS.length} 档，且只能写成令牌：\n` + hits.join('\n'))
       .toEqual([])
   })
 })

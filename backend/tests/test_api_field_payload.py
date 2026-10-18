@@ -75,3 +75,20 @@ def _current_dataset():
     """
     from api import deps, paths
     deps.set_current_dataset(paths.dataset_path())
+
+
+def test_体网格载荷的几何两格由后端算好(client):
+    """页⑤ 右栏「环境参数」那两格几何（2026-10-12 规格书 §五）。
+
+    ⚠️ **由后端算**：本仓的硬约束是前端不做任何数值计算，所以屏上不许出现
+    `x_max - x_min` 这种减法 —— 它在两边都不会报错，只会慢慢漂开。
+
+    两个数与 `tfield.config` 的常量逐位相等，也与载荷自己报的
+    `x_min` / `x_max` 自洽（后者是同一个常量的另一处出口）。
+    """
+    from tfield import config as C
+
+    body = client.get("/api/field/volume?t_index=7").json()
+    assert body["shed_width"] == float(C.SHED_X_MAX - C.SHED_X_MIN)
+    assert body["shed_height"] == float(C.SHED_Z_MAX)
+    assert body["shed_width"] == body["x_max"] - body["x_min"]

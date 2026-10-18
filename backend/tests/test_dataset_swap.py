@@ -44,24 +44,26 @@ def _upload(client, name: str):
                        headers={"Content-Type": "application/octet-stream"})
 
 
-def test_实时源被作废(client):
-    """T4：防「那个回调没登记上」。
+def test_换数据集不再作废实时源(client):
+    """R8：实时源的输入是 `configs/live/` 两个固定文件 + 当前模型包，
+    与「当前数据集」没有任何关系 —— 所以换数据集**不该**把它打回 idle。
 
-    ⚠️ **不调 `prepare()`**：它真的要 fit 一次管线，几十秒。这一条测的是
-    「登记生效了没有」，不是 prepare 的机制 —— 那由 `test_api_live.py` 覆盖
-    （那里真的 prepare，并断言 `n_times == 1164`）。把一个「已经准备好」的
-    实时源**直接装出来**，这条就变成一次瞬间的、确定的断言。
+    ⚠️ 今天这条会红：`api.live` 在 import 时把自己登记进了 `_INVALIDATORS`，
+    于是演示到一半有人在页① 顺手导一份数据集，页⑤ 当场被打回 idle，
+    而那次导入对页⑤ 而言什么都没改变。
+
+    ⚠️ 不碰 HTTP：`/api/live/status` 要读帧数，那就要求 `configs/live/` 在。
+    这条测的是「登记表里有没有它」，装一个「已经准备好」的源就够。
     """
     src = live.get_live_source()
-    src.pipeline = object()                      # 装成「已经准备好」
-    assert client.get("/api/live/status").json()["state"] == "ready"
+    src.pipeline = object()
+    assert src.state == "ready"
 
     r = _upload(client, "换一份.xlsx")
     assert r.status_code == 200, r.text
 
-    # 这里是**唯一**一处「作废」会让用户看见的地方（规格书 §六）。
-    assert live.get_live_source() is not src
-    assert client.get("/api/live/status").json()["state"] == "idle"
+    assert live.get_live_source() is src, "实时源被换数据集顺手作废了"
+    assert src.state == "ready", "实时源被打回 idle 了"
 
 
 def test_四层缓存全清(client):
@@ -108,26 +110,21 @@ def test_登记口是幂等的_重复登记不会叫两次():
         deps._INVALIDATORS[:] = saved
 
 
-def test_live_登记过了():
-    """T4 的**根**：`api.live` 被 import 时确实登记了自己。
+def test_live_不再登记了():
+    """R8：改造后实时源与「当前数据集」脱钩，不该再挂在这张作废表上。
 
-    没有这一条，上面那条 `test_实时源被作废` 也可能因为别的路径变绿
-    （比如 `reset_live_source` 恰好被别处调了），而登记这条路其实断着。
+    ⚠️ 反过来断言。留着登记不是「多清一次」那么轻：它会带来一个**假的**
+    副作用（见上面那条用例）。
     """
-    assert live.reset_live_source in deps._INVALIDATORS
+    assert live.reset_live_source not in deps._INVALIDATORS
 
 
-def test_启动路径上就会登记_不靠谁记得_import():
-    """⚠️ 上面那两条**证明不了**这件事：本文件第 23 行就写着 `from api import live`，
-    所以登记表非空是**这个测试文件自己**造成的。
+def test_只_import_生产入口也不登记实时源():
+    """上面那条只证明了「本进程的表里没有它」，证明不了**生产进程**里也没有。
 
-    真正要成立的是：**只 import 生产入口**（`api.main`，也就是 uvicorn 走的那个）
-    时登记也发生。若哪天 `api/routes/live.py` 改成从别处拿实时源（不再 import
-    `api.live`），上面两条照旧全绿，而生产的进程里**登记表永远是空的** ——
-    「换数据集忘了清实时源」原样复活，一条测试都不红。
-
-    所以用子进程：一个新的解释器，除了 `api.main` 什么都不 import。
-    这与 `test_api.py::test_不靠_pytest_的_pythonpath_也能_import_api` 同一个套路。
+    ⚠️ 这个文件顶上就 `from api import deps, live, paths` —— 表里有什么，
+    有一部分是**这个测试文件自己**造成的。子进程里除了 `api.main`（uvicorn
+    走的那个入口）什么都不 import，那才是用户机器上跑着的那份进程。
     """
     import os
     import subprocess
@@ -143,4 +140,4 @@ def test_启动路径上就会登记_不靠谁记得_import():
                        capture_output=True, text=True, encoding="utf-8",
                        errors="replace", env=env)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert r.stdout.strip().endswith("True"), r.stdout + r.stderr
+    assert r.stdout.strip().endswith("False"), r.stdout + r.stderr

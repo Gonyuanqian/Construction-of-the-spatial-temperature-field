@@ -570,6 +570,18 @@ export interface VolumePayload {
   x_max: number
   z_max: number
   max_measured_z: number
+  /**
+   * 拱跨宽 / m 与拱顶高 / m。**后端算好的**
+   * （`backend/api/routes/field.py::volume_payload` 里的
+   * `C.SHED_X_MAX - C.SHED_X_MIN` 与 `C.SHED_Z_MAX`）——
+   * 本仓「前端不做任何数值计算」那条约束就是冲这个来的，
+   * 所以屏上不许写成 `x_max - x_min`。
+   *
+   * ⚠️ **不叫「棚体长度」**：那是沿棚长（y）的走廊跨度（本数据集里 0 至 18 m
+   * 之间排着三座棚），不是一座棚有多长。
+   */
+  shed_width: number
+  shed_height: number
   /** 整卷**共用**的色标范围，与页③ 的切面图同一个口径。前端不许各算各的。 */
   vmin: number
   vmax: number

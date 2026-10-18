@@ -21,6 +21,15 @@ API_PORT = 8503
 #: 否则每条上传用例都会往真的 `configs/` 里写东西。
 UPLOADS = CONFIGS / "uploads"
 
+#: 实时模式**自己的**数据源（规格书 2026-10-16 §5.1）。由
+#: `scripts/make_live_source.py` 一次性切出来，**不进仓库**（与 `UPLOADS` 同待遇）。
+#: 与 `UPLOADS` 同一个理由做成模块级常量：测试要能把它换到 `tmp_path` 上。
+LIVE_DIR = CONFIGS / "live"
+#: 拟合轴：切点之前那 1164 行。管线要一条 1164 个时刻的轴才接得上实时帧。
+LIVE_TRAIN = LIVE_DIR / "train.xlsx"
+#: 帧源：切点及以后那 144 行。
+LIVE_FRAMES = LIVE_DIR / "live.xlsx"
+
 
 def dataset_path() -> pathlib.Path:
     """本项目的数据集。

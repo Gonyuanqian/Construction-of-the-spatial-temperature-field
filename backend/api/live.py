@@ -1,4 +1,4 @@
-"""实时模式的数据源：留出段 + 它自己的那份管线。
+"""实时模式的数据源：`configs/live/live.xlsx` 那 144 帧 + 它自己的那份管线。
 
 **为什么是模块级单例**：与 `deps` 的两个缓存同形（`_CACHE` / `_PIPELINES` 加
 `reset_cache()`）。测试要能像 `monkeypatch deps.get_pipeline` 那样把整条路径
@@ -25,7 +25,6 @@ import pandas as pd
 
 from tfield import config as C
 from tfield.calibration import groups_signature
-from tfield.data.loader import HOLDOUT_CUTOFF
 
 from . import deps
 
@@ -40,9 +39,8 @@ _CURSOR_EPS = 1e-6
 
 
 class LiveSource:
-    def __init__(self, *, cutoff=HOLDOUT_CUTOFF, clock: Callable[[], float] = time.time,
+    def __init__(self, *, clock: Callable[[], float] = time.time,
                  builder=None) -> None:
-        self.cutoff = pd.Timestamp(cutoff)
         self._clock = clock
         self._builder = builder or deps._build_pipeline
         self._frames: pd.DataFrame | None = None
@@ -57,7 +55,9 @@ class LiveSource:
     # ── 留出段 ──
     def frames(self) -> pd.DataFrame:
         if self._frames is None:
-            self._frames = deps.get_live_frames(cutoff=self.cutoff)
+            #: 2026-10-16 起读页⑤ **自己的**那份（`configs/live/live.xlsx`），
+            #: 不再是「当前数据集切出来的留出段」。
+            self._frames = deps.live_playback_dataset().wide
         return self._frames
 
     @property
@@ -102,22 +102,29 @@ class LiveSource:
         （没有线程、没有「等它好」的轮询）。
 
         ⚠️ 取哪一份模型走 `deps.current_bundle()` —— 与页③ 同一条判定。
-        两页用的是同一个训练段（都是那 1164 行），所以要么都能用要么都
-        不能用；各判一次就会漂成「页③ 有场、页⑤ 说没模型」。
-
-        ⚠️ 因此 `self.cutoff` 必须就是 `HOLDOUT_CUTOFF`：`current_bundle()`
-        比的是**默认切点**那个训练段的签名，换一个切点两边的签名就不同，
-        库里的模型会被判成「对不上」而悄悄退回未标定的兜底参数 ——
-        屏上照样画得出场，只是参数不是标定出来的那一套。
-        （现在没有任何一处传过别的切点，这是留给将来的话。）
+        拟合轴是 `configs/live/train.xlsx`（切点之前那 1164 行），与页③ 的
+        训练段**行数相同、测点字典逐字相同**，所以 `groups_signature` 相同 →
+        `compatible` 相同；对不上的只剩数据集那一轴（`borrowed`），而那一个
+        只是标签、不是闸门。**那句标签在页⑤ 上要抹掉**（理由见下面那几行）。
         """
         if self.pipeline is not None:
             return 0.0
         t0 = self._clock()
-        ds = deps.get_train_dataset(cutoff=self.cutoff)
+        # 拟合轴是**切点之前那 1164 行**那份文件，整份读，不再切。
+        ds = deps.live_train_dataset()
         groups = tuple(C.DEFAULT_FEATURE_GROUPS)
-        bundle = deps.current_bundle(groups).bundle
+        # ⚠️ 把 `ds` 传进去：页⑤ 用的不是「当前数据集」切出来的训练段，而
+        # `current_bundle()` 的默认轴是后者。
+        bundle = deps.current_bundle(groups, ds=ds).bundle
         self.pipeline = self._builder(ds, groups, bundle)
+        # ⚠️ 「借来的」那句话在页⑤ 上**永远是亮的**，所以它在页⑤ 上是零信息：
+        # `deps._borrowed()` 比的是包的 `dataset_sig` 与**当前数据集**的指纹，而
+        # 页⑤ 没有「当前数据集」—— 它的轴是 `configs/live/train.xlsx`，一个和
+        # 交付包不在同一台机器、同一次导出里产生的文件，指纹逐机、逐次都不同。
+        # 那两句话说的其实是同一批 1164 行，标成「不是用这份数据标的」是错的。
+        # 规格书 §五 也写着「`borrowed` 只是标签（且页⑤ 不显示它）」。
+        # `calibrated` / `artifact_note` **不动**：它们是页⑤ 真要看的。
+        self.pipeline.mismatch_note = ""
         # 训练段长度：此刻还没有任何实时帧（`n_live == 0`），所以 `n_times` 就是它。
         self._t0 = self.pipeline.n_times
         return max(0.0, self._clock() - t0)
@@ -197,18 +204,12 @@ def get_live_source() -> LiveSource:
 
 
 def reset_live_source() -> None:
-    """丢掉实时源（连同它那份管线）。测试与「换数据集」之后用它。"""
+    """丢掉实时源（连同它那份管线）。**只给测试用。**
+
+    ⚠️ 2026-10-16 起它**不再**登记进 `deps._INVALIDATORS`：实时源的输入是
+    `configs/live/` 两个固定文件 + 当前模型包，与「当前数据集」无关。留着登记
+    会带来一个**假的**副作用 —— 演示到一半有人在页① 导一份数据集，页⑤ 当场
+    被打回 idle，而那次导入对页⑤ 什么都没改变。
+    """
     global _SOURCE
     _SOURCE = None
-
-
-#: **把自己登记进「换数据集要作废的东西」那一栏**（规格书 §三.1 第 4 条）。
-#:
-#: 这一行放在模块末尾、模块级执行 —— 也就是说 `api.live` 一被 import 就生效，
-#: 不需要任何调用点记得来调它。`api/main.py` 已经 import 了 live 路由，那反过来
-#: import 本模块，启动路径上一定发生；测试里凡是直接 import `api.live` 的也一定发生。
-#:
-#: *为什么不写在 `deps` 里*：`live` 依赖 `deps`，反过来 import 成环。
-#: *为什么不让上传路由显式调两个函数*：那要求每个未来的调用点都记得调两次，
-#: 而那正是这个漏（`reset_live_source` 一直没有调用点）的成因。
-deps.on_dataset_change(reset_live_source)

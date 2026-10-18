@@ -15,7 +15,8 @@
  * 「开关显示哪个模式」与「现在在哪一页」不可能对不上。
  *
  * 左侧导航**每一页都在**，但内容跟着模式换：训练模式那四页是流水线那四项，
- * 实时模式那一屏是三条演示占位项（`LIVE_NAV_ITEMS`）。原先它是**收起**的，
+ * 实时模式那一屏是五条演示占位项（`LIVE_NAV_ITEMS`，2026-10-12 照参考图补成五项）。
+ * 原先它是**收起**的，
  * 2026-10-09 用户裁定改成「换项不收起」—— 用户给的那张参考图左栏是有导航的。
  *
  * 实时模式那一屏整屏走深色（见 `tokens.css` 的 `:root.theme-live`）。
@@ -51,12 +52,21 @@ onMounted(() => { void dataset.probe() })
  * 真取一次数。拿它换的是「已经导过数据集的人不会先看见一屏『先导入数据集』」。
  * 两害相权，取后者 —— 一瞬的取数没人看得见，一瞬的假空态每个人都会看见。
  */
-const gate = computed(() => dataset.state.value === 'missing' && route.path !== '/data')
+/**
+ * ⚠️ 2026-10-16：`/live` 从这道闸门里**放行**。页⑤ 从这一天起读
+ * `configs/live/` 下两份固定文件，与「当前数据集」没有关系；而 `configs/live/`
+ * 存在**不算**「有数据集」—— 算进去的话页②③④ 会在没导入时跟着亮，而那三页
+ * 拿的是另一份数据。代价：重启后页⑤ 能用、页① 仍写「先导入数据集」，
+ * 两个页面各说各话。这是**有意**的：它们确实各用各的数据源。
+ */
+const isLive = computed(() => route.path.startsWith('/live'))
+
+const gate = computed(() => dataset.state.value === 'missing'
+  && route.path !== '/data'
+  && !isLive.value)
 
 /** 训练模式最后停留的那一页。切回来还回这里 —— 演示时不用重新点一遍。 */
 const lastTrainPath = ref('/data')
-
-const isLive = computed(() => route.path.startsWith('/live'))
 
 /** 写进去就是一次跳转；`ModeSwitch` 是 `v-model`，所以走 setter。 */
 const mode = computed({
@@ -92,9 +102,22 @@ watchEffect(() => {
 
 <template>
   <TitleBar />
-  <ModeSwitch v-model="mode" />
-  <div class="body">
-    <NavRail :items="railItems" />
+  <!-- 训练模式开关保留在原位置；实时模式开关放到左侧导航上方，
+       让中央工作区获得完整高度。两个入口共用同一个路由驱动的 v-model。 -->
+  <ModeSwitch v-if="!isLive" v-model="mode" />
+  <div class="body" :class="{ live: isLive }">
+    <div v-if="isLive" class="live-nav-stack">
+      <ModeSwitch v-model="mode" />
+      <NavRail :items="railItems" variant="live" />
+    </div>
+    <NavRail v-else :items="railItems" variant="plain" />
+    <!-- ⚠️ 右栏的**落点**。位置在源码里放在 `main` **前面**：
+         字符串选择器的 Teleport 是在挂载期用 `document.querySelector` 找的，
+         落点必须在那一页的组件挂起来之前就进文档 —— 放在后面能跑通全靠
+         同一次 patch 里的次序，而那是实现细节，不是承诺。
+         它**不在 `.page` 里面**：`.page` 是滚动容器，右栏做进它里面，
+         内容一超一屏就跟着滚出去，「参数栏」就不成立了（规格书 §三 D1）。 -->
+    <aside v-if="isLive" id="shell-side" class="shell-side" />
     <main class="page">
       <RouterView v-if="!gate" :key="dataset.version.value" />
       <NoDataset v-else />
@@ -119,4 +142,56 @@ watchEffect(() => {
   overflow: hidden;
 }
 .page { flex: 1 1 auto; min-width: 0; padding-right: var(--gap-l); overflow-y: auto; }
+
+/* ── 实时那一屏的三栏（2026-10-12 用户裁定） ──────────────────────────
+   `.body.live` 把外壳从「导航 + 内容」换成三列：左 210px（`--sidebar-w`
+   在实时那一档的取值）、中自适应、右 390px（`--side-w`）。
+   ⚠️ 三块都用 `grid-area` **显式定位**，不靠自动排列：自动排列会按源码次序
+   填格，而窄屏那一档（只有两列）会把 `main` 排到第二行的第一格 ——
+   也就是塞到导航底下。显式定位与源码次序无关。
+   ⚠️ 中列写 `minmax(0, 1fr)` 而不是 `1fr`：写成 `1fr` 时格子的下限是
+   **内容宽度**，画布会先把页宽撑破，而不是自己缩（与页① 那条左右分栏同一条理由）。 */
+.body.live {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--side-w);
+  grid-template-rows: minmax(0, 1fr);
+}
+.body.live > .live-nav-stack { grid-area: 1 / 1 / 2 / 2; }
+.body.live > .page { grid-area: 1 / 2 / 2 / 3; }
+.live-nav-stack { display: flex; flex-direction: column; min-height: 0; }
+.live-nav-stack :deep(.modes) { justify-content: center; padding: var(--gap-m) 8px; }
+.live-nav-stack :deep(.rail.live) { width: auto; flex: 1 1 0; min-height: 0; }
+/* ⚠️ 2026-10-16：中栏在实时这一档还是一条**竖排的弹性列**（页⑤ 要三块同屏，
+   见 `LiveView.vue` 那两条）。`.page` 自己的 `overflow-y: auto` **原样保留**
+   —— 装得下就不滚，顶到里面各块的下限才滚。这一条与上面 `.page` 那条写在
+   两个选择器里不是重复：`.page` 是所有页共用的，这一条只管实时那一档。 */
+.body.live > .page { display: flex; flex-direction: column; }
+/* 右栏自己是一个竖排的列：里面那几张卡的间距由这里的 `gap` 说了算，
+   页⑤ 因此不必给每张卡再写一个下边距。 */
+.shell-side {
+  grid-area: 1 / 3 / 2 / 4;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-m);
+  min-width: 0;
+  overflow-y: auto;
+}
+/* 1200–1440px：右栏收窄。参考图那 390px 在 1280 的屏上是「中央只剩 680px」，
+   三维会紧得看不出棚体（规格书 §九 第一条风险）。 */
+@media (max-width: 1439px) {
+  .body.live { grid-template-columns: var(--sidebar-w) minmax(0, 1fr) 320px; }
+}
+/* < 1200px：右栏落到中央列**下方**，两栏变一栏 —— 左右不挤，也不出横向滚动条。 */
+@media (max-width: 1199px) {
+  .body.live {
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .body.live > .live-nav-stack { grid-area: 1 / 1 / 3 / 2; }
+  .body.live > .page { grid-area: 1 / 2 / 2 / 3; }
+  .shell-side {
+    grid-area: 2 / 2 / 3 / 3;
+    max-height: 42vh;
+  }
+}
 </style>

@@ -54,12 +54,16 @@ def _empty():
 #: 照样 200。把它写进这一条只会让人以为「空态下所有接口都 409」，
 #: 而前端的外壳闸门是由 `GET /api/dataset` 单独驱动的（Task 4）——
 #: arch 答得出来不影响任何一处判断。
+#:
+#: ⚠️ **`/api/live/status` 2026-10-16 起也搬出名单了**（规格书 §9.2 第 1 条）：
+#: 页⑤ 改读 `configs/live/` 自己的两份文件，与「当前数据集」无关。空态下它不是
+#: 409，是 200 —— 那一页的验收第一条断的就是这件事，在
+#: `test_api_live_source.py::test_没有当前数据集时_status_是_200`。
 _空态下应当_409 = [
     "/api/dataset",
     "/api/dataset/timeseries",
     "/api/dataset/preview",
     "/api/calibration",
-    "/api/live/status",
 ]
 
 
@@ -84,7 +88,9 @@ def test_空态与文件丢失是两种错(client):
     （它是仓里早就有的），所以只有全局 handler 兜得住。
     """
     deps.set_current_dataset(pathlib.Path("C:/并不存在的目录/没有这份数据集.xlsx"))
-    for path in ("/api/dataset", "/api/calibration", "/api/live/status"):
+    # `/api/live/status` 不在这一串里：它早就不看当前数据集了（见上面那段），
+    # 所以「当前数据集的文件不见了」对它而言是一句无关的话。
+    for path in ("/api/dataset", "/api/calibration"):
         r = client.get(path)
         assert r.status_code == 404, f"{path} 把「文件不见了」报成了 {r.status_code}"
 

@@ -506,6 +506,13 @@ def volume_payload(pipe, *, t_index: int, preset: str, monotonic: bool,
         "x_max": float(C.SHED_X_MAX),
         "z_max": float(C.SHED_Z_MAX),
         "max_measured_z": float(C.MAX_MEASURED_Z),
+        # 页⑤ 右栏「环境参数」那两格几何。**后端算好再发** —— 本仓的硬约束是
+        # 前端不做任何数值计算，屏上不许写成 `x_max - x_min`。
+        # ⚠️ 名字**不叫**「棚体长度」：那个说法指的是沿棚长（y）的跨度，而本数据集
+        #    里 `y_min/y_max` = 0/18 m 是三座棚（p1=3 / p2=9 / p3=15）之间的一段
+        #    走廊，不是一座棚有多长。拱跨宽与拱顶高才名实相符（规格书 §五.2）。
+        "shed_width": float(C.SHED_X_MAX - C.SHED_X_MIN),
+        "shed_height": float(C.SHED_Z_MAX),
         "vmin": vmin,
         "vmax": vmax,
         # 本载荷这些片**合起来**的拱内均温。与逐片的同一口径、同一个函数。

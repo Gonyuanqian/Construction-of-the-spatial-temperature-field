@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
 import { makeVolumePayload } from '../test/fixtures'
@@ -33,8 +33,13 @@ function stub(body: unknown = VOLUME) {
   return urls
 }
 
-async function mountView(tIndex = 12, clockTime = VOLUME.time) {
-  const w = mount(VolumeView, { props: { tIndex, clockTime } })
+// ⚠️ 第三个参数是 2026-10-12 加的（页⑤ 要传 `panels`）。**位置参数一个都没动** ——
+// 计划给的替换签名只有一个 `extra` 对象，那会把上面十几处 `mountView(12, '…')`
+// 全部改成读一个带默认值的对象，是同一个接口的第二种叫法，白改一圈。
+async function mountView(
+  tIndex = 12, clockTime = VOLUME.time, extra: Record<string, unknown> = {},
+) {
+  const w = mount(VolumeView, { props: { tIndex, clockTime, ...extra } })
   await flushPromises()
   return w
 }
@@ -359,13 +364,26 @@ describe('页③ 三维面板', () => {
  * 一栏里，不再是整页宽。
  */
 describe('三栏版面：左改几何、中看场、右问数', () => {
-  /** 三栏各自那一栏。取不到就当场失败 —— 免得后面拿着 `undefined` 去查东西。 */
-  function columns(w: ReturnType<typeof mount>): HTMLElement[] {
+  /**
+   * 三栏各自那一栏。**按类名取，不按位置取**（2026-10-12）。
+   *
+   * ⚠️ 为什么换成按类名：页⑤ 要的是右栏先摆「问数」，而页③ 的栏位次序写死
+   * 在 CSS 的 `grid-column` 上 —— 于是源码次序与屏上次序不再是一回事
+   * （源码 `[问数, 中栏, 几何]`，屏上 `[几何, 中栏, 问数]`）。
+   * 按位置取的话这条助手会把两边读反，而它给出的**每一条**断言照样绿。
+   * 取不到就当场失败 —— 免得后面拿着 `undefined` 去查东西。
+   */
+  function columns(w: ReturnType<typeof mount>) {
     const grid = w.find('.vol-grid')
     expect(grid.exists(), '没有三栏这一层').toBe(true)
     const cols = Array.from(grid.element.children) as HTMLElement[]
     expect(cols, '不是三栏').toHaveLength(3)
-    return cols
+    const pick = (cls: string): HTMLElement => {
+      const el = cols.find((c) => c.classList.contains(cls))
+      expect(el, `没有 ${cls} 那一栏`).toBeTruthy()
+      return el!
+    }
+    return { geom: pick('vol-geom'), stage: pick('vol-stage'), ask: pick('vol-ask') }
   }
 
   it('画布在中栏；只改几何的那块在左栏，问数的那块在右栏', async () => {
@@ -373,16 +391,16 @@ describe('三栏版面：左改几何、中看场、右问数', () => {
     const w = await mountView()
     w.findComponent({ name: 'VolumeScene' }).vm.$emit('ready', true)
     await flushPromises()
-    const [left, mid, right] = columns(w)
+    const { geom, stage, ask } = columns(w)
 
-    expect(mid.querySelector('.scene-stub'), '三维画布不在中栏').toBeTruthy()
-    expect(left.textContent).toContain('棚体示意长度')
-    expect(right.textContent).toContain('查一个坐标')
+    expect(stage.querySelector('.scene-stub'), '三维画布不在中栏').toBeTruthy()
+    expect(geom.textContent).toContain('棚体示意长度')
+    expect(ask.textContent).toContain('查一个坐标')
     // 反着再钉一遍：只写正例挡不住「三栏各装了一点」——那时候两边都含关键词，
     // 两条正例断言照样绿，而版面已经不是这个名字说的那个样子了。
-    expect(left.textContent, '问数那块跑到左边去了').not.toContain('查一个坐标')
-    expect(right.textContent, '改几何那块跑到右边去了').not.toContain('棚体示意长度')
-    expect(right.querySelector('.scene-stub'), '画布被复制到了右栏').toBeNull()
+    expect(geom.textContent, '问数那块跑到左边去了').not.toContain('查一个坐标')
+    expect(ask.textContent, '改几何那块跑到右边去了').not.toContain('棚体示意长度')
+    expect(ask.querySelector('.scene-stub'), '画布被复制到了右栏').toBeNull()
   })
 
   it('读数表也在右栏 —— 它与坐标查询是同一侧的话', async () => {
@@ -390,8 +408,8 @@ describe('三栏版面：左改几何、中看场、右问数', () => {
     const w = await mountView()
     w.findComponent({ name: 'VolumeScene' }).vm.$emit('hover', { planeIndex: 0, ix: 1, iz: 1 })
     await flushPromises()
-    const [, , right] = columns(w)
-    expect(right.querySelector('table'), '读数表不在右栏').toBeTruthy()
+    const { ask } = columns(w)
+    expect(ask.querySelector('table'), '读数表不在右栏').toBeTruthy()
   })
 
   it('三栏各是一张卡片 —— 屏上才有「三个部分」这道界限', async () => {
@@ -405,8 +423,8 @@ describe('三栏版面：左改几何、中看场、右问数', () => {
     const w = await mountView()
     w.findComponent({ name: 'VolumeScene' }).vm.$emit('ready', true)
     await flushPromises()
-    const names = ['左栏', '中栏', '右栏']
-    columns(w).forEach((col, i) => {
+    const names = ['几何与剖切', '中栏', '问数']
+    Object.values(columns(w)).forEach((col, i) => {
       expect(col.classList.contains('card'), `${names[i]}不是一张卡片`).toBe(true)
     })
   })
@@ -616,5 +634,56 @@ describe('视角按钮那一组：透传', () => {
       on.findComponent({ name: 'VolumeScene' }).props('showViewControls'),
       '属性没走到三维那一层（三处名字里有一处对不上）',
     ).toBe(true)
+  })
+})
+
+/**
+ * 2026-10-12：页⑤ 上这一块只留**中栏**，左右两栏投进外壳的右栏
+ * （`App.vue` 渲染的 `<aside id="shell-side">`）。
+ *
+ * ⚠️ **落点必须真的在文档里。** 字符串选择器的 Teleport 落点是在 `document`
+ * 上找的：找不到时 Vue **静默不挂**（不报错、也不渲染在别处），
+ * 于是右栏整块消失，而「它不该在中栏里」这一类断言照样绿。
+ */
+describe('页⑤ 那一档：只留中栏，侧栏投进外壳', () => {
+  /** 造一个落点、返回它的引用；`document.body` 上必须有它。 */
+  function provisionSide(): HTMLElement {
+    const el = document.createElement('div')
+    el.id = 'shell-side'
+    document.body.appendChild(el)
+    return el
+  }
+
+  afterEach(() => { document.getElementById('shell-side')?.remove() })
+
+  it('侧栏两块的**内容**进了外壳，中栏里一张都不留', async () => {
+    stub()
+    const side = provisionSide()
+    const w = await mountView(12, VOLUME.time, { panels: 'shell' })
+
+    expect(side.textContent, '右栏一块都没进去').toContain('查一个坐标')
+    expect(side.textContent, '几何那一块也没进去').toContain('棚体示意长度')
+
+    const cols = Array.from(w.find('.vol-grid').element.children) as HTMLElement[]
+    expect(cols, '中栏里还留着别的栏').toHaveLength(1)
+    expect(cols[0]!.classList.contains('vol-stage')).toBe(true)
+  })
+
+  it('三维视图控制那张卡也在右栏，且九枚按钮都在', async () => {
+    stub()
+    const side = provisionSide()
+    await mountView(12, VOLUME.time, { panels: 'shell' })
+    expect(side.textContent).toContain('三维视图控制')
+    expect(side.querySelectorAll('[data-view-act]')).toHaveLength(9)
+  })
+
+  it('页③ 那一档（不传 panels）落点里一个字节都没有', async () => {
+    // 反面：只断「页⑤ 的时候右栏有东西」的话，把 Teleport 写成**永远开着**
+    // 也照样绿 —— 而那样页③ 的三栏就空了。
+    stub()
+    const side = provisionSide()
+    const w = await mountView()
+    expect(side.textContent, '页③ 的侧栏被投出去了').toBe('')
+    expect(Array.from(w.find('.vol-grid').element.children)).toHaveLength(3)
   })
 })

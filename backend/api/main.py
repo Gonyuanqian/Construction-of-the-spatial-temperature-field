@@ -22,7 +22,7 @@ from starlette.types import Scope
 from tfield.calibration import TOOL_VERSION
 
 from . import deps, paths, uploads
-from .errors import NO_DATASET_DETAIL, NoDatasetError
+from .errors import LIVE_SOURCE_MISSING_DETAIL, NO_DATASET_DETAIL, NoDatasetError
 from .routes import calibration as calibration_routes
 from .routes import calibration_jobs as calibration_jobs_routes
 from .routes import dataset as dataset_routes
@@ -99,6 +99,18 @@ def _is_current_dataset(target: Any) -> bool:
     return pathlib.Path(str(target)) == pathlib.Path(current)
 
 
+def _is_live_source(target) -> bool:
+    """缺的是页⑤ 的两份数据源之一吗。
+
+    ⚠️ 取 `paths.LIVE_TRAIN` 这个**属性**，不提前绑定：测试会把它换到
+    `tmp_path` 上，而 404/409 的分岔不该因此失灵。
+    """
+    if not target:
+        return False
+    p = pathlib.Path(str(target))
+    return p in (pathlib.Path(paths.LIVE_TRAIN), pathlib.Path(paths.LIVE_FRAMES))
+
+
 def create_app() -> FastAPI:
     # version 取自 `tfield.calibration.TOOL_VERSION`，不写字面量：
     # 标定包的 `tool_version` 用的是同一个数，两处各写一份就会漂 ——
@@ -149,6 +161,11 @@ def create_app() -> FastAPI:
         # 拿不到就当作不是数据集的事，交给下面那条 500。
         target = getattr(exc, "filename", None)
         if not _is_current_dataset(target):
+            # 页⑤ 自己的两份文件：**不是**当前数据集的事，但它也不是一次
+            # 「出错了」—— 新克隆里它就是还没切出来过，是一条该跑的命令。
+            if _is_live_source(target):
+                return JSONResponse(status_code=409,
+                                    content={"detail": LIVE_SOURCE_MISSING_DETAIL})
             raise exc
         return JSONResponse(status_code=404,
                             content={"detail": f"数据集文件不见了：{target}"})

@@ -24,30 +24,28 @@ export function buildLiveMeanCurveOption(
   return {
     backgroundColor: 'transparent',
     animation: false,
-    title: {
-      text: MEAN_CURVE_TITLE,
-      left: 0,
-      top: 0,
-      textStyle: { color: p.ink, fontSize: p.chartTitle, fontWeight: 600 },
-    },
-    grid: { left: 56, right: 16, top: 40, bottom: 34 },
+    /* 标题由外层卡片承担，绘图区不要再重复画一遍；把腾出的高度还给曲线。 */
+    grid: { left: 70, right: 10, top: 8, bottom: 20 },
     xAxis: {
       type: 'value',
-      name: '棚位 / m',
-      nameTextStyle: { color: p.inkMuted, fontSize: p.chartAxis },
       axisLine: { lineStyle: { color: p.steel } },
       axisTick: { show: false },
-      axisLabel: { color: p.inkMuted, fontSize: p.chartAxis },
+      axisLabel: {
+        color: p.inkMuted, fontSize: p.chartAxis, hideOverlap: true,
+        formatter: '{value} m',
+      },
       splitLine: { show: false },
     },
     yAxis: {
       type: 'value',
-      name: '温度 / °C',
       // 不强制从 0 起：这一卷的均温可能只横跨两度，从 0 起就压平了。
       scale: true,
-      nameTextStyle: { color: p.inkMuted, fontSize: p.chartAxis },
+      splitNumber: 3,
       axisLine: { lineStyle: { color: p.steel } },
-      axisLabel: { color: p.inkMuted, fontSize: p.chartAxis },
+      axisLabel: {
+        color: p.inkMuted, fontSize: p.chartAxis, hideOverlap: true,
+        formatter: '{value} °C',
+      },
       splitLine: { lineStyle: { color: p.steel } },
     },
     tooltip: { trigger: 'axis' },
@@ -57,10 +55,18 @@ export function buildLiveMeanCurveOption(
       // `[y, mean]` 成对给：`null` 原样传下去，ECharts 会把线断开。
       data: payload.planes.map((pl) => [pl.y, pl.mean]),
       showSymbol: true,
-      symbolSize: 5,
+      symbolSize: 6,
       connectNulls: false,
-      lineStyle: { color: p.leaf, width: 1.4 },
-      itemStyle: { color: p.leaf },
+      // 2026-10-12 换样式：这一屏的底是深蓝，1.4px 的青线在上面只剩一条
+      // 若有若无的痕（参考图那条线粗得多，而且带一层同色的面积底）。
+      // 颜色仍走 `p.leaf` —— 全站「同一个数在哪儿都是同一个颜色」那条没变。
+      lineStyle: { color: p.leaf, width: 3 },
+      itemStyle: { color: p.leaf, borderColor: p.paper, borderWidth: 1 },
+      // 面积底用**同一个颜色**、靠透明度分层 —— 不用第二个色号，
+      // 免得「这条线是什么颜色」在屏上出现两种答案。
+      areaStyle: { color: p.leaf, opacity: 0.16 },
+      // 线之外不加阴影、不加发光：阴影全站只有一档且只给卡片
+      // （`guards.test.ts` 钉着），图表这一层也不破例。
     }],
   } as unknown as EChartsOption
 }
