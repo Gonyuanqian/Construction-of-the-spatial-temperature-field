@@ -40,9 +40,11 @@ _CURSOR_EPS = 1e-6
 
 class LiveSource:
     def __init__(self, *, clock: Callable[[], float] = time.time,
-                 builder=None) -> None:
+                 builder=None, train_loader=None, frames_loader=None) -> None:
         self._clock = clock
         self._builder = builder or deps._build_pipeline
+        self._train_loader = train_loader or deps.live_train_dataset
+        self._frames_loader = frames_loader or deps.live_playback_dataset
         self._frames: pd.DataFrame | None = None
         #: 训练段长度。`prepare` 里量一次 —— 实时帧接在时间轴尾部，
         #: 第 n 帧的 t_index 是 `_t0 + n`（见 `t_index_of`）。
@@ -57,7 +59,7 @@ class LiveSource:
         if self._frames is None:
             #: 2026-10-16 起读页⑤ **自己的**那份（`configs/live/live.xlsx`），
             #: 不再是「当前数据集切出来的留出段」。
-            self._frames = deps.live_playback_dataset().wide
+            self._frames = self._frames_loader().wide
         return self._frames
 
     @property
@@ -111,7 +113,7 @@ class LiveSource:
             return 0.0
         t0 = self._clock()
         # 拟合轴是**切点之前那 1164 行**那份文件，整份读，不再切。
-        ds = deps.live_train_dataset()
+        ds = self._train_loader()
         groups = tuple(C.DEFAULT_FEATURE_GROUPS)
         # ⚠️ 把 `ds` 传进去：页⑤ 用的不是「当前数据集」切出来的训练段，而
         # `current_bundle()` 的默认轴是后者。
@@ -197,10 +199,19 @@ _SOURCE: LiveSource | None = None
 
 
 def get_live_source() -> LiveSource:
+    from . import managed_live
+    managed = managed_live.current_source()
+    if managed is not None:
+        return managed
     global _SOURCE
     if _SOURCE is None:
         _SOURCE = LiveSource()
     return _SOURCE
+
+
+def guard():
+    from . import managed_live
+    return managed_live.frame_guard()
 
 
 def reset_live_source() -> None:

@@ -1,5 +1,5 @@
 /**
- * 与 FastAPI 的契约层 —— 全前端唯一 fetch 的地方。
+ * 后端接口的契约层，所有前端 fetch 集中在这里。
  *
  * 图表组件不许自己 fetch：取数集中在页面/store，图表只负责画。
  */
@@ -7,10 +7,12 @@ import type { UploadResult } from './types'
 
 export class ApiError extends Error {
   readonly status: number
-  constructor(message: string, status: number) {
+  readonly jobId?: string
+  constructor(message: string, status: number, jobId?: string) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.jobId = jobId
   }
 }
 
@@ -18,7 +20,7 @@ export class ApiError extends Error {
 //: 它一直没被抓住，因为三条上屏字形守卫各自只扫一块地方（`design/prose.test.ts`
 //: 扫四个视图的 template、`NoDataset.test.ts` 与 `routes.smoke.test.ts` 各扫
 //: 自己那一片），而这句话是在这个文件里拼好、由页面原样上屏的 —— 三块都不覆盖它。
-const OFFLINE = '连不上后端（8503）。确认 API 服务已经起来'
+const OFFLINE = '连不上后端。确认服务已经启动'
 
 /**
  * 后端的报错在 `detail` 里，原样透出来，别吞掉。
@@ -31,11 +33,13 @@ const OFFLINE = '连不上后端（8503）。确认 API 服务已经起来'
  */
 async function asError(res: Response): Promise<ApiError> {
   let detail = `HTTP ${res.status}`
+  let jobId: string | undefined
   try {
     const body = await res.json()
     if (body?.detail) detail = String(body.detail)
+    if (typeof body?.job_id === 'string') jobId = body.job_id
   } catch { /* 响应体不是 JSON，就用状态码 */ }
-  return new ApiError(detail, res.status)
+  return new ApiError(detail, res.status, jobId)
 }
 
 export async function getJson<T>(path: string): Promise<T> {
@@ -62,14 +66,15 @@ export async function getJson<T>(path: string): Promise<T> {
  * 所以判的是 `body === undefined` 而不是 `JSON.stringify(body)` 的真假 ——
  * 一个合法的 `null` 体不该被当成「没给」。
  */
-export async function postJson<T>(path: string, body?: unknown): Promise<T> {
+export async function postJson<T>(path: string, body?: unknown,
+                                  headers?: Record<string, string>): Promise<T> {
   let res: Response
   try {
     res = await fetch(path, body === undefined
-      ? { method: 'POST' }
+      ? { method: 'POST', ...(headers ? { headers } : {}) }
       : {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...headers },
         body: JSON.stringify(body),
       })
   } catch {

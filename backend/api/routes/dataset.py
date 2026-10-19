@@ -33,7 +33,7 @@ def get_dataset() -> dict[str, Any]:
     codes = _point_codes(ds)
     return {
         "signature": ds.signature,
-        "file": cur.name,
+        "file": deps.current_dataset_name(),
         "n_times": int(ds.wide.shape[0]),
         "n_columns": int(ds.wide.shape[1]),
         # 页① 那排卡片要的另外两格。**都由后端算**：前端不做任何数值计算。

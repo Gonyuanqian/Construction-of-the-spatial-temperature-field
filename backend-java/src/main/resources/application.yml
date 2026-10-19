@@ -1,0 +1,44 @@
+server:
+  address: ${TFIELD_JAVA_HOST:127.0.0.1}
+  port: ${TFIELD_JAVA_PORT:8080}
+  shutdown: graceful
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+
+spring:
+  application:
+    name: tfield-business
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  task:
+    scheduling:
+      pool:
+        size: 2
+  datasource:
+    url: ${TFIELD_JDBC_URL:jdbc:mysql://${TFIELD_MYSQL_HOST:127.0.0.1}:${TFIELD_MYSQL_PORT:3306}/${TFIELD_MYSQL_DB:tfield_models}?createDatabaseIfNotExist=true&characterEncoding=UTF-8&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${TFIELD_MYSQL_USER:root}
+    password: ${TFIELD_MYSQL_PASSWORD:123456}
+    hikari:
+      maximum-pool-size: 5
+      connection-timeout: 5000
+  flyway:
+    table: tfield_java_schema_history
+    baseline-on-migrate: true
+    baseline-version: 0
+    clean-disabled: true
+    locations: classpath:db/migration
+
+tfield:
+  python:
+    base-url: ${TFIELD_PYTHON_URL:http://127.0.0.1:8503}
+    connect-timeout: ${TFIELD_PYTHON_CONNECT_TIMEOUT:3s}
+    read-timeout: ${TFIELD_PYTHON_READ_TIMEOUT:120s}
+    compute-timeout: ${TFIELD_PYTHON_COMPUTE_TIMEOUT:600s}
+    max-request-bytes: ${TFIELD_MAX_REQUEST_BYTES:33554432}
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] [request_id=%X{request_id:-}] %logger{36} - %msg%n"

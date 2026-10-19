@@ -48,6 +48,8 @@ const props = withDefaults(defineProps<{
    * 它在这里只当「换个号就重取一次」的触发量。
    */
   source?: 'field' | 'live'
+  /** 实时会话变更时重新取数；训练模式不使用此引用。 */
+  sessionId?: string
   /**
    * 画面上要不要挂一枚时刻（2026-10-09 用户裁定）。
    *
@@ -144,7 +146,7 @@ const props = withDefaults(defineProps<{
 
 const volume = useAsync(() => getJson<VolumePayload>(
   props.source === 'live'
-    ? `/api/live/volume/${props.tIndex}`
+    ? `/api/live/volume/${props.tIndex}${props.sessionId ? `?session_id=${encodeURIComponent(props.sessionId)}` : ''}`
     : `/api/field/volume?t_index=${props.tIndex}`))
 
 /**
@@ -161,7 +163,7 @@ function reload() {
 }
 
 onMounted(() => { void volume.run() })
-watch(() => props.tIndex, reload)
+watch(() => [props.tIndex, props.sessionId], reload)
 onUnmounted(() => { if (timer) clearTimeout(timer) })
 
 /** 拱壳的示意长度 / m。**只改几何、不改场**，所以它不触发任何请求。 */
@@ -634,6 +636,6 @@ function runQuery() {
      留着它是白占 44px —— 而这一屏的每一像素都在账上。 */
   margin-bottom: 0;
 }
-.vol-grid.stretch { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.vol-grid.stretch { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; align-items: stretch; }
 .vol-stage.stretch { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 </style>

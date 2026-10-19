@@ -1,0 +1,146 @@
+{
+  "source": "docs/development/contracts/legacy-openapi.json",
+  "api_version": "0.1.0",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/calibration",
+      "compute": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/calibration/diagnostics",
+      "compute": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/calibration/jobs",
+      "compute": false
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/calibration/jobs/{job_id}",
+      "compute": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/calibration/jobs/{job_id}",
+      "compute": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/dataset",
+      "compute": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/dataset/layer-timeheight",
+      "compute": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/dataset/preview",
+      "compute": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/dataset/timeseries",
+      "compute": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/dataset/upload",
+      "compute": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/features",
+      "compute": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/field/arch",
+      "compute": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/field/compare",
+      "compute": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/field/curve",
+      "compute": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/field/sections",
+      "compute": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/field/volume",
+      "compute": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/health",
+      "compute": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/live/frame/{n}",
+      "compute": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/live/next",
+      "compute": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/live/pause",
+      "compute": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/live/prepare",
+      "compute": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/live/start",
+      "compute": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/live/status",
+      "compute": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/live/volume/{n}",
+      "compute": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/models",
+      "compute": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/models",
+      "compute": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/models/{model_id}",
+      "compute": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/models/{model_id}/current",
+      "compute": false
+    }
+  ]
+}

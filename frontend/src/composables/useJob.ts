@@ -41,6 +41,9 @@ export function useJob(intervalMs: number = INTERVAL_MS): JobState {
   let timer: ReturnType<typeof setTimeout> | null = null
   /** 自增号：让在飞的那一次响应作废。与 `useAsync` 同一个手法。 */
   let seq = 0
+  // 收到明确答复后才生成下一次编号；网络断开时重试同一次提交。
+  let pendingRequestKey: string | null = null
+  let submitting = false
 
   function clearTimer() {
     if (timer !== null) {
@@ -69,18 +72,11 @@ export function useJob(intervalMs: number = INTERVAL_MS): JobState {
       if (out.state !== 'running') again = false
     } catch (e) {
       if (mine !== seq) return
-      // ⚠️ **404 是唯一一种「再问下去永远不会变」的失败。** job 只活在进程
-      // 内存里（规格书 §4.6），后端重启之后那个 id 永远回不来了：接着问就是
-      // 每秒一条 404，而 `job.state` 还留着 `running` —— `busy` 于是永远为真，
-      // 两个按钮一起禁用，定时器永不停表，用户唯一的出路是刷新整页。
-      // §4.6 说这时候「那一次的操作就是再点一次」，所以这里停表、把 job
-      // 清掉（不清的话 `busy` 读到的还是那个 running 的摘要），并把该做什么
-      // 写出来 —— 一个禁用到底又不说话的按钮，比一句「再点一次」坏得多。
+      // Java 任务跨重启保留。404 表示记录确实不可查，停止轮询并提示核对环境。
       if (e instanceof ApiError && e.status === 404) {
         stop()
         job.value = null
-        error.value = '这一次标定任务的记录没了（后端重启过），接着问也问不到了。'
-          + '要接着做就再点一次「参数优选」。'
+        error.value = '找不到这次标定任务的记录，请确认当前服务和数据库，再重新提交。'
         return
       }
       // 其余失败**不当作任务失败**：网络抖一下不代表那一次算完了。
@@ -111,30 +107,40 @@ export function useJob(intervalMs: number = INTERVAL_MS): JobState {
   }
 
   async function start(): Promise<void> {
+    if (submitting) return
+    submitting = true
     stop()
     error.value = ''
+    const mine = seq
     try {
-      const out = await postJson<JobSummary>('/api/calibration/jobs')
+      pendingRequestKey ??= globalThis.crypto.randomUUID()
+      const out = await postJson<JobSummary>('/api/calibration/jobs', undefined,
+                                            { 'Idempotency-Key': pendingRequestKey })
+      pendingRequestKey = null
+      if (mine !== seq) return
       job.value = out
       if (out.state === 'running') {
         polling.value = true
         void tick(out.id)
       }
     } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        // 已经有一次在跑。**这不是失败，是「你要的那件事正在发生」。**
-        // id 从 `GET /api/calibration` 的 `job` 字段读 —— 与「刷新之后
-        // 接上」是同一条路（后端在 409 的响应体里也给了 `job_id`，
-        // 见规格书 §4.5；不解析它是为了不给「读文案拿协议」开口子）。
+      if (e instanceof ApiError && e.status >= 400 && e.status < 500) pendingRequestKey = null
+      if (mine !== seq) return
+      if (e instanceof ApiError && e.status === 409 && e.jobId) {
+        // 只接管协议中明确指出的运行任务；数据或参数冲突照常报错。
         try {
           const cal = await getJson<CalibrationPayload>('/api/calibration')
-          attachFrom(cal.job)
+          if (mine !== seq) return
+          if (cal.job?.id === e.jobId) attachFrom(cal.job)
+          else attach(e.jobId)
         } catch (inner) {
           error.value = inner instanceof Error ? inner.message : String(inner)
         }
         return
       }
       error.value = e instanceof Error ? e.message : String(e)
+    } finally {
+      submitting = false
     }
   }
 

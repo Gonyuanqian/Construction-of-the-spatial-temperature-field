@@ -174,16 +174,66 @@ describe('LiveView', () => {
     expect(text, '还在报多久一帧').not.toContain('5 分钟一帧')
   })
 
-  it('但那句真话没有丢 —— 「重启就回到第 0 帧」挪进了「口径与出处」', async () => {
-    // 删的是**摆法**，不是这句话本身：帧历史在内存里、重启服务就没了，
-    // 是用户该知道的口径。收进 `details.why` 里，占不到温度场的地方。
+  it('会话恢复口径放在折叠说明中，不占温度场空间', async () => {
     stubFetch()
     const w = mountLive()
     await flushPromises()
     const why = w.findAll('details.why')
     expect(why, '「口径与出处」只有一个').toHaveLength(1)
-    expect(why[0].text(), '帧历史那句被删掉了，不是挪走了').toContain('内存')
+    expect(why[0].text()).toContain('上次确认帧')
+    expect(why[0].text()).toContain('恢复后保持暂停')
     expect(why[0].text()).toContain('重启')
+  })
+
+  it('准备响应丢失后重试复用请求编号', async () => {
+    stubFetch()
+    const original = globalThis.fetch
+    const keys: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/live/prepare') && init?.method === 'POST') {
+        const headers = init.headers as Record<string, string>
+        keys.push(headers['Idempotency-Key'])
+        expect(headers['X-TField-Expected-Session']).toBe('none')
+        if (keys.length === 1) throw new TypeError('network unavailable')
+      }
+      return original(input, init)
+    }))
+    const w = mountLive()
+    await flushPromises()
+    await w.get('[data-act="prepare"]').trigger('click')
+    await flushPromises()
+    await w.get('[data-act="prepare"]').trigger('click')
+    await flushPromises()
+    expect(keys).toHaveLength(2)
+    expect(keys[0]).toBeTruthy()
+    expect(keys[1]).toBe(keys[0])
+  })
+
+  it('重启状态提示恢复，并在请求中携带原会话', async () => {
+    stubFetch()
+    const original = globalThis.fetch
+    let restored = false
+    const id = 'd700ffa7-78e2-4857-a59b-6afba18b606a'
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/live/status')) return new Response(JSON.stringify(makeLiveStatus({
+        state: restored ? 'ready' : 'idle', session_id: id, recovery_required: !restored,
+        model_name: '本次固定模型', running: false,
+      })))
+      if (url.endsWith('/live/prepare')) {
+        expect((init?.headers as Record<string, string>)['X-TField-Expected-Session']).toBe(id)
+        restored = true
+      }
+      return original(input, init)
+    }))
+    const w = mountLive()
+    await flushPromises()
+    expect(w.get('[data-act="prepare"]').text()).toBe('恢复实时源')
+    await w.get('[data-act="prepare"]').trigger('click')
+    await flushPromises()
+    expect(w.text()).toContain('本次固定模型')
+    expect(w.find('[data-act="start"]').exists()).toBe(true)
+    expect(calls.some((c) => c.includes('session_id='+id))).toBe(true)
   })
 
   it('三个控件各打自己那条接口', async () => {
@@ -305,7 +355,7 @@ describe('LiveView', () => {
     expect(seg.findAll('button').map((b) => b.text())).toEqual(['断面', '三维'])
   })
 
-  it('暂停时不轮询，走起来才轮询（规格书 §6.3 与 §8.2 的验收项）', async () => {
+  it('暂停时也核对重启，但同一会话同一帧不重复取场', async () => {
     // ⚠️ **两半都要断。** 只断「暂停时没多问一次」的话，把定时器整个删掉也照样
     // 绿 —— 那是一条靠「什么都没发生」通过的测试。所以第二半把「走起来必须问」
     // 也钉上，两半合起来才等于「轮询开关跟着 running 走」。
@@ -322,9 +372,13 @@ describe('LiveView', () => {
 
       const statusCalls = () => calls.filter((c) => c === 'GET /api/live/status').length
 
+      // 等待懒加载三维模块自己的首次取数，不能把它算成暂停期间的重复取场。
+      await vi.waitFor(() => expect(calls).toContain('GET /api/live/volume/0'))
       const paused = statusCalls()
+      const fields = calls.filter((c) => c.includes('/api/live/frame/') || c.includes('/api/live/volume/')).length
       await vi.advanceTimersByTimeAsync(15000)     // 三个轮询周期
-      expect(statusCalls()).toBe(paused)           // 暂停：一次都不许多问
+      expect(statusCalls()).toBe(paused + 3)
+      expect(calls.filter((c) => c.includes('/api/live/frame/') || c.includes('/api/live/volume/')).length).toBe(fields)
 
       await w.get('button[data-act="start"]').trigger('click')
       await flushPromises()

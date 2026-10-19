@@ -1,0 +1,13 @@
+{
+  "PythonExe": "python",
+  "JavaExe": "java",
+  "NpmExe": "npm.cmd",
+  "NodeExe": "node",
+  "Environment": {
+    "TFIELD_MYSQL_HOST": "127.0.0.1",
+    "TFIELD_MYSQL_PORT": "3306",
+    "TFIELD_MYSQL_DB": "tfield_models",
+    "TFIELD_MYSQL_USER": "your_user",
+    "TFIELD_MYSQL_PASSWORD": "your_password"
+  }
+}

@@ -147,11 +147,13 @@ WHITELIST = frozenset({"deps.py"})
 #:
 #: ⚠️ 放行一条**规则**上的例外要看得更紧：往后再有人想往这份名单里加一个「纯函数」
 #: 之外的出口，先回答「它有没有可能自己建缓存/加载器」。
+# current_dataset_name 仅从请求上下文读取原上传文件名；不加载数据或访问缓存。
+# 允许该元数据出口，避免把 UUID 存储文件名 source.xlsx 错当成用户原文件名。
 ALLOWED_FROM_DEPS = frozenset({
     "get_dataset", "get_pipeline", "get_train_dataset", "get_live_frames",
     "_build_pipeline", "current_dataset_path", "probe_dataset", "install_dataset",
     "on_dataset_change", "current_bundle", "model_fit",
-    "live_train_dataset", "live_playback_dataset",
+    "live_train_dataset", "live_playback_dataset", "current_dataset_name",
 })
 
 #: 与 `api.deps` 无关的、任何位置都不许直接取用的通用黑名单（直取后端库/缓存类）。
@@ -450,5 +452,5 @@ def test_白名单只有那十三个出口():
         "get_dataset", "get_pipeline", "get_train_dataset", "get_live_frames",
         "_build_pipeline", "current_dataset_path", "probe_dataset", "install_dataset",
         "on_dataset_change", "current_bundle", "model_fit",
-        "live_train_dataset", "live_playback_dataset",
+        "live_train_dataset", "live_playback_dataset", "current_dataset_name",
     })

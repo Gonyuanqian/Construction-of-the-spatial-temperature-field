@@ -125,8 +125,7 @@ def post_next() -> dict[str, Any]:
     return get_status()
 
 
-@router.get("/live/frame/{n}")
-def get_frame(
+def _get_frame(
     n: int,
     preset: str = Query(DEFAULT_PRESET, description="网格档位"),
     monotonic: bool = Query(True, description="是否施加竖直软单调投影"),
@@ -165,8 +164,7 @@ def get_frame(
     return payload
 
 
-@router.get("/live/volume/{n}")
-def get_volume(
+def _get_volume(
     n: int,
     preset: str = Query(DEFAULT_PRESET, description="网格档位"),
     monotonic: bool = Query(True, description="是否施加竖直软单调投影"),
@@ -194,3 +192,16 @@ def get_volume(
         "total": int(src.total),
     }
     return payload
+
+
+@router.get("/live/frame/{n}")
+def get_frame(n: int, preset: str = Query(DEFAULT_PRESET), monotonic: bool = Query(True)) -> dict[str, Any]:
+    with live.guard():
+        return _get_frame(n, preset, monotonic)
+
+
+@router.get("/live/volume/{n}")
+def get_volume(n: int, preset: str = Query(DEFAULT_PRESET), monotonic: bool = Query(True),
+               y_step: float = Query(0.5), y_min: float = Query(0.0), y_max: float = Query(18.0)) -> dict[str, Any]:
+    with live.guard():
+        return _get_volume(n, preset, monotonic, y_step, y_min, y_max)

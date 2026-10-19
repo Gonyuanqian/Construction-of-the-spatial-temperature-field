@@ -32,7 +32,7 @@
 import { computed, defineAsyncComponent, h, onMounted, onUnmounted, ref } from 'vue'
 
 import type { LiveFramePayload, LiveStatus, PrepareResult, VolumePayload } from '../api/types'
-import { getJson, postJson } from '../api/client'
+import { ApiError, getJson, postJson } from '../api/client'
 import { fetchModels, usableModels } from '../api/models'
 import EChart from '../charts/EChart.vue'
 import { buildLiveMeanCurveOption, MEAN_CURVE_TITLE } from '../charts/options/liveMeanCurve'
@@ -87,29 +87,50 @@ const modelsLoaded = computed(() => models.data.value !== null)
 const status = ref<LiveStatus | null>(null)
 const busy = ref(false)
 const error = ref('')
+let alive = true
+let statusSeq = 0
+let pendingAction: { scope: string; key: string } | null = null
 
 async function refreshStatus() {
+  const mine = ++statusSeq
   try {
-    status.value = await getJson<LiveStatus>('/api/live/status')
+    const fresh = await getJson<LiveStatus>('/api/live/status')
+    if (!alive || mine !== statusSeq) return
+    if (fresh.session_id !== status.value?.session_id || fresh.state !== 'ready') {
+      frame.data.value = null
+      summary.data.value = null
+    }
+    status.value = fresh
   } catch (e) {
+    if (!alive || mine !== statusSeq) return
     error.value = (e as Error).message
   }
 }
 
-async function act(name: 'prepare' | 'start' | 'pause' | 'next') {
+async function act(name: 'prepare' | 'start' | 'pause' | 'next' | 'new') {
+  if (busy.value) return
   busy.value = true
+  const expected = status.value?.session_id ?? 'none'
+  const scope = `${expected}:${name}`
+  if (pendingAction?.scope !== scope) pendingAction = { scope, key: globalThis.crypto.randomUUID() }
   try {
     // ⚠️ 回执**不拿来当状态用**。`prepare` 回的是 `{state, seconds}`（规格书 §五），
     // 不是一份 `LiveStatus` —— 把回执赋给 `status` 会让状态条渲染出空的帧号，
     // 还会让下面 `frame` 拼出 `/frame/undefined`（真后端 422），而这是实时模式
     // 唯一的入口动作。所以四个动作一律**问完再重新问一次状态**：
-    // 多一次纯读的 GET（`status` 永不失败、永不建管线），换四条路只有一种收尾。
-    await postJson<LiveStatus | PrepareResult>(`/api/live/${name}`)
+    // 再查询服务端确认的状态；状态查询不构建管线，依赖不可用时显示恢复提示。
+    await postJson<LiveStatus | PrepareResult>(`/api/live/${name === 'new' ? 'sessions' : name}`, undefined,
+      { 'Idempotency-Key': pendingAction.key, 'X-TField-Expected-Session': expected })
+    pendingAction = null
+    if (!alive) return
     error.value = ''
     await refreshStatus()
-    refetch()
+    if (ready.value) refetch()
   } catch (e) {
+    if (e instanceof ApiError && e.status >= 400 && e.status < 500) pendingAction = null
+    if (!alive) return
     error.value = (e as Error).message
+    await refreshStatus()
   } finally {
     busy.value = false
   }
@@ -118,11 +139,19 @@ async function act(name: 'prepare' | 'start' | 'pause' | 'next') {
 /* ── 当前这一帧 ─────────────────────────────────────────── */
 
 const ready = computed(() => status.value?.state === 'ready')
+const preparing = computed(() => busy.value || !!status.value?.preparing)
+const prepareText = computed(() => status.value?.pending_session_id ? '继续准备'
+  : status.value?.recovery_required ? '恢复实时源' : '准备实时源')
+
+function sessionQuery(separator = '?'): string {
+  const id = status.value?.session_id
+  return id ? `${separator}session_id=${encodeURIComponent(id)}` : ''
+}
 
 const frame = useAsync(async () => {
   const s = status.value
   if (!s || s.state !== 'ready') throw new Error('实时源还没准备好')
-  return getJson<LiveFramePayload>(`/api/live/frame/${s.cursor}`)
+  return getJson<LiveFramePayload>(`/api/live/frame/${s.cursor}${sessionQuery()}`)
 })
 
 /**
@@ -142,7 +171,7 @@ const SUMMARY_Y_STEP = 3.0
 const summary = useAsync(async () => {
   const s = status.value
   if (!s || s.state !== 'ready') throw new Error('实时源还没准备好')
-  return getJson<VolumePayload>(`/api/live/volume/${s.cursor}?y_step=${SUMMARY_Y_STEP}`)
+  return getJson<VolumePayload>(`/api/live/volume/${s.cursor}?y_step=${SUMMARY_Y_STEP}${sessionQuery('&')}`)
 })
 
 /**
@@ -162,29 +191,32 @@ function refetch(): void {
  */
 const POLL_MS = 5000
 let timer: ReturnType<typeof setInterval> | undefined
+let pollingStatus = false
 
 onMounted(async () => {
   // 次序：先问库里有不有能用的模型（`hasModel` 由它算出来），
   // 再决定要不要去碰实时源 —— 没有模型的实时源开不了，问了也是白问。
   await models.run()
   if (hasModel.value) await refreshStatus()
+  if (!alive) return
   if (ready.value) refetch()
   timer = setInterval(async () => {
     // ⚠️ 这一句**不靠**下面那句顺带挡住（没跑过 `refreshStatus()` 时
     // `status` 是 null）。写成显式的一句是为了把意图放在脸上：
     // 以后谁把 `refreshStatus()` 挪到前面，这一屏就会每 5 秒问一次
     // 一个没法算的服务端。
-    if (!hasModel.value) return
-    // 暂停时不轮询（规格书 §6.3，也是 §8.2 验收清单里的一条）：暂停时服务端
-    // 什么都不动，这一问必然什么都没变。控件点完是 `act()` 去问状态，
-    // 不走这里 —— 于是「下一帧」在暂停下照样立刻更新。
-    if (!status.value?.running) return
-    const before = status.value?.cursor
-    await refreshStatus()
-    if (ready.value && status.value?.cursor !== before) refetch()
+    if (!hasModel.value || busy.value || pollingStatus) return
+    // 暂停时也轻量核对会话，及时发现服务重启；同一会话同一帧不重新构场。
+    pollingStatus = true
+    const before = status.value
+    try {
+      await refreshStatus()
+      if (ready.value && (status.value?.cursor !== before?.cursor
+          || status.value?.session_id !== before?.session_id || before?.state !== 'ready')) refetch()
+    } finally { pollingStatus = false }
   }, POLL_MS)
 })
-onUnmounted(() => { if (timer) clearInterval(timer) })
+onUnmounted(() => { alive = false; statusSeq += 1; if (timer) clearInterval(timer) })
 
 /* ── 文案 ───────────────────────────────────────────────── */
 
@@ -459,18 +491,24 @@ function runAsk(q: { x: number; y: number; z: number }): void {
 
     <div class="row">
       <button
-        v-if="!ready" type="button" data-act="prepare" :disabled="busy"
+        v-if="!ready || !!status?.pending_session_id" type="button" data-act="prepare" :disabled="preparing"
         @click="act('prepare')"
-      >准备实时源</button>
-      <template v-else>
-        <button type="button" data-act="start" :disabled="busy || !!status?.running"
+      >{{ prepareText }}</button>
+      <template v-if="ready">
+        <button type="button" data-act="start" :disabled="preparing || !!status?.running || !!status?.pending_session_id"
                 @click="act('start')">开始</button>
-        <button type="button" data-act="pause" :disabled="busy || !status?.running"
+        <button type="button" data-act="pause" :disabled="preparing || !status?.running || !!status?.pending_session_id"
                 @click="act('pause')">暂停</button>
-        <button type="button" data-act="next" :disabled="busy"
+        <button type="button" data-act="next" :disabled="preparing || !!status?.pending_session_id"
                 @click="act('next')">下一帧</button>
       </template>
+      <button v-if="status?.session_id && !status?.pending_session_id" type="button" data-act="new"
+              :disabled="preparing || !!status?.running" @click="act('new')">重新准备</button>
+      <span v-if="status?.model_name" class="note live-model" :title="`本次实时会话使用的模型：${status.model_name}`">
+        模型：{{ status.model_name }}
+      </span>
       <span v-if="busy" class="note">正在处理…</span>
+      <span v-else-if="status?.detail" class="note">{{ status.detail }}</span>
     </div>
 
     <p v-if="!ready" class="note state">
@@ -560,6 +598,8 @@ function runAsk(q: { x: number; y: number; z: number }): void {
            而屏上只表现为「三维矮了」，不报错。 -->
       <div v-else class="stage">
         <VolumeView
+          :key="status?.session_id ?? 'legacy'"
+          :session-id="status?.session_id ?? undefined"
           source="live" :t-index="status?.cursor ?? 0"
           panels="shell" :show-notes="false" stretch
           :clock-time="frame.data.value?.frame.time ?? ''"
@@ -691,7 +731,7 @@ function runAsk(q: { x: number; y: number; z: number }): void {
       <!-- 原先挂在顶部那条状态句上。整句说的都是帧数，跟着指标卡一起撤了，
            但这一句不是帧数、是**用户该知道的口径**：重启服务这一屏就从头演。 -->
       <p class="note">
-        帧历史只在内存里，服务一重启，就得从头准备一次。
+        数据源、模型和确认位置随会话保留。计算服务重启后，可恢复到上次确认帧，恢复后保持暂停。
       </p>
       <!-- 正在用的那一份包不是为当前这份数据标的时的那句话。**逐字来自后端**
            （`deps._BORROWED_NOTE` → 载荷的 `mismatch_note`），前端不另写一句
@@ -738,7 +778,8 @@ function runAsk(q: { x: number; y: number; z: number }): void {
 .stage { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 
 .block { margin-bottom: var(--gap-xl); }
-.row { display: flex; gap: var(--gap-s); align-items: center; }
+.row { display: flex; flex-wrap: wrap; gap: var(--gap-s); align-items: center; }
+.live-model { max-width: 18em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .head { justify-content: space-between; }
 .alert { color: var(--leaf); border-left: 3px solid var(--leaf); padding-left: var(--gap-s); }
 .tag { font-size: var(--size-note); color: var(--ink-muted); }
