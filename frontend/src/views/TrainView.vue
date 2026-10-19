@@ -103,8 +103,10 @@ onBeforeUnmount(job.stop)
  * 盘上已经是对的。`cancelled` 与 `failed` 都不重取 —— 那两次盘上的包没变，
  * 重取只会拿到与屏上一样的东西，白跑一趟。
  */
-watch(() => job.job.value?.state, (now, before) => {
-  if (now === 'done' && before === 'running') void cal.run()
+watch(() => job.job.value, (now) => {
+  // 幂等重试可能直接拿到已完成任务；按任务编号和状态决定是否重取。
+  if (now?.state === 'done' && (cal.data.value?.job?.id !== now.id
+      || cal.data.value?.job?.state !== 'done')) void cal.run()
 })
 
 const failure = computed(() =>

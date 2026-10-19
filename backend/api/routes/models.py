@@ -15,7 +15,7 @@ from fastapi import APIRouter, Body, HTTPException
 from tfield import config as C
 from tfield.calibration import groups_signature
 
-from .. import deps, jobs, models_store, paths, ported
+from .. import deps, jobs, models_store, paths, ported, business_client
 from ..errors import NoDatasetError
 from .calibration import _jsonable
 
@@ -79,7 +79,7 @@ def list_models() -> dict[str, Any]:
     """
     try:
         ds = deps.get_train_dataset()
-        current_file = deps.current_dataset_path().name
+        current_file = deps.current_dataset_name()
     except NoDatasetError:
         # 2026-10-16：没有当前数据集时，判定轴换成页⑤ **自己的**训练段。
         # 理由：页⑤ 从这一天起不依赖「当前数据集」，而它的模型门是
@@ -134,6 +134,7 @@ def get_model(model_id: int) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="这个模型的参数读不出来了")
     return {
         **row.to_dict(),
+        "is_current": row.id == models_store.current_id(),
         # ⚠️ 与 `saved_at` **不是一回事**：那是用户点保存的时刻，这个是标定
         # 跑完的时刻。平时只差几秒，语义不同 —— 页上写「保存于」。
         "created_at": bundle.created_at,
@@ -179,6 +180,8 @@ def save_model(body: Any = Body(None)) -> dict[str, Any]:
     就会把数组 / 字符串这一类请求体拦成 422，下面那句 `_NAME_HINT` 便成了
     **够不到的死代码**。与 `calibration.py` 的 `post_diagnostics` 同一个写法。
     """
+    if business_client.java_store():
+        raise HTTPException(409, "模型保存已由 Java 管理，请通过业务服务保存。")
     if not isinstance(body, dict):
         raise HTTPException(status_code=422, detail=_NAME_HINT)
     raw = body.get("name")
@@ -196,7 +199,7 @@ def save_model(body: Any = Body(None)) -> dict[str, Any]:
             detail="手上没有刚跑完的模型。先到「模型训练」那一页跑一次标定。")
 
     ds = deps.get_train_dataset()
-    file = deps.current_dataset_path().name
+    file = deps.current_dataset_name()
     # ⚠️ **在这一句拿管线**：`deps.get_pipeline()` 走 `current_bundle()`，
     # 而此刻「当前那一份」就是刚跑完、还没保存的那一份（unsaved 档），
     # 于是它正是要固化的这份模型的管线。放在 `save_model` 之后拿，
@@ -216,6 +219,8 @@ def set_current(model_id: int) -> dict[str, Any]:
     而屏上没有一个字提示这件事。规格书 §5.4 只写了「保存」与「再跑一次」
     两个退场条件；这一条是第三个，同一条理由。
     """
+    if business_client.java_store():
+        raise HTTPException(409, "模型选择已由 Java 管理，请通过业务服务切换。")
     if models_store.get_model(model_id) is None:
         raise HTTPException(status_code=404, detail="没有这个模型")
     models_store.set_current(model_id)

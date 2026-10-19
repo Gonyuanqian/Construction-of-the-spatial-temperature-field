@@ -503,7 +503,7 @@ def _job_summary() -> dict[str, Any] | None:
     *为什么不用一条新路由 `GET /api/calibration/jobs/current`*：多一条路由
     就多一个要守的东西，而它答的是同一件事。
     """
-    job = jobs.current()
+    job = jobs.current_for_dataset()
     return None if job is None else job.to_dict()
 
 

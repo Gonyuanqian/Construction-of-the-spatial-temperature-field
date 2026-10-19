@@ -1,6 +1,9 @@
-"""模型库：与 MySQL 说话。**只做这一件事。**
+"""模型库门面：默认通过 Java 读取模型，原 SQL 实现仅用于显式 legacy 模式。
 
-为什么单出一个模块：`api/` 下别的东西要么在把 HTTP 翻成函数调用，要么在管
+阶段 3 起，Java 是模型库唯一写入方；此处保持 ModelRow 和模型解释接口，
+让现有计算与展示继续复用。下方原 SQL 和建表逻辑只在 legacy 模式可达。
+
+原实现为什么单出一个模块：`api/` 下别的东西要么在把 HTTP 翻成函数调用，要么在管
 进程内的活。这一份管的是**进程外**的一个真数据库 —— 它会连不上、会超时、
 会在磁盘满的时候报 1406，而那些语义不该渗进路由层。
 `api/routes/models.py` 只认这里出去的那几个 dataclass。
@@ -26,6 +29,10 @@ from pymysql.cursors import DictCursor
 
 from tfield import config as C
 from tfield.calibration import CalibrationBundle
+
+from . import business_client
+from .dataset_context import DatasetContextError
+from .model_context import current_model_context
 
 #: 建库语句。**不带 `COLLATE`**：规格书写的是 `utf8mb4_0900_ai_ci`，那是
 #: MySQL 8 独有的排序规则名，在 5.7 上会直接报错。我们不需要任何一个特定
@@ -153,6 +160,8 @@ def connect(*, with_db: bool = True):
     服务端，最后报的还是原来那句，而中间多了一次注定失败的建库尝试。更要紧的
     是，「连不上」与「还没有库」要用户做的事完全不同，这条线不能糊。
     """
+    if business_client.java_store():
+        raise DatasetContextError(409, "模型库已由 Java 管理，Python 数据库写入口已停用。")
     kw: dict[str, Any] = {
         "host": os.environ.get("TFIELD_MYSQL_HOST", "127.0.0.1"),
         "port": int(os.environ.get("TFIELD_MYSQL_PORT", "3306")),
@@ -292,6 +301,8 @@ def report_metrics(bundle: CalibrationBundle
 
 def list_models() -> list[ModelRow]:
     """全部模型，新的在前。**不含 `bundle`。** 连不上就抛。"""
+    if business_client.java_store():
+        return [_row(row) for row in business_client.fetch("/models")["rows"]]
     conn = connect()
     try:
         with conn.cursor() as cur:
@@ -302,6 +313,9 @@ def list_models() -> list[ModelRow]:
 
 
 def get_model(model_id: int) -> ModelRow | None:
+    if business_client.java_store():
+        row = business_client.fetch(f"/models/{model_id}", missing_ok=True)
+        return None if row is None else _row(row)
     conn = connect()
     try:
         with conn.cursor() as cur:
@@ -318,6 +332,9 @@ def load_bundle(model_id: int) -> CalibrationBundle | None:
     读不动的那一份**抛**，不返回 None：`None` 与「没有这一行」长得一样，
     而这两件事一个是「库里存坏了」、一个是「你点了一个不存在的 id」。
     """
+    if business_client.java_store():
+        raw = business_client.fetch(f"/models/{model_id}/bundle", raw=True, missing_ok=True)
+        return None if raw is None else CalibrationBundle.from_json(raw.decode("utf-8"))
     conn = connect()
     try:
         with conn.cursor() as cur:
@@ -341,6 +358,8 @@ def artifact_of(model_id: int) -> bytes | None:
     这一层只负责把字节原样搬出来（`None` / 坏字节 / 版本不对三种，
     在 `deps._artifact_of` 里分成三件事）。
     """
+    if business_client.java_store():
+        return business_client.fetch(f"/models/{model_id}/artifact", raw=True, missing_ok=True)
     conn = connect()
     try:
         with conn.cursor() as cur:
@@ -360,6 +379,11 @@ def current_id() -> int | None:
     当前。那时随 InnoDB 的返回次序摇摆意味着页② 说一个、页③ 画另一个，
     而屏上没有一个字提示这件事。挑 id 最大的那个是**确定的**。
     """
+    context = current_model_context()
+    if context is not None:
+        return context.model_id
+    if business_client.java_store():
+        return business_client.fetch("/selection")["current_id"]
     conn = connect()
     try:
         with conn.cursor() as cur:

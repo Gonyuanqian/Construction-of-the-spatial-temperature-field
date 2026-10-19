@@ -512,6 +512,13 @@ export interface LiveStatus {
   total: number
   /** 多久一帧。**由后端给**：时钟在服务端，前端不自己定这个数。 */
   interval_s: number
+  session_id?: string | null
+  model_id?: number
+  model_name?: string
+  recovery_required?: boolean
+  preparing?: boolean
+  pending_session_id?: string
+  detail?: string | null
 }
 
 /**
@@ -525,6 +532,7 @@ export interface LiveStatus {
 export interface PrepareResult {
   state: 'ready'
   seconds: number
+  session_id?: string
 }
 
 /** 这一帧的如实记录：棚顶气象 + 24 路实测读数。 */

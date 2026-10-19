@@ -45,6 +45,8 @@ describe('页⑤ 的版面钩子', () => {
     // ⚠️ 同一组按钮不许在两个摆法上同时出现。
     expect(live, '画布角上那组按钮还开着').not.toContain('show-view-controls')
     const vv = read('scene/VolumeView.vue')
+    expect(vv, '实时弹性列继承了 align-items: start，画布会按内容缩窄')
+      .toMatch(/\.vol-grid\.stretch\s*\{[^}]*align-items:\s*stretch/)
     expect(vv).toContain('to="#shell-side"')
     expect(vv, '侧栏那两块没有按 panels 分档').toMatch(/panels === 'all'/)
   })

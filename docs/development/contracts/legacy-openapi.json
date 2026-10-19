@@ -1,0 +1,1301 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "棚式空间温度场重建系统 API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/dataset": {
+      "get": {
+        "tags": [
+          "dataset"
+        ],
+        "summary": "Get Dataset",
+        "operationId": "get_dataset_api_dataset_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Dataset Api Dataset Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dataset/timeseries": {
+      "get": {
+        "tags": [
+          "dataset"
+        ],
+        "summary": "Get Timeseries",
+        "description": "V2 的上格与下格。\n\n**下格那个「减去背景」是这里算的**，不是前端（spec §六 硬约束 1）。\n前端做这一步的话，界面上显示的数与后端算出的数就成了两条独立的计算路径 ——\n漂了不会报错，只会让人对着一个错的数做判断。\n\n`detrended_domain` 由后端给出 ±3 °C：纵轴范围也是判断的一部分，\n让前端各自去猜会得到三个棚不同的纵轴，并排看就失去意义。\n\n⚠️ 每个数都过 `_finite`：任何非有限浮点（某列有缺失时，原始棚温与\n「棚温 − 背景」都会是 NaN）一旦进响应体，`JSONResponse(allow_nan=False)`\n就抛 `ValueError` → HTTP 500。翻成 None（JSON null）才是「这段没有值」。",
+        "operationId": "get_timeseries_api_dataset_timeseries_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Timeseries Api Dataset Timeseries Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dataset/layer-timeheight": {
+      "get": {
+        "tags": [
+          "dataset"
+        ],
+        "summary": "Get Layer Timeheight",
+        "description": "V2 的第三格：「时间 × 高度」热图。\n\n**数据源是实测棚温，不是模型预测。** 页① 回答的是「信号藏在哪」，\n那就该看实测值。走模型预测会让数据页依赖训练好的模型 ——\n一个还没标定的系统就不该画得出这一格。\n\n行 = 层：同一层的多个测点合成一行（z0.4 上有三个点），\n但**拱顶那两个测点高度同为 1.10 m、x 不同**，合成一行就把前坡后坡的差别抹了，\n所以它们按 x 分开列。行序按 (z, x) 升序 —— 低的在下面。\n\n1308 个时刻画不出条纹，等间隔抽稀到 300 列上下。\n\n⚠️ 矩阵里的每个格子都过 `_finite`：某一层的三个测点若在某时刻全缺失，\n`groupby.mean()` 会给 NaN，直接进响应体就是 HTTP 500（非有限值必须在\n序列化之前翻成 null）。空出的一格仍是合法的热图输入。",
+        "operationId": "get_layer_timeheight_api_dataset_layer_timeheight_get",
+        "parameters": [
+          {
+            "name": "step",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Step"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Layer Timeheight Api Dataset Layer Timeheight Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dataset/preview": {
+      "get": {
+        "tags": [
+          "dataset"
+        ],
+        "summary": "Get Preview",
+        "description": "页① 的数据预览表：**只读的头部切片**。\n\n为什么要有这条出口：页① 上「我导进来的确实是这份文件」这句话，四个统计数\n说不了 —— 得能看到行与列本身。而前端不做任何计算（spec §六 硬约束 1），\n宽表只能由后端切好送过来。\n\n为什么只给前 N 行：1308 × 25 全铺进 DOM 是 3.4 万个单元格。切片是**明写在\n屏上的** —— `n_rows` 与 `n_times` 一起给，页面上才写得出「前 500 行\n（共 1308 行）」。只回一个数组的话，屏幕上看不出看到的是全部还是一段，\n而那种沉默比截断本身更坏。\n\n为什么列名不照抄 xlsx：文件里的列名是 `p1_x0.15_z0.4_temp_C`，25 个这种\n名字并排没人读得动，且与切面图上的编号对不上。标签用 `p1·B1`：B 编号与\n切面图同源（同一个 `_point_codes`），棚前缀与 tooltip 同源（都是 shed id）。\n而 `key` **照旧是宽表里的列名** —— 表里任何一格因此都还追得回文件那一列。\n\n湿度列与光照列不进表：本系统没有一处读它们，摆进来只是把宽度翻倍。\n\n⚠️ 每个数都过 `_finite`：缺失格子是 NaN，进了响应体就是\n`JSONResponse(allow_nan=False)` → HTTP 500（与上面两条出口同一个坑）。",
+        "operationId": "get_preview_api_dataset_preview_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Preview Api Dataset Preview Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dataset/upload": {
+      "post": {
+        "tags": [
+          "dataset"
+        ],
+        "summary": "Upload Dataset",
+        "description": "收一份 xlsx，换掉当前数据集（规格书 §四）。\n\n**原始请求体，不是 multipart。** `name` 走 query 不走请求头：`X-Filename`\n里的中文要走 RFC 5987 编码，而 query 天生是 UTF-8 —— 少一层编码就少一处\n「某些文件名会乱码」。\n\n⚠️ **不预跑管线**（§4.2）：上传校验只做「能加载 + 切分两侧非空」。\n`fit` 一次要几十秒到几分钟，每传一次就卡一次，而这一步的职责只是\n「这份数据能不能跑」。\n\n失败时**当前数据集一个字节不改** —— 那由 `uploads.accept()` 的临时文件\n与 `deps.install_dataset()` 的顺序保证，这个函数里没有第二条改指针的路径。",
+        "operationId": "upload_dataset_api_dataset_upload_post",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Upload Dataset Api Dataset Upload Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/field/arch": {
+      "get": {
+        "tags": [
+          "field"
+        ],
+        "summary": "Get Arch",
+        "description": "拱形轮廓与三座棚的 y。（页① 用的；原样保留。）\n\n**前端不许自己算这条线。** 拱是 `z(x) = √(R² − (x−Xc)²) + K`，\n常数住在 `tfield.config` 里；在前端重抄一遍公式，抄错一个常数\n画出来的就不是这座棚，而且它看起来仍然像一条拱 —— 不会报错。\n测试拿 `arch_height` 与本接口逐位对（后端库就是那个 oracle）。\n\n⚠️ 这条线**不会**产生非有限值：`arch_height` 里 `np.maximum(inner, 0.0)`\n把负的根号内挡成 0，所以任何 x 上都是有限的。前端可直接画，\n不必像 `layer-timeheight` 那样担心 null。",
+        "operationId": "get_arch_api_field_arch_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Arch Api Field Arch Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/field/sections": {
+      "get": {
+        "tags": [
+          "field"
+        ],
+        "summary": "Get Sections",
+        "description": "V5 切面场：三个断面的网格 + 无测量带下标 + 拱线 + 共享色标范围。",
+        "operationId": "get_sections_api_field_sections_get",
+        "parameters": [
+          {
+            "name": "t_index",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "时刻下标",
+              "default": 0,
+              "title": "T Index"
+            },
+            "description": "时刻下标"
+          },
+          {
+            "name": "preset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "网格档位",
+              "default": "standard",
+              "title": "Preset"
+            },
+            "description": "网格档位"
+          },
+          {
+            "name": "monotonic",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "是否施加竖直软单调投影",
+              "default": true,
+              "title": "Monotonic"
+            },
+            "description": "是否施加竖直软单调投影"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Sections Api Field Sections Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/field/curve": {
+      "get": {
+        "tags": [
+          "field"
+        ],
+        "summary": "Get Curve",
+        "description": "某个点在整个时间轴上的温度。拱外或落在无测量带里 → 全 null、「无定义」。",
+        "operationId": "get_curve_api_field_curve_get",
+        "parameters": [
+          {
+            "name": "shed",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "棚号",
+              "title": "Shed"
+            },
+            "description": "棚号"
+          },
+          {
+            "name": "x",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "description": "棚长方向坐标 / m",
+              "title": "X"
+            },
+            "description": "棚长方向坐标 / m"
+          },
+          {
+            "name": "z",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "description": "高度 / m",
+              "title": "Z"
+            },
+            "description": "高度 / m"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Curve Api Field Curve Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/field/compare": {
+      "get": {
+        "tags": [
+          "field"
+        ],
+        "summary": "Get Compare",
+        "description": "竖直软单调投影的前后对比。**门禁关闭时两张图逐位相同**（夜里无光照）。\n\n这里走 `field_at(y = 该棚的 y)` 而不是 `section_field`：y 恰好撞上某个棚的 y 时\n`field_at` 会短路到该断面（build.py:139-142），两条路径**逐位相等** ——\n第四格画的因此就是第一格那片场。用 `section_field` 也行，但那样\n「两张图必须同源」就只是一句约定，而不是一条可测的性质。",
+        "operationId": "get_compare_api_field_compare_get",
+        "parameters": [
+          {
+            "name": "shed",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "棚号",
+              "title": "Shed"
+            },
+            "description": "棚号"
+          },
+          {
+            "name": "t_index",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "时刻下标",
+              "default": 0,
+              "title": "T Index"
+            },
+            "description": "时刻下标"
+          },
+          {
+            "name": "preset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "网格档位",
+              "default": "standard",
+              "title": "Preset"
+            },
+            "description": "网格档位"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Compare Api Field Compare Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/field/volume": {
+      "get": {
+        "tags": [
+          "field"
+        ],
+        "summary": "Get Volume",
+        "description": "V7 棚体三维温度场：一整卷按 y 切开的二维场。\n\n**逐片调用 `field_at`，一行 R2 的逻辑都不重写**（硬约束 1）。夹住 y 的是哪两个\n断面、怎么按 1/dy 加权、单调投影为什么在混合**之后**施加 —— 全部留在\n`tfield.field.build` 里。这里只做循环与装箱。\n\n不做那个「缓存三个断面、逐片自己混合」的优化（实测能把 1.22 s 压到约 0.06 s）：\n它要复现 `field_at` 的整套调度（可用断面的取用、两端的退化、`Y[lo] == y` 的短路、\n投影施加在混合之后），那是把 R2 实现第二遍 —— 两条路径漂了不报错，\n正是硬约束 1 要防的事。1.22 s 已经够用（规格书 §4.1）。\n\n**参数的合法性全在 `deps.get_pipeline()` 之前判完**：敲错一个参数不该等一次\nfit 才听到「参数不对」，而 fit 要几十秒。`test_拒绝路径不碰管线` 钉着这条。\n\n片数**先算、后判、最后才分配**：`_y_planes` 会按片数建一个数组，\n而 `y_step = 1e-9` 那一步要 144 GB。先分配再判上限的话，参数坏掉时\n用户拿到的不是 400 而是 OOM。`test_片数超限时不去分配那个数组` 钉着这条。",
+        "operationId": "get_volume_api_field_volume_get",
+        "parameters": [
+          {
+            "name": "t_index",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "时刻下标",
+              "default": 0,
+              "title": "T Index"
+            },
+            "description": "时刻下标"
+          },
+          {
+            "name": "preset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "网格档位",
+              "default": "standard",
+              "title": "Preset"
+            },
+            "description": "网格档位"
+          },
+          {
+            "name": "monotonic",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "是否施加竖直软单调投影",
+              "default": true,
+              "title": "Monotonic"
+            },
+            "description": "是否施加竖直软单调投影"
+          },
+          {
+            "name": "y_step",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "description": "沿棚长 y 的切片间隔 / m",
+              "default": 0.5,
+              "title": "Y Step"
+            },
+            "description": "沿棚长 y 的切片间隔 / m"
+          },
+          {
+            "name": "y_min",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "description": "y 的起点 / m",
+              "default": 0.0,
+              "title": "Y Min"
+            },
+            "description": "y 的起点 / m"
+          },
+          {
+            "name": "y_max",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "description": "y 的终点 / m",
+              "default": 18.0,
+              "title": "Y Max"
+            },
+            "description": "y 的终点 / m"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Volume Api Field Volume Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/features": {
+      "get": {
+        "tags": [
+          "features"
+        ],
+        "summary": "Get Features",
+        "description": "四组特征各产出哪些列，以及每组在说什么。",
+        "operationId": "get_features_api_features_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Features Api Features Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/calibration": {
+      "get": {
+        "tags": [
+          "calibration"
+        ],
+        "summary": "Get Calibration",
+        "operationId": "get_calibration_api_calibration_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Calibration Api Calibration Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/calibration/diagnostics": {
+      "post": {
+        "tags": [
+          "calibration"
+        ],
+        "summary": "Post Diagnostics",
+        "description": "页② 第三段那个「开始训练」按钮打的就是这一条（规格书 §二、§8.4）。\n\n它是一次**真实的训练**：八折各拟合一遍，只是不搜参数。\n\n**为什么是 POST 而不是 GET**：参数第一次进了这条链的输入。留着 GET\n就有两条入口、两种「用哪套值」的含义，而这一屏最不能出的错就是\n「这个数是拿哪套参数算的」说不清。一条入口一种含义 ——\n与同日删掉那张「连接表」是同一条理由。\n\n诊断是**参数的函数**（值 → 图），不是包的一部分：写进包会让老包没有图、\n要看图就得重标一次（裁定 C）。\n\n没包时报 409 而**不是** 200 + `present: false`：这一条没有「兜底精度」\n可以报 —— 兜底参数配上一堆图，只会让人以为那是一个可以用的模型。\n空态下**面板仍然有值**（`_panel` 与包无关），所以这一步的 409\n只可能是「没有包」，不会是「请求体不合法」。\n\n⚠️ **为什么是普通的 `def`，不是 `async def`**（复查时改回来的，别再改回去）：\n这一条从头到尾是**同步算力** —— 八折各拟合一遍加插值，实测这份数据集\n一次约 **15.8 秒**。FastAPI 对 `async def` 处理器的分派方式是\n**直接在事件循环上跑**，于是每来一次缓存未命中的「开始训练」，\n`/api/health`、驱动参数优选进度的那条 1 秒轮询、页③ 的场与体、\n页⑤ 的实时帧，全都会一起等这十几秒。写成 `def`，FastAPI 把它丢进\n线程池，事件循环是空的。\n\n请求体因此交给 `Body(None)` 让框架自己解析 —— 这边不再需要 `await`，\n也就没有理由当协程函数。**这条性质有源码级守卫钉着**：\n`tests/test_routes_offload_heavy_work.py`。真要 `async`，就把下面那段\n同步算力交给 `run_in_threadpool`，而不是把这里的 `def` 改回 `async`。",
+        "operationId": "post_diagnostics_api_calibration_diagnostics_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Post Diagnostics Api Calibration Diagnostics Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/calibration/jobs": {
+      "post": {
+        "tags": [
+          "calibration"
+        ],
+        "summary": "Start Job",
+        "description": "启动一次标定。已经在跑时 **409 + 那个 job 的 id**（规格书 §4.5）。\n\n用 `JSONResponse` 而不是 `raise HTTPException`：`detail` 要给前端\n`client.ts` 当**一句人话**读（它是 `String(body.detail)`），而 job id\n要另带一格。两者塞进同一个字符串，前端就只能靠解析文本拿 id ——\n那是把一句文案当成协议。\n\n*为什么不排队*：「排在你前面还有一次」是另一个子系统（队列、位置、\n前面那次失败了你怎么办），而它解决的是一个**用户点重了**的问题。指路就够了。\n*为什么不幂等返回 200 + 旧 id*：那会让「我点的是新的一次」与「系统给我的是\n上一次」说不清 —— 而这一页最不能出的错就是「屏上这个数是哪一次算的」说不清。",
+        "operationId": "start_job_api_calibration_jobs_post",
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/calibration/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "calibration"
+        ],
+        "summary": "Get Job",
+        "description": "轮询。**不读包、不算任何东西** —— 它答的是「跑到哪一句了」。",
+        "operationId": "get_job_api_calibration_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Job Api Calibration Jobs  Job Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "calibration"
+        ],
+        "summary": "Cancel Job",
+        "description": "取消。真正的取消点在库里那个 `should_stop` 下一次被问到时。\n\n⚠️ **这里不把状态改成 `cancelled`**：提前改的话，界面会在库里那次搜索\n还没真的停下来的时候说「已取消」—— 而那正是验收要否掉的一幕。\n回的是**当下**的状态，前端接着轮询，让后端说。",
+        "operationId": "cancel_job_api_calibration_jobs__job_id__delete",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Cancel Job Api Calibration Jobs  Job Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/live/status": {
+      "get": {
+        "tags": [
+          "live"
+        ],
+        "summary": "Get Status",
+        "description": "状态。**永不失败、永不触发布管线、永不 append。**",
+        "operationId": "get_status_api_live_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Status Api Live Status Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/live/prepare": {
+      "post": {
+        "tags": [
+          "live"
+        ],
+        "summary": "Post Prepare",
+        "description": "建实时源自己的那份管线。幂等；**同步**，几十秒。",
+        "operationId": "post_prepare_api_live_prepare_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Post Prepare Api Live Prepare Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/live/start": {
+      "post": {
+        "tags": [
+          "live"
+        ],
+        "summary": "Post Start",
+        "operationId": "post_start_api_live_start_post",
+        "parameters": [
+          {
+            "name": "from_n",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "从第几帧开始",
+              "title": "From N"
+            },
+            "description": "从第几帧开始"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Post Start Api Live Start Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/live/pause": {
+      "post": {
+        "tags": [
+          "live"
+        ],
+        "summary": "Post Pause",
+        "operationId": "post_pause_api_live_pause_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Post Pause Api Live Pause Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/live/next": {
+      "post": {
+        "tags": [
+          "live"
+        ],
+        "summary": "Post Next",
+        "description": "手动前进一格。**上篇的规格里没有这一条** —— 自动与手动两档都要，\n没有它手动那一档就没接口。",
+        "operationId": "post_next_api_live_next_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Post Next Api Live Next Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/live/frame/{n}": {
+      "get": {
+        "tags": [
+          "live"
+        ],
+        "summary": "Get Frame",
+        "operationId": "get_frame_api_live_frame__n__get",
+        "parameters": [
+          {
+            "name": "n",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "N"
+            }
+          },
+          {
+            "name": "preset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "网格档位",
+              "default": "standard",
+              "title": "Preset"
+            },
+            "description": "网格档位"
+          },
+          {
+            "name": "monotonic",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "是否施加竖直软单调投影",
+              "default": true,
+              "title": "Monotonic"
+            },
+            "description": "是否施加竖直软单调投影"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Frame Api Live Frame  N  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/live/volume/{n}": {
+      "get": {
+        "tags": [
+          "live"
+        ],
+        "summary": "Get Volume",
+        "description": "约 1.2 秒（与 `/api/field/volume` 同量级）—— 几十秒是 **fit** 的量级，\n那是 `prepare` 的事。",
+        "operationId": "get_volume_api_live_volume__n__get",
+        "parameters": [
+          {
+            "name": "n",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "N"
+            }
+          },
+          {
+            "name": "preset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "网格档位",
+              "default": "standard",
+              "title": "Preset"
+            },
+            "description": "网格档位"
+          },
+          {
+            "name": "monotonic",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "是否施加竖直软单调投影",
+              "default": true,
+              "title": "Monotonic"
+            },
+            "description": "是否施加竖直软单调投影"
+          },
+          {
+            "name": "y_step",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "description": "沿棚长 y 的切片间隔 / m",
+              "default": 0.5,
+              "title": "Y Step"
+            },
+            "description": "沿棚长 y 的切片间隔 / m"
+          },
+          {
+            "name": "y_min",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "description": "y 的起点 / m",
+              "default": 0.0,
+              "title": "Y Min"
+            },
+            "description": "y 的起点 / m"
+          },
+          {
+            "name": "y_max",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "description": "y 的终点 / m",
+              "default": 18.0,
+              "title": "Y Max"
+            },
+            "description": "y 的终点 / m"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Volume Api Live Volume  N  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/models": {
+      "get": {
+        "tags": [
+          "models"
+        ],
+        "summary": "List Models",
+        "description": "列表。每行附 `compatible` / `borrowed` / `why`（相对**当前**数据集判定）。\n\n`compatible` = **能拿来构场**，只看特征组那一轴（用户裁定：模型不绑数据集，\n库里有就能挑）。`borrowed` = 能用、但这一份的参数**不是**为当前这份数据标\n的 —— 两轴各自的独立事实，屏上因此有三档：用不了 / 本地的 / 借来的。\n\n⚠️ **没有数据集时不再 409**（规格书 D5）。这一格原先每次都要\n`deps.get_train_dataset()`，于是「模型库」这个动作在没有数据集时整页打不开 ——\n而「库里有哪些模型」这件事**本来就不需要数据集**。降级之后，能不能用成了\n**这一行自己的性质**：有没有成品。",
+        "operationId": "list_models_api_models_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response List Models Api Models Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "models"
+        ],
+        "summary": "Save Model",
+        "description": "把**刚跑完的那一次**存进库，并置为当前（规格书 D7）。\n\n**前端只发一个名字。** 落库的那一份是从 job 对象上取的，不走浏览器搬\n794 KB —— 也不给前端一个「我随便发一份包上来」的口子。\n\n409 而不是 422 的分界：请求本身没错（名字是好的），是**现在不能做这件事**\n—— 手上没有刚跑完的那一份。也不许「凭当前模型再造一行」：那就成了\n「保存」一个已经保存过的东西，而库里会多出一行谁都分不清的副本。\n\n⚠️ 形参写 `Any` 而不是 `dict[str, Any]`：写了 `dict` 之后 FastAPI 自己\n就会把数组 / 字符串这一类请求体拦成 422，下面那句 `_NAME_HINT` 便成了\n**够不到的死代码**。与 `calibration.py` 的 `post_diagnostics` 同一个写法。",
+        "operationId": "save_model_api_models_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Save Model Api Models Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/models/{model_id}": {
+      "get": {
+        "tags": [
+          "models"
+        ],
+        "summary": "Get Model",
+        "description": "详情：参数、效果、搜索区间。**不含逐测点表，也不含 trials 逐条。**\n\n不带 trials 是量级问题（794 KB 的大头在屏上没地方放，也没有这个需求）；\n不带逐测点表是**用户已经裁定过的事** —— 他刚把页② 那张逐点误差表撤掉\n（「没必要展示」），详情页再摆一张就是同一个东西换个地方（规格书 §6.1）。",
+        "operationId": "get_model_api_models__model_id__get",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Model Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Model Api Models  Model Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/models/{model_id}/current": {
+      "post": {
+        "tags": [
+          "models"
+        ],
+        "summary": "Set Current",
+        "description": "设为当前。**顺手把「刚跑完那一份」摘掉。**\n\n不摘的话第一顺位永远命中它，用户刚点的这个模型在页③ 上一动不动，\n而屏上没有一个字提示这件事。规格书 §5.4 只写了「保存」与「再跑一次」\n两个退场条件；这一条是第三个，同一条理由。",
+        "operationId": "set_current_api_models__model_id__current_post",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Model Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Current Api Models  Model Id  Current Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Health Api Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

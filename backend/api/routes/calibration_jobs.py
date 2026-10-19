@@ -18,7 +18,7 @@ from starlette.responses import JSONResponse
 from tfield import config as C
 from tfield.calibration import CalibrationAborted, run_calibration
 
-from .. import deps, jobs, paths
+from .. import deps, jobs, paths, business_client
 
 router = APIRouter(tags=["calibration"])
 
@@ -43,6 +43,8 @@ def start_job() -> JSONResponse:
     上一次」说不清 —— 而这一页最不能出的错就是「屏上这个数是哪一次算的」说不清。
     """
     running = jobs.current()
+    if business_client.java_store():
+        raise HTTPException(409, "训练任务已由 Java 管理，请通过业务服务提交。")
     if running is not None and running.state == jobs.RUNNING:
         return JSONResponse(status_code=409,
                             content={"detail": "已经有一次标定在跑",

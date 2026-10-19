@@ -37,6 +37,7 @@ from tfield.pipeline import FieldPipeline, PipelineConfig
 
 from . import models_store, paths
 from .errors import NoDatasetError
+from .dataset_context import current_context
 
 Capacity = int
 FileKey = tuple[str, int, int]
@@ -134,6 +135,11 @@ def _artifact_of(bundle) -> tuple[bytes | None, str]:
     """
     if bundle is None:
         return None, ""
+    from .model_context import current_model_context
+    model_context = current_model_context()
+    if model_context is not None and model_context.result_job_id is not None:
+        from . import managed_training
+        return managed_training.result_artifact(model_context.result_job_id, bundle), ""
     try:
         mid = models_store.current_id()
         if mid is None:
@@ -271,11 +277,8 @@ _PIPELINES = PipelineCache()
 
 
 # ══════════════════════════ 当前数据集 ══════════════════════════
-#: 「现在在用哪一份」。**只活在内存里**（规格书 §1.3 裁定 A）：不写状态文件，
-#: 重启回空态 —— 与「启动时是空态」同一条规则。
-#:
-#: 为什么不做成 `paths.current_json()`：那会让「重启后屏幕上是什么」不再只由
-#: 这次操作决定，而消灭那件事正是这个功能的目的。
+#: 旧 Python 独立入口的当前选择，重启回空态。Java 入口优先使用每次请求的
+#: DatasetContext，其当前选择由 MySQL 的默认工作区记录恢复。
 _CURRENT: pathlib.Path | None = None
 
 
@@ -287,9 +290,22 @@ def set_current_dataset(path: pathlib.Path | str) -> None:
 
 def current_dataset_path() -> pathlib.Path:
     """现在在用的那一份。空态时抛 `NoDatasetError`（由 `main.py` 翻成 409）。"""
+    context = current_context()
+    if context is not None:
+        if context.path is None:
+            raise NoDatasetError()
+        return context.path
     if _CURRENT is None:
         raise NoDatasetError()
     return _CURRENT
+
+
+def current_dataset_name() -> str:
+    """登记文件名与实际不可变存储文件名分开。"""
+    context = current_context()
+    if context is not None and context.path is not None:
+        return context.filename
+    return current_dataset_path().name
 
 
 def clear_current_dataset() -> None:
@@ -365,7 +381,7 @@ def unsaved_bundle() -> CalibrationBundle | None:
     （`_work` 与 `_run` 都会把 result 清掉，这里再判一次是防将来有人改那两处）。
     """
     from . import jobs
-    job = jobs.current()
+    job = jobs.current_for_dataset()
     if job is None or job.state != jobs.DONE:
         return None
     return job.result
@@ -505,7 +521,7 @@ def current_bundle(groups: tuple[str, ...] | None = None,
     fit = model_fit(dataset_sig=row.dataset_sig, groups_sig=row.groups_sig,
                     ds=ds, current_groups_sig=groups_signature(groups),
                     data_file=row.data_file,
-                    current_file="" if explicit else current_dataset_path().name)
+                    current_file="" if explicit else current_dataset_name())
     if not fit.same_groups:
         return CurrentBundle(bundle=None, source=None)
     # 报的是 `_BORROWED_NOTE` 这句**统一措辞**，不是 `fit.why` 那句带文件名的
@@ -548,9 +564,15 @@ def get_dataset(path: pathlib.Path | str | None = None) -> Dataset:
     「交付数据集」在启动时自动生效 —— 与规格书 §1.1「不预置、不代劳」
     正相反，而且它**不报错**：界面看起来一切正常，只是用的不是用户导的那一份。
     """
-    if path is None:
+    contextual = path is None
+    if contextual:
         path = current_dataset_path()
-    return _CACHE.get(path)
+    dataset = _CACHE.get(path)
+    context = current_context() if contextual else None
+    if context is not None and context.signature != dataset.signature:
+        from dataclasses import replace
+        return replace(dataset, signature=context.signature)
+    return dataset
 
 
 def probe_dataset(path: pathlib.Path | str) -> Dataset:
@@ -579,17 +601,22 @@ def probe_dataset(path: pathlib.Path | str) -> Dataset:
 #: **同一个** Dataset 对象 —— `PipelineCache` 的键虽然只看签名，
 #: 但「同一次会话里训练段是同一份」这件事本身值得成立。
 _HOLDOUTS: dict[tuple[str, str], Holdout] = {}
+_HOLDOUT_LOCK = threading.Lock()
 
 
 def _holdout(path: pathlib.Path | str | None = None,
              cutoff: pd.Timestamp = HOLDOUT_CUTOFF) -> Holdout:
     ds = get_dataset(path)
     key = (ds.signature, str(pd.Timestamp(cutoff)))
-    hit = _HOLDOUTS.get(key)
-    if hit is None:
-        hit = split_holdout(ds, pd.Timestamp(cutoff))
+    with _HOLDOUT_LOCK:
+        hit = _HOLDOUTS.pop(key, None)
+        if hit is None:
+            hit = split_holdout(ds, pd.Timestamp(cutoff))
         _HOLDOUTS[key] = hit
-    return hit
+        # Java 保留多个不可变版本，不再每次上传全局清空，需限制切分缓存容量。
+        while len(_HOLDOUTS) > 4:
+            _HOLDOUTS.pop(next(iter(_HOLDOUTS)))
+        return hit
 
 
 def get_train_dataset(path: pathlib.Path | str | None = None,
@@ -648,6 +675,7 @@ def reset_cache() -> None:
     global _CACHE, _PIPELINES
     _CACHE = DatasetCache()
     _PIPELINES = PipelineCache()
-    _HOLDOUTS.clear()      # 切分结果挂着旧的 Dataset 对象，留着就是「换了数据集还用旧训练段」
+    with _HOLDOUT_LOCK:
+        _HOLDOUTS.clear()
     for fn in _INVALIDATORS:      # ← 第四个：实时源（由 api/live.py 登记）
         fn()

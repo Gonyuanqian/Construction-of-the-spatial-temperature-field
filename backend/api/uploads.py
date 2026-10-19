@@ -180,6 +180,15 @@ def accept(data: bytes, name: str, *, dest_dir: pathlib.Path) -> Uploaded:
                     time_start=ts.iloc[0].isoformat(), time_end=ts.iloc[-1].isoformat())
 
 
+def validate_existing(path: pathlib.Path) -> Uploaded:
+    """验证已落盘的不可变文件，复用上传的校验逻辑且不切换当前选择。"""
+    ds = _load_or_reject(path)
+    ts = pd.to_datetime(ds.wide[C.COL_TIMESTAMP])
+    return Uploaded(path=path, n_times=int(ds.wide.shape[0]),
+                    n_columns=int(ds.wide.shape[1]),
+                    time_start=ts.iloc[0].isoformat(), time_end=ts.iloc[-1].isoformat())
+
+
 def _load_or_reject(path: pathlib.Path):
     """用库的 loader 加载并校验**训练段非空**。不通过就抛 `Rejected(400, ...)`。"""
     try:

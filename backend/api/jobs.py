@@ -1,4 +1,7 @@
-"""长任务的记账本：提交、轮询、取消。
+"""旧独立模式的内存任务；Java 模式使用 managed_training 与持久化引用。
+
+下面关于内存生命周期的说明适用于 legacy 模式。Java 模式的当前结果通过
+current_for_dataset 转到请求指定的已完成暂存结果，公开任务接口由 Java 负责。
 
 **为什么单独一个模块**：它不是路由（`api/routes/` 下的东西只负责把 HTTP
 翻成函数调用），也不属于 `deps`（那个管数据集与管线）。它管的是「一个
@@ -15,10 +18,13 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from contextvars import copy_context
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
+
+from .dataset_context import current_context
 
 #: 四态。字符串常量而不是 Enum：它们要原样进 JSON，Enum 还要多一层转换，
 #: 而多出来的那层正是「某个分支忘了转」的地方。
@@ -47,6 +53,7 @@ class Job:
     #: 不进 `to_dict()` 不是省事：轮询接口每次都要序列化它，而这一份是
     #: 794 KB —— 前端每两秒问一次「跑到哪一句了」，不该拖着 794 KB 走。
     result: Any = None
+    dataset_id: str | None = None
 
     def elapsed_s(self) -> float:
         now = self.finished if self.finished is not None else time.monotonic()
@@ -84,6 +91,23 @@ def current() -> Job | None:
     """当前 / 最近一次 job。一次都没跑过就是 None（刚启动时就是它）。"""
     with _LOCK:
         return _JOBS.get(_CURRENT) if _CURRENT is not None else None
+
+
+def current_for_dataset() -> Job | None:
+    """读取当前数据集的结果，避免显示另一数据集的未保存结果。"""
+    from .model_context import current_model_context
+    context_model = current_model_context()
+    if context_model is not None:
+        if context_model.result_job_id is None:
+            return None
+        from . import managed_training
+        return managed_training.result_job(context_model.result_job_id)
+    job = current()
+    context = current_context()
+    if job is not None and context is not None:
+        if job.dataset_id != context.dataset_id:
+            return None
+    return job
 
 
 def clear() -> None:
@@ -128,12 +152,15 @@ def submit(work: Callable[[Job], None]) -> Job:
     没下结论就返回的那些由 `_run` 兜成 `failed`。
     """
     global _CURRENT
+    dataset = current_context()
+    context = copy_context()
     job = Job(id=uuid.uuid4().hex[:12],
-              created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+              created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+              dataset_id=None if dataset is None else dataset.dataset_id)
     with _LOCK:
         _JOBS[job.id] = job
         _CURRENT = job.id
-    _EXECUTOR.submit(_run, work, job)
+    _EXECUTOR.submit(context.run, _run, work, job)
     return job
 
 
