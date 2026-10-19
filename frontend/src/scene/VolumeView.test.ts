@@ -61,6 +61,26 @@ async function submitQuery(w: ReturnType<typeof mount>) {
 describe('页③ 三维面板', () => {
   beforeEach(() => { vi.restoreAllMocks() })
 
+  it('未选点或未查询时保留完整结果字段，清除选点后恢复占位', async () => {
+    stub()
+    const w = await mountView()
+    const selected = () => w.get('table[aria-label="画布选点读数"]')
+    const queried = () => w.get('table[aria-label="坐标查询结果"]')
+    expect(selected().findAll('tr')).toHaveLength(4)
+    expect(queried().findAll('tr')).toHaveLength(3)
+    expect(selected().text()).toContain('待选点')
+    expect(queried().text()).toContain('待查询')
+
+    const scene = w.findComponent({ name: 'VolumeScene' })
+    scene.vm.$emit('pick', { planeIndex: 0, ix: 1, iz: 1 })
+    await flushPromises()
+    expect(selected().text()).toContain('(0.70, 3.00, 0.70)')
+    await w.get('button[aria-label="取消钉住"]').trigger('click')
+    expect(selected().findAll('tr')).toHaveLength(4)
+    expect(selected().text()).toContain('待选点')
+    expect(queried().text()).toContain('待查询')
+  })
+
   it('一挂上就去取这一卷，参数只带 t_index（其余走后端默认）', async () => {
     const urls = stub()
     await mountView()
@@ -201,7 +221,9 @@ describe('页③ 三维面板', () => {
     await flushPromises()
     const t = w.find('table')
     expect(t.text()).toContain('(0.70, 3.00, 0.70)')     // 还是钉住的那个
-    expect(t.text()).toContain('已钉住')
+    expect(t.text()).not.toContain('已钉住')
+    expect(t.text()).not.toContain('读数不跟鼠标跑')
+    expect(w.find('button[aria-label="取消钉住"]').exists()).toBe(true)
   })
 
   it('取消钉住之后读数跟着鼠标走', async () => {
@@ -211,9 +233,9 @@ describe('页③ 三维面板', () => {
     scene.vm.$emit('hover', { planeIndex: 0, ix: 1, iz: 1 })
     scene.vm.$emit('pick', { planeIndex: 0, ix: 1, iz: 1 })
     await flushPromises()
-    const btn = w.findAll('button').find((b) => b.text().includes('取消钉住'))
-    expect(btn, '取消钉住按钮不在').toBeTruthy()
-    await btn!.trigger('click')
+    const btn = w.find('button[aria-label="取消钉住"]')
+    expect(btn.exists(), '取消钉住按钮不在').toBe(true)
+    await btn.trigger('click')
     await flushPromises()
     scene.vm.$emit('hover', { planeIndex: 1, ix: 3, iz: 0 })
     await flushPromises()
@@ -243,7 +265,9 @@ describe('页③ 三维面板', () => {
     await w.setProps({ tIndex: 13 })
     await new Promise((r) => setTimeout(r, 400))
     await flushPromises()
-    expect(w.find('table').exists(), '越界的钉住没被放掉').toBe(false)
+    expect(w.find('button[aria-label="取消钉住"]').exists(), '越界的钉住没被放掉').toBe(false)
+    expect(w.find('.pick-readout').classes()).toContain('is-empty')
+    expect(w.find('.pick-readout').text()).toContain('待选点')
   })
 
   it('**坐标查询：同一个点，两条路给的答案一定一样**', async () => {
@@ -282,8 +306,7 @@ describe('页③ 三维面板', () => {
     // 用户输的是 5.4、拿到的是 5.5 的值，不写出来就是撒谎。
     stub()
     const w = await mountView()
-    // 先悬停一次：不悬停的话读数表不渲染，查询表就是第 0 张 ——
-    // 而下面按 `[1]` 取，取的是「查询那一张」这件事才有意义。
+    // 先填充画布读数，确认它与下面的坐标查询结果各自保留自己的位置。
     w.findComponent({ name: 'VolumeScene' }).vm.$emit('hover', { planeIndex: 0, ix: 1, iz: 1 })
     await flushPromises()
     await typeQuery(w, ['1.23', '3.4', '0.66'])
@@ -356,28 +379,19 @@ describe('页③ 三维面板', () => {
 })
 
 /**
- * 2026-10-09 用户裁定：三维那一块原来是**从上到下一条**——画布横铺整页（`width:100%`），
- * 下面竖着堆剖切刀、棚体示意长度、读数表、坐标查询。宽屏上画布占满整幅、三维内容
- * 只是中间一条，而四块控件在下面各占一整行。
- *
- * 现在改成三栏：**左＝改几何/切法，中＝看场，右＝问数**。画布因此被限制在中间那
- * 一栏里，不再是整页宽。
+ * 训练页保留三张独立卡片：画布在左，查询在右上，几何与剖切在查询下方。
+ * 这里检查各张卡片的内容归属，实际行列位置需要浏览器布局验证。
  */
-describe('三栏版面：左改几何、中看场、右问数', () => {
+describe('训练页左右版面：画布与查询、几何控制', () => {
   /**
-   * 三栏各自那一栏。**按类名取，不按位置取**（2026-10-12）。
-   *
-   * ⚠️ 为什么换成按类名：页⑤ 要的是右栏先摆「问数」，而页③ 的栏位次序写死
-   * 在 CSS 的 `grid-column` 上 —— 于是源码次序与屏上次序不再是一回事
-   * （源码 `[问数, 中栏, 几何]`，屏上 `[几何, 中栏, 问数]`）。
-   * 按位置取的话这条助手会把两边读反，而它给出的**每一条**断言照样绿。
-   * 取不到就当场失败 —— 免得后面拿着 `undefined` 去查东西。
+   * 按类名找到三张卡片，不把源码次序当成屏幕位置。
+   * 实时页复用模板的 Teleport 顺序，训练页由 CSS 命名区域负责排列。
    */
   function columns(w: ReturnType<typeof mount>) {
     const grid = w.find('.vol-grid')
-    expect(grid.exists(), '没有三栏这一层').toBe(true)
+    expect(grid.exists(), '没有三维布局容器').toBe(true)
     const cols = Array.from(grid.element.children) as HTMLElement[]
-    expect(cols, '不是三栏').toHaveLength(3)
+    expect(cols, '应保留三张卡片').toHaveLength(3)
     const pick = (cls: string): HTMLElement => {
       const el = cols.find((c) => c.classList.contains(cls))
       expect(el, `没有 ${cls} 那一栏`).toBeTruthy()
@@ -386,20 +400,20 @@ describe('三栏版面：左改几何、中看场、右问数', () => {
     return { geom: pick('vol-geom'), stage: pick('vol-stage'), ask: pick('vol-ask') }
   }
 
-  it('画布在中栏；只改几何的那块在左栏，问数的那块在右栏', async () => {
+  it('画布、几何与剖切、查询分别保留各自的内容', async () => {
     stub()
     const w = await mountView()
     w.findComponent({ name: 'VolumeScene' }).vm.$emit('ready', true)
     await flushPromises()
     const { geom, stage, ask } = columns(w)
 
-    expect(stage.querySelector('.scene-stub'), '三维画布不在中栏').toBeTruthy()
+    expect(stage.querySelector('.scene-stub'), '三维画布不在画布卡片').toBeTruthy()
     expect(geom.textContent).toContain('棚体示意长度')
     expect(ask.textContent).toContain('查一个坐标')
     // 反着再钉一遍：只写正例挡不住「三栏各装了一点」——那时候两边都含关键词，
     // 两条正例断言照样绿，而版面已经不是这个名字说的那个样子了。
-    expect(geom.textContent, '问数那块跑到左边去了').not.toContain('查一个坐标')
-    expect(ask.textContent, '改几何那块跑到右边去了').not.toContain('棚体示意长度')
+    expect(geom.textContent, '几何卡片混入坐标查询').not.toContain('查一个坐标')
+    expect(ask.textContent, '查询卡片混入几何设置').not.toContain('棚体示意长度')
     expect(ask.querySelector('.scene-stub'), '画布被复制到了右栏').toBeNull()
   })
 
@@ -412,7 +426,7 @@ describe('三栏版面：左改几何、中看场、右问数', () => {
     expect(ask.querySelector('table'), '读数表不在右栏').toBeTruthy()
   })
 
-  it('三栏各是一张卡片 —— 屏上才有「三个部分」这道界限', async () => {
+  it('三个模块各自复用统一卡片', async () => {
     // 2026-10-09 用户裁定：三栏拆开之后，三个部分直接浮在纸底上，只靠栏里那几个
     // `<fieldset>` 的细线互相区分。而同一页上「三个断面的温度场」「ΔT」都是
     // `<Card class="block">` —— **三维这一块是唯一一块没套卡片的**。
@@ -423,7 +437,7 @@ describe('三栏版面：左改几何、中看场、右问数', () => {
     const w = await mountView()
     w.findComponent({ name: 'VolumeScene' }).vm.$emit('ready', true)
     await flushPromises()
-    const names = ['几何与剖切', '中栏', '问数']
+    const names = ['几何与剖切', '画布', '问数']
     Object.values(columns(w)).forEach((col, i) => {
       expect(col.classList.contains('card'), `${names[i]}不是一张卡片`).toBe(true)
     })

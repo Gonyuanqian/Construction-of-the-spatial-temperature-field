@@ -1,7 +1,7 @@
 /// <reference types="node" />
 // @vitest-environment node
 /**
- * 实时那一屏的左栏是**五项演示占位**（2026-10-12 用户裁定，照参考图补齐）。
+ * 实时模式左栏的四项导航。
  *
  * ⚠️ 为什么不并进 `guards.test.ts`：那一条「未开放项必带理由」只断长度，
  * 断不到**次序与数量**，而这一次裁定的内容恰恰就是数量。
@@ -13,7 +13,7 @@ import { LIVE_NAV_ITEMS, NAV_ITEMS } from './copy'
 describe('实时那一屏的左栏', () => {
   it('是四项，次序照参考图（「首页」已并入「实时监测」）', () => {
     expect(LIVE_NAV_ITEMS.map((i) => i.label)).toEqual([
-      '实时监测', '三维可视化', '历史数据', '系统设置',
+      '实时监测', '温度场智能助手', '历史数据', '系统设置',
     ])
   })
 
@@ -31,7 +31,7 @@ describe('实时那一屏的左栏', () => {
   it('四项各配一枚线框图标，名字不重样', () => {
     // 名字要与 `design/icons.ts` 对得上 —— 对不上时屏上是**一处空白**，
     // 而组件不会报错（`Icon.vue` 只按名字取形状）。
-    expect(LIVE_NAV_ITEMS.map((i) => i.icon)).toEqual(['pulse', 'cube', 'clock', 'gear'])
+    expect(LIVE_NAV_ITEMS.map((i) => i.icon)).toEqual(['pulse', 'chat', 'clock', 'gear'])
   })
 
   it('训练那四页的左栏一个字节都没动', () => {

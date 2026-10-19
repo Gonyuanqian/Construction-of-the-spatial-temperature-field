@@ -61,9 +61,7 @@ export const NAV_ITEMS = [
  * 标签、次序、`enabled` 一个都不动（`App.test.ts` 按 `NAV_ITEMS` 推导着断言）。
  * 这一份只走 `App.vue` → `NavRail` 的 `items`。
  *
- * ⚠️ 「三维可视化」这一项**不是这一屏自己的入口** —— 三维就在这一屏中间。
- * 它是参考图给的位置，说的是「实时这一块将来不止一屏」。写清楚是为了下一个人
- * 别把它当成重复的导航。
+ * 「温度场智能助手」预留温度查询、结果解释与视图联动入口，页面接入后再开放。
  *
  * ⚠️ 后三句 `why` 的长度都要大于 10 个字符 —— `guards.test.ts` 有一条守卫
  * 扫「未开放项必带理由」，`LIVE_NAV_ITEMS` 也在它扫的名单里。已开放的那一项
@@ -77,8 +75,8 @@ export const LIVE_NAV_ITEMS = [
     key: 'live', label: '实时监测', to: '/live', enabled: true, icon: 'pulse', why: '',
   },
   {
-    key: 'volume', label: '三维可视化', to: '/volume', enabled: false, icon: 'cube',
-    why: '演示屏上留的位置。三维就在这一屏中间，单独一整页留给将来调视角用。',
+    key: 'assistant', label: '温度场智能助手', to: '/assistant', enabled: false, icon: 'chat',
+    why: '尚未开放。计划支持温度查询、结果解释与三维视图联动。',
   },
   {
     key: 'history', label: '历史数据', to: '/history', enabled: false, icon: 'clock',
