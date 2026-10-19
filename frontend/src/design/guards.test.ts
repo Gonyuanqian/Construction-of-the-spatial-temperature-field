@@ -382,8 +382,8 @@ describe('文案只有一个来源', () => {
     }
     expect(bad, '这些 .vue 自己写死了标定图章的话').toEqual([])
 
-    // 正着也钉一遍：**四处**读取点（页③ 的指标卡与图表头、页④ 那一卷、
-    // 页⑤ 这一帧），一个不多一个不少。上面那条只挡得住「自己写死一句话」，
+    // 正着也钉一遍：VolumeView 的训练与实时标题互斥，各自读取共同文案，
+    // 加上页③ 的两处与实时页的一处。上面那条只挡得住「自己写死一句话」，
     // 挡不住「干脆不印图章」（把格子 `v-if` 掉、或者整个删掉）。
     // ⚠️ 按路径排序再比：`walk()` 吃的是 `readdirSync` 的次序，那是文件系统的
     // 事，拿它当断言次序等于让这条测试在别人的机器上红。
@@ -393,7 +393,7 @@ describe('文案只有一个来源', () => {
       .filter(([, n]) => n > 0)
       .sort((a, b) => a[0].localeCompare(b[0]))
     expect(where).toEqual([
-      ['/scene/VolumeView.vue', 1],
+      ['/scene/VolumeView.vue', 2],
       ['/views/FieldView.vue', 2],
       ['/views/LiveView.vue', 1],
     ])

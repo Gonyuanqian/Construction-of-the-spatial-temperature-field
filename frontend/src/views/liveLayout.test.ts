@@ -97,7 +97,9 @@ describe('页⑤ 的版面钩子', () => {
     const vv = read('scene/VolumeView.vue')
     // 三层挂钩点：这一块的根、`.vol-grid`、`.vol-stage`，外加透传给画布那一层。
     // 少哪一层，画布就退回自己写死的 460px —— 不报错，只是不跟着缩。
-    expect(vv.match(/:class="\{ stretch \}"/g) ?? [], '`stretch` 的挂钩点数不对').toHaveLength(3)
+    expect(vv, '根容器没有接收 stretch').toMatch(/<div class="block" :class="\{ stretch \}"/)
+    expect(vv, '画布卡片没有接收 stretch').toMatch(/<Card class="vol-stage" :class="\{ stretch,/)
+    expect(vv, '画布组件没有接收 stretch').toMatch(/<VolumeScene\s[^>]*:class="\{ stretch \}"/)
     expect(vv, '`.vol-grid` 那一处没挂').toMatch(/'stage-only': panels === 'shell', stretch/)
     expect(vv, '`.vol-grid` 没有能缩的时候').toMatch(/\.vol-grid\.stretch/)
     expect(vv, '中栏卡片没有能缩的时候').toMatch(/\.vol-stage\.stretch/)
@@ -107,7 +109,7 @@ describe('页⑤ 的版面钩子', () => {
     expect(vs, '画布那一层没接收 stretch').toMatch(/\.scene-wrap\.stretch/)
     // 下限保画面不是一条缝；上限就是**改动前那一档**（今天的高度是天花板，
     // 不是地板 —— `fit.test.ts` 那几条比例是照 460 定的）。
-    expect(vs, '画布没有下限，会缩成一条缝').toMatch(/\.scene-wrap\.stretch\s*>\s*\.scene\s*\{[^}]*min-height:\s*200px/)
+    expect(vs, '画布没有有界下限，会缩成一条缝').toMatch(/\.scene-wrap\.stretch\s*>\s*\.scene\s*\{[^}]*min-height:\s*(?:200px|clamp\(120px,\s*[^;]+,\s*200px\))/)
     expect(vs, '画布没有上限，会拉得比改动前更大').toMatch(/\.scene-wrap\.stretch\s*>\s*\.scene\s*\{[^}]*max-height:\s*460px/)
     // ⚠️ 页③ 那一条**一个字符都不许动**：写死的 460px 仍在原处。
     expect(vs, '页③ 那一档写死的高度被改掉了')

@@ -17,9 +17,10 @@ import type { VolumePayload } from '../api/types'
 import { getJson } from '../api/client'
 import { interpretVolumePick, pickText } from '../charts/pick'
 import { tempStops } from '../charts/scale'
-// 三栏各是一张卡片（2026-10-09 用户裁定）。用全站那一档，不自己写圆角与阴影 ——
+// 画布、查询、几何各是一张卡片。用全站那一档，不自己写圆角与阴影 ——
 // 各写一遍，`guards.test.ts` 守着的「一处圆角、一处阴影」就名存实亡了。
 import Card from '../components/Card.vue'
+import Icon from '../components/Icon.vue'
 import ViewControls from '../components/ViewControls.vue'
 import { useAsync } from '../composables/useAsync'
 import { calibratedLabel } from '../design/copy'
@@ -93,8 +94,7 @@ const props = withDefaults(defineProps<{
   /**
    * 这一块渲染哪几栏（2026-10-12 页⑤ 仪表盘）。
    *
-   * - `'all'`（**默认**）：三栏都在这一块里，屏上 `[几何, 中栏, 问数]`。
-   *   默认值取「页③ 现在什么样」，所以页③ 一个字符都不用改。
+   * - `'all'`（**默认**）：三张卡都在这一块里，左侧画布，右侧查询及其下方的几何与剖切。
    * - `'shell'`：只留中栏；「问数」与「几何与剖切」两张卡用
    *   `<Teleport to="#shell-side">` 投进外壳的右栏（`App.vue` 渲染的
    *   `<aside id="shell-side">`），次序是**问数在前**。
@@ -363,60 +363,56 @@ function runQuery() {
       <p v-if="showNotes" class="note">{{ volume.data.value.note }}</p>
       <p v-if="showNotes" class="note">{{ spec.shellNote }}</p>
 
-      <!-- 三栏（2026-10-09 用户裁定）：**左＝改几何/切法，中＝看场，右＝问数**。
-           原来是从上到下一条：画布 `width:100%` 横铺整页，剖切刀、棚体示意长度、
-           读数表、坐标查询在下面各占一整行 —— 宽屏上画布占满整幅而三维内容只是
-           它中间的一条，几块控件又拉得老长。分栏之后画布被限制在中栏那一个区域里。
-
-           ⚠️ 三栏各是一张 `<Card>`（同日第二次裁定）：分栏之后三个部分直接浮在
-           纸底上，只靠栏里那几个 `<fieldset>` 的细线互相区分，而同一页的
-           「三个断面的温度场」「ΔT」都是 `<Card class="block">` ——
-           **三维这一块是唯一一块没套卡片的**。补上它，页③ 才是一条一致的卡片列。
-
-           ⚠️ 2026-10-12 页⑤ 那一档只留中栏，左右两栏投进外壳右栏。
-           源码次序因此与页③ 的屏上次序**不是一回事**：源码写成
-           `[问数, 中栏, 几何]`，页③ 的栏位由下面 CSS 的 `grid-column` 显式定死，
-           而投出去的次序正好就是参考图要的「问数在前」。
-           `VolumeView.test.ts` 的 `columns()` 按**类名**取栏，不按位置 ——
-           按位置取的话源码次序一改就会读反，而它给出的每一条断言照样绿。 -->
+      <!-- 训练页两列：左侧画布跨两行，右侧先查询、再几何与剖切。
+           三张卡通过命名区域同时指定行和列，避免按源码次序自动换行造成错位。
+           源码仍按 [查询, 画布, 几何] 排列，实时页投进外壳右栏时查询保持在前。 -->
       <div class="vol-grid" :class="{ 'stage-only': panels === 'shell', stretch }">
         <Teleport to="#shell-side" :disabled="panels === 'all'">
           <Card class="vol-side vol-ask">
-            <table v-if="readout">
+            <table v-if="readout || panels === 'all'" class="pick-readout"
+                   :class="{ 'is-empty': !readout }" aria-label="画布选点读数">
               <tbody>
-                <tr><th>时刻</th><td class="num">{{ readout.time }}</td></tr>
-                <tr><th>位置</th><td class="num">{{ readout.where }}</td></tr>
-                <tr><th>这一片</th><td>{{ readout.layer }}</td></tr>
-                <tr><th>回答</th><td>{{ readout.text }}</td></tr>
-                <tr v-if="readout.pinned">
-                  <th>已钉住</th>
-                  <td>
-                    读数不跟鼠标跑。
-                    <button type="button" @click="pinned = null">取消钉住</button>
+                <tr>
+                  <th>时刻</th>
+                  <td class="num">
+                    <div class="readout-time">
+                      <span class="reading-value">{{ readout?.time ?? '待选点' }}</span>
+                      <span class="unpin-slot">
+                        <button v-if="readout?.pinned" type="button" class="unpin"
+                                aria-label="取消钉住" title="取消钉住" @click="pinned = null">
+                          <Icon name="reset" />
+                        </button>
+                      </span>
+                    </div>
                   </td>
                 </tr>
+                <tr><th>位置</th><td class="num"><div class="reading-value">{{ readout?.where ?? '待选点' }}</div></td></tr>
+                <tr><th>这一片</th><td><div class="reading-value">{{ readout?.layer ?? '待选点' }}</div></td></tr>
+                <tr class="answer-row"><th>回答</th><td><div class="reading-value">{{ readout?.text ?? '待选点' }}</div></td></tr>
               </tbody>
             </table>
             <p v-else class="note">把鼠标移到棚体上，读最近格点的温度；点一下把读数钉住。</p>
 
-            <fieldset class="rail-box">
+            <fieldset class="rail-box query-box">
               <legend>查一个坐标</legend>
               <div class="row">
                 <label>x <input v-model="query.x" type="number" step="0.01"></label>
                 <label>y <input v-model="query.y" type="number" step="0.01"></label>
                 <label>z <input v-model="query.z" type="number" step="0.01"></label>
+                <button type="button" :disabled="!parsed" @click="runQuery">查询</button>
               </div>
-              <p class="note">
-                三格划分出来的是格点，不是连续场。查询<strong>吸附到最近的格点</strong>，不插值；
-                吸附后的坐标会在下面写出来。
-              </p>
-              <button type="button" :disabled="!parsed" @click="runQuery">查询</button>
-              <p v-if="queryError" role="alert" class="alert">{{ queryError }}</p>
-              <table v-if="queryAnswer">
+              <p v-if="queryError && panels === 'shell'" role="alert" class="alert">{{ queryError }}</p>
+              <table v-if="queryAnswer || panels === 'all'" class="query-result"
+                     :class="{ 'is-empty': !queryAnswer && !queryError }" aria-label="坐标查询结果">
                 <tbody>
-                  <tr><th>时刻</th><td class="num">{{ queryAnswer.time }}</td></tr>
-                  <tr><th>位置</th><td class="num">{{ queryAnswer.where }}</td></tr>
-                  <tr><th>回答</th><td>{{ queryAnswer.text }}</td></tr>
+                  <tr class="time-row"><th>时刻</th><td class="num"><div class="reading-value">{{ queryAnswer?.time ?? '待查询' }}</div></td></tr>
+                  <tr><th>位置</th><td class="num"><div class="reading-value">{{ queryAnswer?.where ?? '待查询' }}</div></td></tr>
+                  <tr class="answer-row"><th>回答</th><td>
+                    <div class="reading-value" :class="{ alert: queryError && panels === 'all' }"
+                         :role="queryError && panels === 'all' ? 'alert' : undefined">
+                      {{ queryError && panels === 'all' ? queryError : (queryAnswer?.text ?? '待查询') }}
+                    </div>
+                  </td></tr>
                 </tbody>
               </table>
             </fieldset>
@@ -506,28 +502,48 @@ function runQuery() {
 .head { justify-content: space-between; }
 .alert { color: var(--leaf); border-left: 3px solid var(--leaf); padding-left: var(--gap-s); }
 .tag { font-size: var(--size-note); color: var(--ink-muted); }
-/* 三栏：左＝改几何/切法，中＝看场，右＝问数（2026-10-09 用户裁定）。
-   中栏写 `minmax(0, 1fr)` 而不是 `1fr` —— 与页① 那条左右分栏同一条理由：
-   写成 `1fr` 时格子的下限是**内容宽度**，画布会先把页宽撑破，而不是自己缩。
-   `align-items: start`：三栏各按自己的高度，硬拉齐只会在短的那栏底下留白。 */
+/* 训练页左右布局：画布在左，查询在右上，几何与剖切在查询下方。
+   同时指定行与列，避免仅指定列时，自动排列把后面的卡片推入下一行。 */
 .vol-grid {
   display: grid;
-  grid-template-columns: 14rem minmax(0, 1fr) 18rem;
-  gap: var(--gap-l);
+  grid-template-columns: minmax(0, 1fr) 18rem;
+  grid-template-rows: auto 1fr;
+  grid-template-areas: "stage ask" "stage geom";
+  gap: var(--gap-m) var(--gap-l);
   align-items: start;
   margin-top: var(--gap-m);
 }
 /* 两栏都是内容可能比格子宽的那种（右边那三个坐标框尤其），允许格子窄于内容。 */
 .vol-side { min-width: 0; }
-/* ⚠️ 2026-10-12 起源码次序是 `[问数, 中栏, 几何]`（投出去时问数在前），
-   所以页③ 的三个栏位**必须显式定死** —— 靠自动排列的话会变成
-   问数在左、几何在右，而那是反的。 */
-.vol-ask { min-width: 0; grid-column: 3; }
-.vol-geom { min-width: 0; grid-column: 1; }
+.vol-ask { min-width: 0; grid-area: ask; }
+.vol-geom { min-width: 0; grid-area: geom; }
 /* `position: relative` 是给角上那枚时刻当落点的（画布铺满这一栏的内容盒）。 */
-.vol-stage { min-width: 0; position: relative; grid-column: 2; }
+.vol-stage { min-width: 0; position: relative; grid-area: stage; }
+/* 训练页画布跟随右侧两张卡片的总高度，避免查询状态变化造成上下错位。 */
+.vol-grid:not(.stage-only) > .vol-stage {
+  align-self: stretch;
+  min-height: calc(460px + var(--gap-m) + var(--gap-m));
+}
+.vol-grid:not(.stage-only) > .vol-stage :deep(.scene-wrap) {
+  position: absolute; inset: var(--gap-m);
+  display: flex; flex-direction: column; min-height: 0;
+}
+.vol-grid:not(.stage-only) > .vol-stage :deep(.scene) {
+  flex: 1 1 0; height: 0; min-height: 0;
+}
 /* 页⑤ 那一档只剩中栏：一栏的栅格模板，且中栏本来就该铺满。 */
-.vol-grid.stage-only { grid-template-columns: minmax(0, 1fr); }
+.vol-grid.stage-only {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto;
+  grid-template-areas: "stage";
+}
+@media (max-width: 1000px) {
+  .vol-grid:not(.stage-only) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+    grid-template-areas: "stage" "ask" "geom";
+  }
+}
 /* 实时画布左上角标题与棚位范围。 */
 .stage-overlay-head {
   position: absolute; z-index: 2;
@@ -575,9 +591,31 @@ function runQuery() {
 .rail-box legend { padding: 0; font-weight: var(--w-strong); }
 .rail-box input[type='number'] { width: 6.5em; font: inherit; }
 .rail-box button { font: inherit; cursor: pointer; }
-/* 右栏比原来那一整行窄得多，三个坐标框放不下就折行 —— 不折的话它们会把
-   右栏撑破（`min-width: 0` 只保证格子不撑破，格子里的内容还是会溢出来）。 */
-.vol-side .row { flex-wrap: wrap; }
+/* 查询与剖切使用紧凑排版，删除说明后不保留占位高度。 */
+.vol-ask > table { font-size: var(--size-note); margin-bottom: var(--gap-s); }
+.readout-time { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-s); }
+.unpin-slot { display: inline-flex; align-items: center; justify-content: flex-end; flex: 0 0 24px; height: 24px; }
+.unpin { display: inline-flex; align-items: center; flex: none; padding: 2px; }
+.query-box .row {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  margin: var(--gap-s) 0;
+}
+.query-box .row label { display: flex; align-items: center; min-width: 0; gap: 4px; }
+.query-box .row input[type='number'] { width: 100%; min-width: 0; }
+.vol-geom .rail-box { margin-bottom: var(--gap-s); }
+.vol-geom .rail-box:last-child, .vol-geom .rail-box p { margin-bottom: 0; }
+/* 只为训练页保留结果行高度；实时页的侧栏继续按实际读数显示。
+   长说明在值区域内滚动，完整内容仍可读取，卡片和下方剖切区不跳动。 */
+.vol-grid:not(.stage-only) .vol-ask table { table-layout: fixed; }
+.vol-grid:not(.stage-only) .vol-ask th { width: 4em; }
+.vol-grid:not(.stage-only) .reading-value {
+  display: block; min-width: 0; height: calc(2em * var(--lh-body));
+  overflow-y: auto; overflow-wrap: anywhere;
+}
+.vol-grid:not(.stage-only) .readout-time .reading-value { flex: 1 1 auto; height: calc(1em * var(--lh-body)); }
+.vol-grid:not(.stage-only) .time-row .reading-value { height: 24px; }
+.vol-grid:not(.stage-only) .answer-row .reading-value { height: calc(3em * var(--lh-body)); }
+.vol-grid:not(.stage-only) .is-empty td { color: var(--ink-muted); }
 
 /* ── 把高度让给外面（2026-10-16 页⑤ 一屏装三块） ──────────────────────
    这三条 + `VolumeScene.vue` 里那两条，是「会长会缩」从页面一路通到画布的
