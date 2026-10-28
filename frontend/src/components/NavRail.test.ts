@@ -105,8 +105,8 @@ describe('实时那一屏的左栏（精修）', () => {
     expect(plain.get('nav').classes(), '训练侧的左栏也挂上了 live').not.toContain('live')
   })
 
-  it('训练侧那四项一枚图标都没有 —— 那是四页一起改', async () => {
+  it('训练侧每个导航项都有对应图标', async () => {
     const w = await mountRail()
-    expect(w.findAll('.ico')).toHaveLength(0)
+    expect(w.findAll('.item .ico')).toHaveLength(5)
   })
 })

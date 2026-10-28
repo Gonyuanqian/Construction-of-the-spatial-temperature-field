@@ -17,20 +17,20 @@
  * 未开放项的理由必须**仍在这个 nav 里**，`App.test.ts:74` 按 `rail.text()` 找它。
  */
 import { computed } from 'vue'
+import { useRoute } from 'vue-router'
 
 import Icon from './Icon.vue'
 import { NAV_ITEMS, type RailItem } from '../design/copy'
 
 /**
- * 这一列画哪几项。**默认 `NAV_ITEMS`** —— 页①②③④ 一个属性都不传，
- * 所以那四页的左栏与改动前逐字相同。
+ * 这一列画哪几项。**默认 `NAV_ITEMS`** —— 训练模式使用流程导航，
+ * 实时模式由 `App.vue` 传入另一份演示导航清单。
  * 实时模式那一屏传 `LIVE_NAV_ITEMS`（见 `App.vue`）。
  */
 const props = withDefaults(defineProps<{
   items?: readonly RailItem[]
   /**
-   * 这一列长什么样。**默认 `'plain'`（卡片列）** —— 页①②③④ 一个属性都不传，
-   * 所以那四页的左栏与改动前逐像素相同。
+   * 这一列长什么样。**默认 `'plain'`（训练模式的浅色导航）**。
    *
    * `'live'` 是 2026-10-16 精修那一档：连续的菜单行（图标在左、文字在右，
    * 选中项左缘一道青条），与参考图一致。
@@ -47,21 +47,29 @@ const props = withDefaults(defineProps<{
 })
 
 const isLive = computed(() => props.variant === 'live')
+const route = useRoute()
+// 独立详情路由仍属于同一导航模块，例如 /models/1 高亮“模型库”。
+function isActive(path: string): boolean {
+  return route.path === path || route.path.startsWith(`${path}/`)
+}
 </script>
 
 <template>
-  <nav class="rail" :class="{ live: isLive }" aria-label="页面">
+  <nav class="rail" :class="{ live: isLive, training: !isLive }" aria-label="页面">
+    <div v-if="!isLive" class="rail-heading">工作空间</div>
     <template v-for="item in props.items" :key="item.key">
-      <!-- 图标只在有名字时画（`NavRail` 的两份清单里只有实时那一份带名字）。
-           图标在左、文字在右 —— 用的是 flex 的次序，不是 `order`。 -->
-      <RouterLink v-if="item.enabled" class="item" :to="item.to">
+      <!-- 图标在左、文字在右；训练和实时导航都使用同一份线框图标。 -->
+      <RouterLink v-if="item.enabled" class="item" :to="item.to"
+                  :class="{ 'router-link-active': isActive(item.to) }"
+                  :aria-current="isActive(item.to) ? 'page' : undefined">
         <Icon v-if="item.icon" :name="item.icon" class="ico" />
         <span class="label">{{ item.label }}</span>
       </RouterLink>
       <template v-else>
-        <span class="item off">
+        <span class="item off" aria-disabled="true">
           <Icon v-if="item.icon" :name="item.icon" class="ico" />
           <span class="label">{{ item.label }}</span>
+          <span v-if="!isLive" class="availability">待开放</span>
         </span>
         <span class="why note">{{ item.why }}</span>
       </template>
@@ -77,6 +85,67 @@ const isLive = computed(() => props.variant === 'live')
 </template>
 
 <style scoped>
+.rail:not(.live) {
+  width: clamp(200px, 17vw, 240px);
+  flex-basis: clamp(200px, 17vw, 240px);
+  padding: 16px 12px 20px;
+  background: var(--card);
+  border-right: var(--rule);
+  gap: 4px;
+}
+.rail-heading {
+  padding: 4px 10px 12px;
+  margin: 0 0 4px;
+  color: var(--ink-muted);
+  font-size: var(--size-note);
+  font-weight: var(--w-strong);
+  letter-spacing: .04em;
+  border-bottom: var(--rule);
+}
+.rail:not(.live) .item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 0 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  box-shadow: none;
+  color: var(--ink-muted);
+  text-decoration: none;
+  transition: background-color .16s ease, color .16s ease, border-color .16s ease;
+}
+.rail:not(.live) .item .ico { width: 19px; height: 19px; color: var(--leaf); opacity: .82; }
+.rail:not(.live) .item .label { min-width: 0; flex: 1 1 auto; }
+.rail:not(.live) .item.router-link-active {
+  position: relative;
+  background: var(--leaf-soft);
+  color: var(--leaf);
+  border-color: var(--steel);
+  font-weight: var(--w-strong);
+}
+.rail:not(.live) .item.router-link-active::before {
+  content: '';
+  position: absolute;
+  inset: 8px auto 8px -1px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--leaf);
+}
+.rail:not(.live) .item.router-link-active .ico { opacity: 1; }
+.rail:not(.live) .item:not(.off):hover { background: var(--leaf-soft); color: var(--leaf); }
+.rail:not(.live) .item:focus-visible { outline: 2px solid var(--interact); outline-offset: 2px; }
+.rail:not(.live) .item.off { color: var(--ink-muted); cursor: default; }
+.availability {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: var(--w-body);
+}
 .rail {
   width: var(--sidebar-w);
   flex: 0 0 var(--sidebar-w);
@@ -101,26 +170,17 @@ const isLive = computed(() => props.variant === 'live')
   align-self: stretch;
   overflow-y: auto;
 }
-/* 每一项是一张卡（2026-10-06 用户裁定）。圆角与阴影走全站那一档
-   （spec §四：全站只有一档），这里不新开第二种卡。
-   ⚠️ 2026-10-16：这一套现在挂在 **`:not(.live)`** 上 —— 实时那一屏的左栏
-   改成了连续的菜单行（用户第二部分要求）。那是**有意推翻** 2026-10-06
-   那条「每一项是一张卡」，不是漏改；训练侧那四页仍是卡片列。 */
+/* 训练侧使用清爽的浅色菜单行；实时侧保留另一套深色仪表盘导航。 */
 .rail:not(.live) .item {
   display: block;
   padding: var(--gap-s) 10px;
-  background: var(--card);
+  background: transparent;
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  box-shadow: none;
   color: var(--ink);
   text-decoration: none;
 }
-/* 激活态：底色 `--nav-blue` + 字 `--paper`，与模式开关 `.on`（叶底 + 纸字）
-   同一套语言。激活色走 `--nav-blue` 而不是 `--leaf`（2026-10-06 用户裁定）：
-   导航要与内容区分开，而全站其余地方仍是叶绿。令牌那边记着这个蓝与页①
-   中层测点蓝同屏的已知冲突 —— 那是被接受的选择，不是这里写错了。
-   **原先那根竖标撤掉了**：底色已经说明「是这一项」，再插一根同色的竖条
-   是同一句话说了两遍。 */
+/* 深色实时侧栏的激活态；训练侧在上方单独覆盖为浅绿选中态。 */
 .item.router-link-active {
   background: var(--nav-blue);
   color: var(--paper);
@@ -128,9 +188,12 @@ const isLive = computed(() => props.variant === 'live')
 }
 .item.off { color: var(--ink-muted); cursor: not-allowed; }
 .why { display: block; padding: 0 0 var(--gap-s) 10px; }
+.rail:not(.live) .why { padding: 2px 8px 10px 39px; line-height: 1.5; }
 .rule { border: 0; border-top: var(--rule); width: 100%; margin: var(--gap-m) 0 0; }
+.rail:not(.live) .rule { width: calc(100% - 8px); margin: 12px 4px 8px; }
 .rail-extra:empty { display: none; }
 .rail-extra { margin-top: var(--gap-m); display: flex; flex-direction: column; gap: var(--gap-s); }
+.rail:not(.live) .rail-extra { margin-top: 0; }
 
 /* ── 页⑤ 精修（2026-10-16）：实时那一屏的左栏 ────────────────────────
    行，不是卡：项高统一、通到两边（左边那道高亮条要贴着栏的边缘），

@@ -15,56 +15,79 @@ import type { EChartsOption } from 'echarts'
 
 import type { VolumePayload } from '../../api/types'
 import type { Palette } from '../../design/palette'
+import { tempStops } from '../scale'
 
-export const MEAN_CURVE_TITLE = '沿棚均温'
+export const MEAN_CURVE_TITLE = '温度分布概览'
 
 export function buildLiveMeanCurveOption(
   payload: VolumePayload, p: Palette,
 ): EChartsOption {
+  const means = payload.planes.flatMap(plane => plane.mean == null ? [] : [plane.mean])
+  const low = means.length ? Math.min(...means) : payload.vmin
+  const high = means.length ? Math.max(...means) : payload.vmax
+  const colors = tempStops()
   return {
     backgroundColor: 'transparent',
     animation: false,
     /* 标题由外层卡片承担，绘图区不要再重复画一遍；把腾出的高度还给曲线。 */
-    grid: { left: 70, right: 10, top: 8, bottom: 20 },
+    grid: { left: 44, right: 18, top: 30, bottom: 25 },
+    visualMap: {
+      show: false, type: 'continuous', dimension: 1,
+      min: low, max: high > low ? high : low + 1,
+      inRange: { color: [colors[2], colors[4], colors[5]] },
+    },
     xAxis: {
       type: 'value',
+      min: payload.y_min, max: payload.y_max, splitNumber: 3,
+      interval: (payload.y_max - payload.y_min) / 3 || 1,
       axisLine: { lineStyle: { color: p.steel } },
       axisTick: { show: false },
       axisLabel: {
         color: p.inkMuted, fontSize: p.chartAxis, hideOverlap: true,
         formatter: '{value} m',
       },
-      splitLine: { show: false },
+      splitLine: { show: true, lineStyle: { color: p.layerMid, type: 'solid', opacity: 0.5 } },
+      minorTick: { show: false, splitNumber: 6 },
+      minorSplitLine: { show: true, lineStyle: { color: p.layerMid, type: 'dashed', opacity: 0.22 } },
     },
     yAxis: {
       type: 'value',
       // 不强制从 0 起：这一卷的均温可能只横跨两度，从 0 起就压平了。
       scale: true,
+      name: '温度 (°C)', nameLocation: 'end',
+      nameTextStyle: { color: p.inkMuted, fontSize: p.chartAxis, align: 'left', padding: [0, 0, 0, -35] },
+      min: (extent: { min: number }) => Math.floor(extent.min),
+      max: (extent: { max: number }) => Math.ceil(extent.max) + (Number.isInteger(extent.max) ? 1 : 0),
       splitNumber: 3,
       axisLine: { lineStyle: { color: p.steel } },
       axisLabel: {
         color: p.inkMuted, fontSize: p.chartAxis, hideOverlap: true,
-        formatter: '{value} °C',
+        formatter: '{value}',
       },
-      splitLine: { lineStyle: { color: p.steel } },
+      splitLine: { lineStyle: { color: p.layerMid, type: 'solid', opacity: 0.5 } },
+      minorTick: { show: false, splitNumber: 2 },
+      minorSplitLine: { show: true, lineStyle: { color: p.layerMid, type: 'dashed', opacity: 0.22 } },
     },
-    tooltip: { trigger: 'axis' },
+    tooltip: { trigger: 'axis', valueFormatter: (value: unknown) => value == null ? '无数据' : `${Number(value).toFixed(3)} °C` },
     series: [{
       type: 'line',
       name: MEAN_CURVE_TITLE,
       // `[y, mean]` 成对给：`null` 原样传下去，ECharts 会把线断开。
       data: payload.planes.map((pl) => [pl.y, pl.mean]),
-      showSymbol: true,
+      showSymbol: false,
+      smooth: 0.25,
+      smoothMonotone: 'x',
       symbolSize: 6,
       connectNulls: false,
       // 2026-10-12 换样式：这一屏的底是深蓝，1.4px 的青线在上面只剩一条
       // 若有若无的痕（参考图那条线粗得多，而且带一层同色的面积底）。
       // 颜色仍走 `p.leaf` —— 全站「同一个数在哪儿都是同一个颜色」那条没变。
-      lineStyle: { color: p.leaf, width: 3 },
-      itemStyle: { color: p.leaf, borderColor: p.paper, borderWidth: 1 },
+      lineStyle: { width: 3 },
+      itemStyle: { borderColor: p.paper, borderWidth: 1 },
       // 面积底用**同一个颜色**、靠透明度分层 —— 不用第二个色号，
       // 免得「这条线是什么颜色」在屏上出现两种答案。
-      areaStyle: { color: p.leaf, opacity: 0.16 },
+      areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+        colorStops: [{ offset: 0, color: colors[5] }, { offset: 0.4, color: colors[2] }, { offset: 0.85, color: colors[1] }, { offset: 1, color: 'transparent' }] }, opacity: 0.55 },
       // 线之外不加阴影、不加发光：阴影全站只有一档且只给卡片
       // （`guards.test.ts` 钉着），图表这一层也不破例。
     }],

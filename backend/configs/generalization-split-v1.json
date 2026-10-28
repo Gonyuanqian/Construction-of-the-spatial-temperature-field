@@ -1,0 +1,62 @@
+{
+  "schema_version": "tfield.generalization-split/v1",
+  "split_id": "temporal-abc-20261021",
+  "source_filename": "人参棚_多棚温湿度_气象时间对齐数据集.xlsx",
+  "timezone": "Asia/Shanghai",
+  "timestamp_storage": "local_naive",
+  "method": "chronological_contiguous_disjoint",
+  "sample_interval_seconds": 300,
+  "expected_source_rows": 1308,
+  "expected_columns": 52,
+  "time_axis_policy": "repair_axis_before_partition_without_reordering_measurements",
+  "partitions": [
+    {
+      "id": "A",
+      "role": "train",
+      "label": "训练集",
+      "filename": "A_train.xlsx",
+      "start_inclusive": "2026-07-23T11:00:00",
+      "end_exclusive": "2026-07-25T11:00:00",
+      "expected_rows": 576,
+      "allow_model_fitting": true,
+      "allow_model_selection": true
+    },
+    {
+      "id": "B",
+      "role": "validation",
+      "label": "跨时段验证集",
+      "filename": "B_validation.xlsx",
+      "start_inclusive": "2026-07-25T11:00:00",
+      "end_exclusive": "2026-07-26T11:00:00",
+      "expected_rows": 288,
+      "allow_model_fitting": false,
+      "allow_model_selection": true
+    },
+    {
+      "id": "C",
+      "role": "test",
+      "label": "最终测试集",
+      "filename": "C_test.xlsx",
+      "start_inclusive": "2026-07-26T11:00:00",
+      "end_exclusive": "2026-07-28T00:00:00",
+      "expected_rows": 444,
+      "allow_model_fitting": false,
+      "allow_model_selection": false
+    }
+  ],
+  "preserve": [
+    "all_52_columns_in_source_order",
+    "all_24_temperature_sensor_channels",
+    "all_humidity_and_background_channels",
+    "aligned_quality_flags",
+    "sensor_dictionary_and_field_guide"
+  ],
+  "evaluation_notes": [
+    "A/B/C are different time periods from one acquisition campaign, not independent sites or seasons.",
+    "Only source timestamps are repaired; measurement values and quality flags are not imputed, smoothed or rescaled again.",
+    "Source measurements were aligned by linear interpolation before this split; raw interpolation support across split boundaries is unavailable.",
+    "A frozen-model spatial evaluation must hide target sensors from the same-frame correction inputs.",
+    "Existing saved models were not trained under this split; retrain on A for the new experiment.",
+    "Role flags describe the experiment protocol; the current upload API does not enforce these flags."
+  ]
+}

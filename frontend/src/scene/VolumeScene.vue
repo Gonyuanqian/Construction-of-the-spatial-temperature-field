@@ -19,7 +19,8 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 
 import type { VolumePayload } from '../api/types'
-import { tempStops } from '../charts/scale'
+import { tempStops, valueToColor } from '../charts/scale'
+import { solidSurface } from './solidSurface'
 import ViewControls from '../components/ViewControls.vue'
 import { readPalette } from '../design/palette'
 import { FIT_FOV_DEG, boxOf, fitCamera, type WorldBox } from './fit'
@@ -47,7 +48,37 @@ const props = defineProps<{
    * 只有实时模式那一屏传（见 `LiveView.vue`）。
    */
   showViewControls?: boolean
+  decorations?: boolean
+  fieldMode?: 'solid' | 'slices'
 }>()
+const axesOverlay = ref<SVGSVGElement | null>(null)
+let solidMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial> | null = null
+function clearSolid(): void {
+  if (!solidMesh) return
+  scene?.remove(solidMesh)
+  solidMesh.geometry.dispose()
+  solidMesh.material.dispose()
+  solidMesh = null
+}
+function buildSolid(): void {
+  clearSolid()
+  if (!scene || props.fieldMode !== 'solid') return
+  const { positions, temperatures } = solidSurface(props.payload, stripeIndexSet(props.spec.cavity, props.payload.x.length))
+  const stops = tempStops()
+  const colors = temperatures.flatMap(value => {
+    const [r,g,b] = valueToColor(value, props.spec.vmin, props.spec.vmax, stops)
+    const color = new THREE.Color().setRGB(r/255,g/255,b/255,THREE.SRGBColorSpace)
+    return [color.r,color.g,color.b]
+  })
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions,3))
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors,3))
+  solidMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+    vertexColors: true, side: THREE.DoubleSide, transparent: true, opacity: 0.88,
+    depthWrite: true, clippingPlanes: clipPlane ? [clipPlane] : [],
+  }))
+  scene.add(solidMesh)
+}
 
 const emit = defineEmits<{
   hover: [p: HoverPick | null]
@@ -291,7 +322,7 @@ function buildPlanes(): void {
     const mat = new THREE.MeshBasicMaterial({
       map: tex,
       transparent: true,
-      opacity: pl.opacity,
+      opacity: props.fieldMode === 'solid' ? 0.12 : pl.opacity,
       side: THREE.DoubleSide,
       depthWrite: false,
       // 剖切刀：Three 自带，很便宜。切的是**片**，不移除。
@@ -346,7 +377,7 @@ function syncMarker(): void {
  * 摆相机：把整卷框进画面。**算术全在 `scene/fit.ts`**（那一条有测试），
  * 这里只把载荷翻成世界坐标下的一个盒子 —— 世界是 `(数据 x, 数据 z, 数据 y)`。
  */
-function placeCamera(): void {
+function placeCamera(preserveDirection = false): void {
   if (!camera || !controls) return
   const { payload } = props
   const nx = payload.x.length
@@ -356,7 +387,22 @@ function placeCamera(): void {
     [payload.x[0], payload.z[0], payload.planes[0].y],
     [payload.x[nx - 1], payload.z[nz - 1], payload.planes[ny - 1].y],
   )
-  const { position, target } = fitCamera(box, camera.aspect)
+  // 示意拱壳可能超出数据切片，两者一起参与取景，避免两端被裁。
+  if (shellGroup) {
+    const bounds = new THREE.Box3().setFromObject(shellGroup)
+    if (!bounds.isEmpty()) {
+      const dataBounds = new THREE.Box3(
+        new THREE.Vector3(...box.center).sub(new THREE.Vector3(...box.half)),
+        new THREE.Vector3(...box.center).add(new THREE.Vector3(...box.half)),
+      ).union(bounds)
+      const center = dataBounds.getCenter(new THREE.Vector3())
+      const half = dataBounds.getSize(new THREE.Vector3()).multiplyScalar(0.5)
+      box.center = [center.x, center.y, center.z]
+      box.half = [half.x, half.y, half.z]
+    }
+  }
+  const direction = preserveDirection ? camera.position.clone().sub(controls.target).toArray() : undefined
+  const { position, target } = fitCamera(box, camera.aspect, direction)
   controls.target.set(...target)
   camera.position.set(...position)
   camera.updateProjectionMatrix()
@@ -384,7 +430,8 @@ function resize(): void {
   camera.updateProjectionMatrix()
   // 宽高比刚变，取景可能就不成立了（见 `autoframe`）。放在这一行之后 ——
   // `fitCamera` 解距离要用的是**新的** `aspect`。
-  autoframe()
+  // 尺寸变化时重新居中，保留用户旋转后的观察方向。
+  placeCamera(orbited)
 }
 
 function onPointerMove(e: PointerEvent): void {
@@ -503,8 +550,21 @@ onMounted(() => {
 
   buildShells()
   buildPlanes()
+  buildSolid()
   buildSensors()
   buildMarker()
+  let ground: THREE.GridHelper | null = null
+  if (props.decorations) {
+    const color = new THREE.Color(palette.layerMid)
+    ground = new THREE.GridHelper(Math.max(24, props.payload.y_max - props.payload.y_min + 6), 36, color, color)
+    ground.position.set((props.payload.x[0] + props.payload.x[props.payload.x.length - 1]) / 2,
+      props.payload.z[0] - 0.04, (props.payload.y_min + props.payload.y_max) / 2)
+    const material = ground.material as THREE.Material
+    material.transparent = true
+    material.opacity = 0.18
+    material.depthWrite = false
+    scene.add(ground)
+  }
   syncMarker()
   // 取景与量尺寸一起做：**`fitCamera` 要按画布的宽高比解距离**，所以先量画布，
   // 再由 `resize` 顺手摆相机。原来是先取景、再 resize —— 那一次取景用的是
@@ -515,9 +575,25 @@ onMounted(() => {
   ro.observe(el)
   renderer.setAnimationLoop(() => {
     controls?.update()
+    if (camera && axesOverlay.value) {
+      const inverse = camera.quaternion.clone().invert()
+      const directions = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 1, 0)]
+      directions.forEach((direction, i) => {
+        direction.applyQuaternion(inverse)
+        const x = 44 + direction.x * 27
+        const y = 45 - direction.y * 27
+        const line = axesOverlay.value!.querySelectorAll('line')[i]
+        const text = axesOverlay.value!.querySelectorAll('text')[i]
+        line?.setAttribute('x2', String(x)); line?.setAttribute('y2', String(y))
+        text?.setAttribute('x', String(44 + direction.x * 37)); text?.setAttribute('y', String(49 - direction.y * 37))
+      })
+    }
     if (scene && camera) renderer?.render(scene, camera)
   })
   teardown = () => {
+    clearSolid()
+    ground?.geometry.dispose()
+    if (ground) (ground.material as THREE.Material).dispose()
     ro.disconnect()
     renderer?.setAnimationLoop(null)
     controls?.dispose()
@@ -545,9 +621,11 @@ onMounted(() => {
 watch(() => props.payload, () => {
   if (!scene) return
   buildPlanes()
+  buildSolid()
   syncMarker()
   autoframe()
 })
+watch(() => props.fieldMode, () => { if (scene) { buildPlanes(); buildSolid() } })
 
 /**
  * 拱壳跟着它自己的两个输入走：**壳长是滑块给的，拱形与棚位是载荷给的**。
@@ -574,7 +652,13 @@ watch(() => props.cutY, (v) => {
  * `scene` 是这一层的内部状态，暴露出去就是把「这一层只做 Three 的调用、
  * 不做任何判断」那条边界拆了。
  */
-defineExpose({ nudge })
+function setInteractionMode(mode: 'rotate' | 'zoom' | 'pan'): void {
+  if (!controls) return
+  controls.mouseButtons.LEFT = mode === 'pan' ? THREE.MOUSE.PAN
+    : mode === 'zoom' ? THREE.MOUSE.DOLLY : THREE.MOUSE.ROTATE
+  controls.touches.ONE = mode === 'pan' ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE
+}
+defineExpose({ nudge, setInteractionMode })
 
 onBeforeUnmount(() => {
   teardown?.()
@@ -611,6 +695,14 @@ onBeforeUnmount(() => {
          ⚠️ 它压在画布上，而画布那片区域要接悬停读数（`.scene` 上的
          `@pointermove`）—— 所以只占右上角一小块。这与 `.stage-clock` 的
          `pointer-events: none` 正好相反：那一枚只读，这一组要能点。 -->
+    <svg v-if="decorations" ref="axesOverlay" class="orientation-axes" viewBox="0 0 88 88" aria-label="三维方向指示：X 棚宽，Y 棚长，Z 高度">
+      <defs><marker id="live-axis-tip" viewBox="0 0 6 6" refX="5" refY="3" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L6 3L0 6Z" fill="currentColor" /></marker></defs>
+      <g v-for="axis in ['X', 'Y', 'Z']" :key="axis">
+        <line x1="44" y1="45" x2="44" y2="45" marker-end="url(#live-axis-tip)" />
+        <text x="44" y="45">{{ axis }}</text>
+      </g>
+      <circle cx="44" cy="45" r="2" fill="currentColor" />
+    </svg>
     <div v-if="showViewControls" class="view-ctl">
       <ViewControls :run="nudge" :ok="sceneReady" />
     </div>
@@ -619,6 +711,9 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.orientation-axes { position: absolute; top: 34px; right: 8px; width: 88px; height: 88px; color: var(--edge); pointer-events: none; }
+.orientation-axes line { stroke: currentColor; stroke-width: 1.5; }
+.orientation-axes text { fill: currentColor; text-anchor: middle; font-size: 11px; font-family: var(--font-latin); }
 .scene-wrap { position: relative; }
 .scene { width: 100%; height: 460px; cursor: crosshair; }
 .scene :deep(canvas) { display: block; width: 100%; height: 100%; }

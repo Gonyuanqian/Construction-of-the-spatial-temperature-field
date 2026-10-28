@@ -33,6 +33,18 @@ function show(over: Partial<CalibrationPanel> = {}, values = VALUES) {
 }
 
 describe('ParamPanel', () => {
+  it('切换参数类型后仍保留手调值，下拉继续提交原始布尔值', async () => {
+    const w = mount(ParamPanel, { props: { panel: PANEL, values: VALUES, layout: 'tabs' } })
+    await w.setProps({ values: { ...VALUES, 'trend.max_depth': 6 } })
+    await w.findAll('.parameter-tabs button')[1].trigger('click')
+    expect(w.find('section[aria-label="IDW"]').isVisible()).toBe(true)
+    const crossShed = w.find('#param-cross_shed')
+    await crossShed.setValue('1')
+    expect(w.emitted('pick')?.at(-1)).toEqual(['cross_shed', false])
+    await w.findAll('.parameter-tabs button')[0].trigger('click')
+    expect(w.find('#param-trend-max_depth').attributes('aria-valuetext')).toBe('6')
+  })
+
   it('分成两个区块，各带一个小标题', () => {
     const w = show()
     expect(w.findAll('h4').map((e) => e.text())).toEqual(['XGBoost', 'IDW'])

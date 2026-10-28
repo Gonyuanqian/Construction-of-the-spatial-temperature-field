@@ -1,4 +1,26 @@
 /* 全局基线。 */
+/* 实时仪表盘：亮边集中在模块轮廓，内部读数保持原有对比度。 */
+.theme-live .card::before, .theme-live .card::after { filter: var(--panel-corner-glow); }
+.theme-live .env-head, .theme-live .temperature-overview-heading, .theme-live .panel-head {
+  border-bottom-color: color-mix(in srgb, var(--interact) 55%, var(--steel));
+  background-image: linear-gradient(90deg, color-mix(in srgb, var(--edge) 7%, transparent), transparent 80%);
+}
+.theme-live .env-head::after, .theme-live .panel-head::after { box-shadow: var(--panel-line-glow); }
+.theme-live .geom-card, .theme-live .mode-tile.selected {
+  box-shadow: var(--panel-control-glow);
+}
+.theme-live .technical .accent-ring { filter: var(--panel-corner-glow); }
+.theme-live .card { position: relative; }
+.theme-live .card:not(.env-card):not(.temperature-overview):not(.view-controls-card)::before,
+.theme-live .card:not(.env-card):not(.temperature-overview):not(.view-controls-card)::after {
+  content: ''; position: absolute; width: 16px; height: 16px; pointer-events: none; z-index: 1;
+}
+.theme-live .card:not(.env-card):not(.temperature-overview):not(.view-controls-card)::before {
+  left: 0; top: 0; border-left: 1px solid var(--edge); border-top: 1px solid var(--edge);
+}
+.theme-live .card:not(.env-card):not(.temperature-overview):not(.view-controls-card)::after {
+  right: 0; bottom: 0; border-right: 1px solid var(--edge); border-bottom: 1px solid var(--edge);
+}
 *, *::before, *::after { box-sizing: border-box; }
 
 html, body { margin: 0; padding: 0; height: 100%; }

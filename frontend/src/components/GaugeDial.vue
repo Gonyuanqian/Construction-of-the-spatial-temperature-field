@@ -24,6 +24,7 @@ const props = defineProps<{
   arcColor?: string
   /** 圆环直径（px）。 */
   size?: number
+  technical?: boolean
 }>()
 
 const R = 34
@@ -33,9 +34,14 @@ const dash = computed(() => `${(CIRC * props.frac).toFixed(2)} ${CIRC.toFixed(2)
 </script>
 
 <template>
-  <div class="dial" :style="{ '--dial-size': `${props.size ?? 104}px` }">
+  <div class="dial" :class="{ technical }" :style="{ '--dial-size': `${props.size ?? 104}px` }">
     <svg viewBox="0 0 88 88" :width="props.size ?? 104" :height="props.size ?? 104" role="img"
          :aria-label="`${label} ${valueText}`">
+      <template v-if="technical">
+        <circle class="outer-ring" cx="44" cy="44" r="42" />
+        <circle class="inner-ring" cx="44" cy="44" r="29" />
+        <circle class="accent-ring" cx="44" cy="44" r="39" stroke-dasharray="48 74" />
+      </template>
       <circle class="track" cx="44" cy="44" :r="R" />
       <!-- ⚠️ 颜色走 `:style` 而不是 `stroke=` 属性：SVG 的表现属性不认
            `var()`，而兜底那一档必须是 `var(--leaf)`（十六进制在这个仓里
@@ -52,6 +58,13 @@ const dash = computed(() => `${(CIRC * props.frac).toFixed(2)} ${CIRC.toFixed(2)
 </template>
 
 <style scoped>
+.technical .outer-ring, .technical .inner-ring { fill: none; stroke: var(--interact); stroke-width: 0.7; opacity: 0.7; }
+.technical .inner-ring { opacity: 0.4; }
+.technical .accent-ring { fill: none; stroke: var(--edge); stroke-width: 2.5; stroke-linecap: round; transform: rotate(-78deg); transform-origin: 44px 44px; }
+.technical .track { stroke-width: 3; }
+.technical .arc { stroke-width: 5; }
+.technical .value { font-family: var(--font-latin); font-size: 22px; letter-spacing: -0.03em; }
+.technical .label { font-size: 11px; }
 .dial { position: relative; width: var(--dial-size); height: var(--dial-size); flex: none; }
 .track { fill: none; stroke: var(--steel); stroke-width: 8; }
 /* 起点挪到正上方。`transform-origin` 用像素而不是 `center` 百分比：

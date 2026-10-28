@@ -25,4 +25,15 @@
   box-shadow: var(--shadow);
   padding: var(--gap-m);
 }
+:global(.theme-live) .card {
+  background-image:
+    linear-gradient(var(--edge), var(--edge)), linear-gradient(var(--edge), var(--edge)),
+    linear-gradient(var(--edge), var(--edge)), linear-gradient(var(--edge), var(--edge)),
+    linear-gradient(var(--edge), var(--edge)), linear-gradient(var(--edge), var(--edge)),
+    linear-gradient(var(--edge), var(--edge)), linear-gradient(var(--edge), var(--edge)),
+    radial-gradient(ellipse at 50% 0%, color-mix(in srgb, var(--interact) 7%, transparent), transparent 65%);
+  background-size: 18px 1px, 1px 18px, 18px 1px, 1px 18px, 18px 1px, 1px 18px, 18px 1px, 1px 18px, 100% 100%;
+  background-position: left top, left top, right top, right top, left bottom, left bottom, right bottom, right bottom, center;
+  background-repeat: no-repeat;
+}
 </style>

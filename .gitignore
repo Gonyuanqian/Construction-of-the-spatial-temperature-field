@@ -27,6 +27,12 @@ backend/configs/live/*.xlsx
 # 而它不会被误提交。
 backend/*.xlsx
 
+# 从用户数据导出的泛化实验子集、摘要与校验记录；划分规则单独入库。
+outputs/generalization-*/
+
+# 模型评估归档含实际数据、逐点预测和实验成品，保留在本机独立文件夹。
+outputs/model-evaluation-*/
+
 # Node
 node_modules/
 frontend/dist/

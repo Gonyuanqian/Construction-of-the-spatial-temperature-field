@@ -91,23 +91,30 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
          `preserveAspectRatio="none"` 让它跟着页宽拉伸，而
          `vector-effect="non-scaling-stroke"` 把描边钉死在 1px —— 少了这一句，
          宽屏上那条线会被横向拉成一根粗杠。 -->
-    <svg v-if="isLive" class="deco" viewBox="0 0 100 12" preserveAspectRatio="none"
+    <svg v-if="isLive" class="deco" viewBox="0 0 1600 76" preserveAspectRatio="none"
          aria-hidden="true" focusable="false">
-      <polyline points="0,11 12,11 22,1 78,1 88,11 100,11"
+      <polyline points="0,74 510,74 528,68 560,68 580,49 1000,49 1012,56 1080,56 1090,62 1600,62"
                 fill="none" stroke="currentColor" stroke-width="1"
                 vector-effect="non-scaling-stroke" />
+      <polyline class="deco-secondary" points="575,0 604,29 628,29 637,36 945,36 976,6 1014,6"
+                fill="none" stroke="currentColor" stroke-width="1" vector-effect="non-scaling-stroke" />
+      <polyline class="deco-secondary" points="600,0 623,22 938,22 960,0 M1050,38 1100,38 1113,49 1140,49"
+                fill="none" stroke="currentColor" stroke-width="1" vector-effect="non-scaling-stroke" />
     </svg>
+    <span v-if="isLive" class="header-energy" aria-hidden="true" />
     <!-- 图标 + 标题包成一格。⚠️ 新加的只是这层壳：浅色档与训练侧那四页
          里，它占的仍是原来标题占的那一格（见样式里的 `.brand`）。 -->
     <div class="brand">
-      <Icon v-if="isLive" name="leaf" class="leaf" />
+      <span v-if="!isLive" class="brand-mark" aria-hidden="true"><Icon name="leaf" /></span>
+      <svg v-if="isLive" class="leaf live-leaf" viewBox="0 0 32 36" aria-hidden="true">
+        <path d="M4 28C1 14 12 7 29 2C29 19 20 30 8 28L3 35L5 24L23 8L4 28Z" fill="currentColor" />
+      </svg>
       <h1>{{ SYSTEM_TITLE }}</h1>
+      <slot v-if="!isLive" name="mode" />
     </div>
     <div class="right">
-      <!-- 模型库的入口。**不进左导航**：那一列有测试钉着「<a> 的数量与
-           次序精确等于已开放项」（App.test.ts），而用户 2026-10-08 指定的
-           位置就是标题条右边、紧挨着「后端：ok」。 -->
-      <RouterLink class="to-models" to="/models"
+      <!-- 训练模式的模型库入口位于左侧导航；实时模式保留顶栏快捷入口。 -->
+      <RouterLink v-if="isLive" class="to-models" to="/models"
                   :title="MODELS.entry" :aria-label="MODELS.entry">
         <!-- 档案盒。内联 SVG 而不是图标字体 / 图片：它要跟着 `.backend`
              那行字一起对齐，而且 **`currentColor` 上色** —— 十六进制色
@@ -134,7 +141,8 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         <span class="dot" aria-hidden="true" />
         <span>{{ statusText }}</span>
       </p>
-      <p v-else class="backend">
+      <p v-else class="backend" :class="state" role="status">
+        <span class="connection-dot" aria-hidden="true" />
         <template v-if="health.error.value">后端：{{ health.error.value }}</template>
         <template v-else-if="health.data.value">
           后端：{{ health.data.value.status }}，库版本
@@ -147,6 +155,20 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 </template>
 
 <style scoped>
+.titlebar:not(.live) { grid-template-columns: minmax(0, 1fr) auto; align-items: center; min-height: 72px; padding: 14px var(--gap-l); background: var(--card); border-bottom: var(--rule); }
+.titlebar:not(.live) .brand { grid-column: 1; display: flex; align-items: center; flex-wrap: wrap; gap: 12px; min-width: 0; }
+.titlebar:not(.live) h1 { color: var(--ink); font-size: 22px; font-weight: var(--w-strong); letter-spacing: 0.04em; }
+.titlebar:not(.live) .right { grid-column: 2; min-width: 0; }
+.brand-mark { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; flex-shrink: 0; background: var(--leaf-soft); color: var(--leaf); border-radius: var(--radius); }
+.titlebar:not(.live) .backend { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding-left: 18px; border-left: var(--rule); color: var(--ink-muted); font-size: var(--size-note); }
+.connection-dot { width: 6px; height: 6px; flex: none; border: 1px solid currentColor; border-radius: 50%; margin-right: 3px; }
+.backend.ok .connection-dot { background: var(--leaf); border-color: var(--leaf); }
+@media (max-width: 700px) {
+  .titlebar:not(.live) { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 12px 16px; }
+  .titlebar:not(.live) h1 { font-size: 18px; }
+  .titlebar:not(.live) .right { grid-column: 1; justify-self: start; }
+  .titlebar:not(.live) .backend { border-left: 0; padding-left: 50px; }
+}
 .titlebar {
   /* 面走 `--header`，不走 `--leaf`（2026-10-12）：实时那一档的面是深蓝、
      强调色是青，两者在这一轮之前是同一个令牌。浅色档 `--header` 取 `var(--leaf)`，
@@ -217,6 +239,8 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .titlebar.live {
   /* 底部那条青线与顶部那道折角都贴着这一条的边放，所以这里要是定位原点。 */
   position: relative;
+  isolation: isolate;
+  background-image: radial-gradient(ellipse at 50% 0%, color-mix(in srgb, var(--interact) 18%, transparent), transparent 65%);
   /* 参考图版式：图标 + 标题占左，时间与状态占右。
      ⚠️ 浅色档仍是 `1fr auto 1fr` 的**中置铭牌**（2026-10-06 用户裁定），
      一个字符都不改。 */
@@ -242,7 +266,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
      一条 1px 高的线 —— 半径一大，光就糊开、线反而看不见了。 */
   box-shadow: var(--glow-edge);
   /* 压到 75%：满亮度的青线＋一层光会抢标题的读数，而它只是条分隔线。 */
-  opacity: 0.75;
+  opacity: 0.25;
   pointer-events: none;
 }
 
@@ -254,9 +278,12 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
   top: 0;
   left: 0;
   right: 0;
-  height: 12px;
+  height: 100%;
+  width: 100%;
   color: var(--edge);
-  opacity: 0.35;
+  opacity: 0.8;
+  z-index: -1;
+  filter: var(--panel-corner-glow);
   pointer-events: none;
 }
 
@@ -274,6 +301,10 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .titlebar.live .brand .leaf {
   --icon-size: 28px;
   color: var(--edge);
+  width: 34px;
+  height: 38px;
+  flex: none;
+  filter: var(--panel-corner-glow);
 }
 .titlebar.live h1 {
   /* 参考图给的是 28–32px（裁定 R5 暂定 30）。
@@ -285,6 +316,12 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
      「没有 .vue 文件写死十六进制色值」当场逮住：那条守卫扫的是**源码文本**，
      注释里的一样的算。 */
   color: var(--title-ink);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--interact) 45%, transparent);
+}
+.deco-secondary { opacity: 0.45; }
+.header-energy { position: absolute; left: 42%; top: 43%; width: 14%; height: 2px; pointer-events: none; background: linear-gradient(90deg, transparent, var(--edge), var(--title-ink), var(--edge), transparent); box-shadow: var(--glow-edge); }
+@media (max-width: 1100px) {
+  .header-energy, .titlebar.live .deco-secondary { display: none; }
 }
 
 /* 右上角那一簇状态。与 `.clock`（本机时间）同一档字号。 */

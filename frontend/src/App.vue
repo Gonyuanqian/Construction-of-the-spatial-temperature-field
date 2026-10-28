@@ -29,6 +29,7 @@ import NavRail from './components/NavRail.vue'
 import NoDataset from './components/NoDataset.vue'
 import TitleBar from './components/TitleBar.vue'
 import { useDataset } from './composables/useDataset'
+import { provideTrainingWorkspace } from './composables/useTrainingWorkspace'
 import { LIVE_NAV_ITEMS, NAV_ITEMS } from './design/copy'
 
 const route = useRoute()
@@ -36,6 +37,7 @@ const router = useRouter()
 
 /** 数据集的状态与版本号。**全前端唯一一次探测**（规格书 §六、硬约束 3）。 */
 const dataset = useDataset()
+provideTrainingWorkspace()
 onMounted(() => { void dataset.probe() })
 
 /**
@@ -101,10 +103,12 @@ watchEffect(() => {
 </script>
 
 <template>
-  <TitleBar />
-  <!-- 训练模式开关保留在原位置；实时模式开关放到左侧导航上方，
-       让中央工作区获得完整高度。两个入口共用同一个路由驱动的 v-model。 -->
-  <ModeSwitch v-if="!isLive" v-model="mode" />
+  <TitleBar>
+    <template #mode>
+      <ModeSwitch v-if="!isLive" v-model="mode" class="header-modes" />
+    </template>
+  </TitleBar>
+  <!-- 两种模式共用路由状态；训练侧入口并入标题栏，实时侧入口位于导航上方。 -->
   <div class="body" :class="{ live: isLive }">
     <div v-if="isLive" class="live-nav-stack">
       <ModeSwitch v-model="mode" />
@@ -142,6 +146,8 @@ watchEffect(() => {
   overflow: hidden;
 }
 .page { flex: 1 1 auto; min-width: 0; padding-right: var(--gap-l); overflow-y: auto; }
+.titlebar .header-modes { flex: none; margin-left: 12px; padding: 0; }
+.body:not(.live) { padding-top: 12px; padding-bottom: 8px; }
 
 /* ── 实时那一屏的三栏（2026-10-12 用户裁定） ──────────────────────────
    `.body.live` 把外壳从「导航 + 内容」换成三列：左 210px（`--sidebar-w`
@@ -157,7 +163,8 @@ watchEffect(() => {
   grid-template-rows: minmax(0, 1fr);
 }
 .body.live > .live-nav-stack { grid-area: 1 / 1 / 2 / 2; }
-.body.live > .page { grid-area: 1 / 2 / 2 / 3; }
+/* 实时三栏统一由 grid gap 留白，移除两栏布局遗留的右内边距。 */
+.body.live > .page { grid-area: 1 / 2 / 2 / 3; padding-right: 0; }
 .live-nav-stack { display: flex; flex-direction: column; min-height: 0; }
 .live-nav-stack :deep(.modes) { justify-content: center; padding: var(--gap-m) 8px; }
 .live-nav-stack :deep(.rail.live) { width: auto; flex: 1 1 0; min-height: 0; }
@@ -165,7 +172,9 @@ watchEffect(() => {
    见 `LiveView.vue` 那两条）。`.page` 自己的 `overflow-y: auto` **原样保留**
    —— 装得下就不滚，顶到里面各块的下限才滚。这一条与上面 `.page` 那条写在
    两个选择器里不是重复：`.page` 是所有页共用的，这一条只管实时那一档。 */
-.body.live > .page { display: flex; flex-direction: column; }
+.body.live > .page { display: flex; flex-direction: column; overflow-x: hidden; }
+.body.live > .page, .body.live > .shell-side, .live-nav-stack :deep(.rail.live) { scrollbar-width: none; }
+.body.live > .page::-webkit-scrollbar, .body.live > .shell-side::-webkit-scrollbar, .live-nav-stack :deep(.rail.live::-webkit-scrollbar) { display: none; }
 /* 右栏自己是一个竖排的列：里面那几张卡的间距由这里的 `gap` 说了算，
    页⑤ 因此不必给每张卡再写一个下边距。 */
 .shell-side {
@@ -175,6 +184,7 @@ watchEffect(() => {
   gap: var(--gap-m);
   min-width: 0;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 /* 1200–1440px：右栏收窄。参考图那 390px 在 1280 的屏上是「中央只剩 680px」，
    三维会紧得看不出棚体（规格书 §九 第一条风险）。 */

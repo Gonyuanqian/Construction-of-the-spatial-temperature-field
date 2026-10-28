@@ -79,11 +79,9 @@ describe('标题条', () => {
     expect(w.find('.backend').exists()).toBe(true)
   })
 
-  it('模型库的入口是标题条右边一个图标，不是左导航里的一项', () => {
-    // 用户 2026-10-08 指定的入口位置。左导航那一列有测试钉着「<a> 的数量与
-    // 次序**精确等于**已开放项」（App.test.ts:83-90），所以模型库不能挤进去。
+  it('实时顶栏保留模型库快捷入口，训练顶栏使用导航入口', async () => {
     stubHealth(true)
-    const w = mount(TitleBar, withRouter())
+    const w = await mountAt('/live')
     const link = w.get('a.to-models')
     expect(link.attributes('href')).toBe('/models')
     // ⚠️ 断言的是**可访问名**，不是渲染文本：图标对读屏是隐形的
@@ -91,13 +89,15 @@ describe('标题条', () => {
     // `wrapper.text()` **读不到 `aria-label`**。写成
     // `expect(w.text()).toContain(MODELS.entry)` 是一条永远红的断言。
     expect(link.attributes('aria-label')).toBe(MODELS.entry)
+    const train = await mountAt('/data')
+    expect(train.find('a.to-models').exists()).toBe(false)
   })
 
-  it('图标画的是形状，用 currentColor 上色', () => {
+  it('图标画的是形状，用 currentColor 上色', async () => {
     // 十六进制色只许出现在 tokens.css 与 charts/scale.ts（`guards.test.ts`
     // 那条全仓守卫）。图标走 `currentColor` 就意味着页面上换主题它跟着换。
     stubHealth(true)
-    const w = mount(TitleBar, withRouter())
+    const w = await mountAt('/live')
     const svg = w.get('a.to-models svg')
     expect(svg.attributes('stroke')).toBe('currentColor')
     expect(svg.attributes('aria-hidden')).toBe('true')
@@ -180,15 +180,15 @@ describe('本机挂钟与状态点', () => {
 describe('页⑤ 精修：标题条', () => {
   beforeEach(() => { vi.restoreAllMocks(); stubHealth(true) })
 
-  it('实时那一屏上标题左边多一枚叶片，训练侧没有', async () => {
+  it('两种模式各自显示对应的叶片标识', async () => {
     const live = await mountAt('/live')
     await flushPromises()
-    expect(live.find('.brand svg').exists(), '实时那一屏没画叶片').toBe(true)
+    expect(live.find('.live-leaf').exists(), '实时那一屏没画叶片').toBe(true)
 
     const train = await mountAt('/data')
     await flushPromises()
-    expect(train.find('.brand svg').exists(), '训练侧也多了枚图标 —— 那是四页一起改')
-      .toBe(false)
+    expect(train.find('.brand-mark .icon').exists()).toBe(true)
+    expect(train.find('.live-leaf').exists()).toBe(false)
   })
 
   it('`live` 这个类只挂在实时那一屏的标题条上', async () => {

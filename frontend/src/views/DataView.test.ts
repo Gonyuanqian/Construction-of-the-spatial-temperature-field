@@ -123,6 +123,7 @@ function mountView() {
   return mount(DataView, {
     global: {
       stubs: {
+        RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' },
         EChart: {
           // 占位必须自称 EChart：findAllComponents({ name }) 按名字找，
           // 对象形式的 stub 不会被 VTU 自动命名。
@@ -154,16 +155,16 @@ describe('页① 数据导入与检查', () => {
       .toEqual(['样本数', '样本时间范围', '缺失样本量剔除', '重复样本量剔除'])
     const value = (label: string) =>
       cards.find((c) => c.find('.label').text() === label)!.find('.value').text()
-    expect(value('样本数')).toBe('1308')
+    expect(value('样本数')).toBe('1308 条')
     // 时刻走 `fmtTime`（不带 T、不带秒），两端用「至」接 —— §8.5 禁的是
     // 破折号与中点那类装饰连接符，「至」不在禁列。
-    expect(value('样本时间范围')).toBe('2026-07-23 11:00 至 2026-07-27 23:55')
-    expect(value('缺失样本量剔除')).toBe('0')
-    expect(value('重复样本量剔除')).toBe('4')
+    expect(value('样本时间范围')).toContain('2026-07-23 11:00')
+    expect(value('样本时间范围')).toContain('至 2026-07-27 23:55')
+    expect(value('缺失样本量剔除')).toBe('0 检查通过')
+    expect(value('重复样本量剔除')).toBe('4 已修复')
   })
 
-  it('那一排卡的文字居中开关接上了（`center`）', async () => {
-    // 2026-10-06 用户裁定：那一排的文字与数字要在卡片里居中。
+  it('指标卡按参考图左对齐，图标与读数分栏', async () => {
     // jsdom 不做布局，量不到「到底居中没有」—— 但**开关有没有接上**量得到，
     // 而「忘了传 prop」正是它最容易坏的方式：规则在、`centered` 不在，
     // 屏上一切照旧，没有任何东西会红。
@@ -171,15 +172,17 @@ describe('页① 数据导入与检查', () => {
            '/api/field/arch': ARCH, '/api/dataset': DATASET })
     const w = mountView()
     await flushPromises()
-    expect(w.find('.stats').classes()).toContain('centered')
+    expect(w.find('.stats').classes()).not.toContain('centered')
+    expect(w.findAll('.metric-card .metric-icon')).toHaveLength(4)
   })
 
-  it('这一排卡铺浅叶色底，与页上别处的白卡分得开', async () => {
+  it('指标卡使用白底，图标区域使用浅叶色', async () => {
     stub({ '/api/dataset/timeseries': TS, '/api/dataset/layer-timeheight': TH,
            '/api/field/arch': ARCH, '/api/dataset': DATASET })
     const w = mountView()
     await flushPromises()
-    expect(w.find('.stats').classes(), '这一排卡没有铺浅叶底').toContain('tinted')
+    expect(w.find('.stats').classes()).not.toContain('tinted')
+    expect(w.findAll('.metric-card')).toHaveLength(4)
   })
 
   it('「数据检查」那张表整块撤下 —— 四个数已经在上面的卡片里', async () => {
@@ -225,6 +228,23 @@ describe('页① 数据导入与检查', () => {
     const w = mountView()
     await flushPromises()
     expect(w.text()).toContain('前 3 行，共 1308 行')
+  })
+
+  it('数据预览每页十行，可翻页且显示真实预览范围', async () => {
+    const time = Array.from({ length: 23 }, (_, i) =>
+      `2026-07-23T11:${String(i).padStart(2, '0')}:00`)
+    const values = time.map((_, i) => [30 + i, 40 + i])
+    stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH,
+      '/api/dataset/preview': { ...PREVIEW, n_rows: 23, n_times: 1308, time, values } })
+    const w = mountView()
+    await flushPromises()
+    expect(w.findAll('.preview-card tbody tr')).toHaveLength(10)
+    expect(w.find('.preview-footer').text()).toContain('第 1–10 行，预览 23 行（全量 1308 行）')
+    await w.find('.pager button[aria-label="下一页"]').trigger('click')
+    expect(w.find('.preview-card tbody tr:first-child').text()).toContain('11:10')
+    await w.findAll('.pager button').find(button => button.text() === '3')!.trigger('click')
+    expect(w.findAll('.preview-card tbody tr')).toHaveLength(3)
+    expect(w.find('.preview-footer').text()).toContain('第 21–23 行')
   })
 
   it('整份数据都在时写「全部」，不写「前 1308 行，共 1308 行」', async () => {
@@ -316,9 +336,10 @@ describe('页① 数据导入与检查', () => {
     await flushPromises()
     const cards = w.findAll('.stat')
     expect(cards.length, '页① 的指标卡不是四张').toBe(4)
-    // 长值那一格收一档字号，卡片高度不变（`compact`）；四格等宽由 StatRow 管。
+    // 时间范围分为起止两行，长值不会挤坏其余三张卡。
     const span = cards.find((c) => c.find('.label').text() === '样本时间范围')!
-    expect(span.find('.value').classes()).toContain('compact')
+    expect(span.find('.value').classes()).toContain('time-range')
+    expect(span.findAll('.value span')).toHaveLength(2)
     expect(w.findAllComponents({ name: 'EChart' }).length, '主图不见了').toBe(1)
   })
 
@@ -483,8 +504,9 @@ describe('页① 第一块：数据导入', () => {
     stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH })
     const w = mountView()
     await flushPromises()
-    const h3s = w.findAll('h3').map((h) => h.text())
-    expect(h3s[0]).toContain('导入')
+    expect(w.findAll('.block')[0].classes()).toContain('import-card')
+    expect(w.find('.import-card .file-summary').text()).toContain('当前数据集')
+    expect(w.find('.next-step').attributes('href')).toBe('/train')
   })
 
   it('这一块的文案没有禁用字形', async () => {

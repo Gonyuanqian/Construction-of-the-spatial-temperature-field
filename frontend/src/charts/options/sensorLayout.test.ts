@@ -86,6 +86,14 @@ function datumOf(o: Record<string, any>, code: string): Datum {
 }
 
 describe('页① 切面图', () => {
+  it('图例按实际高度和测点编号标出三层位置', () => {
+    const option = buildSensorLayoutOption(ds(), ARCH, PALETTE) as Record<string, any>
+    expect(option.legend.data).toEqual([
+      '高度 1.1 m（B1–B2）', '高度 0.7 m（B3–B5）', '高度 0.4 m（B6–B8）',
+    ])
+    expect(scatters(option).map(layer => layer.name)).toEqual(option.legend.data)
+  })
+
   it('只画一个切面：一格 grid，不是三棚并排的三格', () => {
     // 用户 2026-10-06 裁定：切面图只留一座。三座棚的点位本来就是同一套，
     // 并排放三张只是把同一个形状画三遍。
@@ -129,11 +137,9 @@ describe('页① 切面图', () => {
     expect(series(o).some((s) => s.name === '无测量带')).toBe(false)
   })
 
-  it('纵轴不从 0 起：图幅框住拱与测点，不空出一大截地面', () => {
-    // 拱脚在 z ≈ 0.45 m，最低测点在 0.40 —— 从 0 起画，下面四成是空的。
-    // 用户那张参考图同样把下界抬到了 z ≈ 0.25。
+  it('纵轴从地面 0 m 起，拱脚与测点高度有明确基准', () => {
     const o = buildSensorLayoutOption(ds(), ARCH, PALETTE) as Record<string, any>
-    expect(o.yAxis.min).toBe(0.2)
+    expect(o.yAxis.min).toBe(0)
     expect(o.yAxis.max).toBe(ARCH.z_max)
   })
 

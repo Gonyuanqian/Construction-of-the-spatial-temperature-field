@@ -670,25 +670,27 @@ describe('页⑤ 那一档：只留中栏，侧栏投进外壳', () => {
 
   afterEach(() => { document.getElementById('shell-side')?.remove() })
 
-  it('侧栏两块的**内容**进了外壳，中栏里一张都不留', async () => {
+  it('查询保留在右栏，几何控制移入画布', async () => {
     stub()
     const side = provisionSide()
     const w = await mountView(12, VOLUME.time, { panels: 'shell' })
 
     expect(side.textContent, '右栏一块都没进去').toContain('查一个坐标')
-    expect(side.textContent, '几何那一块也没进去').toContain('棚体示意长度')
+    expect(side.textContent).not.toContain('棚体示意长度')
+    expect(w.find('.vol-stage .stage-geometry-controls').text()).toContain('棚体示意长度')
 
     const cols = Array.from(w.find('.vol-grid').element.children) as HTMLElement[]
     expect(cols, '中栏里还留着别的栏').toHaveLength(1)
     expect(cols[0]!.classList.contains('vol-stage')).toBe(true)
   })
 
-  it('三维视图控制那张卡也在右栏，且九枚按钮都在', async () => {
+  it('三维视图控制在右栏，提供三种拖动模式与复位', async () => {
     stub()
     const side = provisionSide()
     await mountView(12, VOLUME.time, { panels: 'shell' })
     expect(side.textContent).toContain('三维视图控制')
-    expect(side.querySelectorAll('[data-view-act]')).toHaveLength(9)
+    expect(side.querySelectorAll('.mode-tile')).toHaveLength(3)
+    expect(side.querySelectorAll('[data-view-act="reset"]')).toHaveLength(1)
   })
 
   it('页③ 那一档（不传 panels）落点里一个字节都没有', async () => {

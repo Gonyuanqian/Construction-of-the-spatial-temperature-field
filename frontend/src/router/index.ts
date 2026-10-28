@@ -18,7 +18,7 @@ import TrainView from '../views/TrainView.vue'
  * 构建能过、页面白屏。两页而已，直接引进来最省事。
  */
 const VIEWS: Record<string, Component> = {
-  data: DataView, train: TrainView, field: FieldView,
+  data: DataView, train: TrainView, models: ModelsView, field: FieldView,
 }
 
 /**
@@ -49,11 +49,7 @@ export function createAppRouter(history?: RouterHistory): Router {
         // 懒加载：实时模式那一屏（含三维）不该进首屏。
         component: () => import('../views/LiveView.vue'),
       },
-      // 模型库（规格书 §6.1）：列表与详情是同一个功能的两态，一个组件两条
-      // 路由。**静态 import** —— 与除 `/live` 外的全部路由一致。
-      // 它不进 `NAV_ITEMS`：入口是标题条右侧那个图标（规格书 D8），
-      // 而左导航那一列有测试钉着「<a> 的数量与次序精确等于已开放项」。
-      { path: '/models', name: 'models', component: ModelsView },
+      // 列表路由由训练导航生成；详情沿用同一个工作台组件。
       { path: '/models/:id', name: 'model-detail', component: ModelsView },
       // `/` 与认不出的路径都落回页①：演示时最怕的是白屏，
       // 一个回到起点的跳转至少还看得见东西。

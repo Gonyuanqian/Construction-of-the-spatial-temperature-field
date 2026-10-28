@@ -64,9 +64,9 @@ const unit = (a: readonly number[]): [number, number, number] => {
  * 右边因此变大，把相机推远。原先那句话缺的正是这个 `t`。
  */
 export function fitCamera(
-  box: WorldBox, aspect: number,
+  box: WorldBox, aspect: number, direction: readonly number[] = FIT_DIR,
 ): { position: [number, number, number]; target: [number, number, number] } {
-  const u = unit(FIT_DIR)
+  const u = unit(direction)
   // 视线方向（相机 → 目标）与它正交的两根轴。`right` 与世界上方叉出来，
   // 再叉回去得到相机自己的「上」—— 这样世界不会翻过来（`up[1] > 0`）。
   const f: [number, number, number] = [-u[0], -u[1], -u[2]]

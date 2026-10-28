@@ -41,11 +41,14 @@ describe('沿棚均温曲线', () => {
     const opt = buildLiveMeanCurveOption(makeVolumePayload(), P) as {
       xAxis: { axisLabel: { fontSize: number; color: string } }
       yAxis: { axisLabel: { fontSize: number; color: string } }
-      series: { lineStyle: { color: string } }[]
+      visualMap: { min: number; max: number; inRange: { color: string[] } }
     }
     expect(opt.xAxis.axisLabel.fontSize).toBe(P.chartAxis)
     expect(opt.yAxis.axisLabel.color).toBe(P.inkMuted)
-    expect(opt.series[0].lineStyle.color).toBe(P.leaf)
+    expect(opt.visualMap.inRange.color.length).toBeGreaterThan(2)
+    const means = makeVolumePayload().planes.flatMap(plane => plane.mean == null ? [] : [plane.mean])
+    expect(opt.visualMap.min).toBe(Math.min(...means))
+    expect(opt.visualMap.max).toBeGreaterThan(opt.visualMap.min)
   })
 
   it('线加粗、补一块面积底 —— 深底上细线读不出形状', () => {
@@ -59,7 +62,6 @@ describe('沿棚均温曲线', () => {
         areaStyle?: { color: string; opacity: number }
       }[]
     }
-    expect(opt.series[0].lineStyle.color).toBe(P.leaf)
     expect(opt.series[0].lineStyle.width, '细线在深蓝底上没有存在感')
       .toBeGreaterThanOrEqual(2.5)
     expect(opt.series[0].areaStyle, '没有面积底就只是一条飘着的线').toBeTruthy()

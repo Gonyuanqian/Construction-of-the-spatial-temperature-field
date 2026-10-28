@@ -15,6 +15,19 @@ function mountCtl(ok = true) {
 }
 
 describe('ViewControls', () => {
+  it('实时面板切换拖动模式，并同步高亮和操作提示', async () => {
+    const w = mount(ViewControls, { props: { ok: true, run: () => {}, layout: 'panel' } })
+    const modes = w.findAll('.mode-tile')
+    expect(modes).toHaveLength(3)
+    expect(modes[0]!.attributes('aria-pressed')).toBe('true')
+    await modes[2]!.trigger('click')
+    expect(w.emitted('mode')).toEqual([['pan']])
+    expect(modes[2]!.attributes('aria-pressed')).toBe('true')
+    expect(modes[0]!.attributes('aria-pressed')).toBe('false')
+    expect(w.find('.panel-help').text()).toContain('平移')
+    await modes[1]!.trigger('click')
+    expect(w.emitted('mode')?.[1]).toEqual(['zoom'])
+  })
   it('九枚按钮，次序固定', () => {
     const { w } = mountCtl()
     expect(w.findAll('[data-view-act]').map((b) => b.attributes('data-view-act')))

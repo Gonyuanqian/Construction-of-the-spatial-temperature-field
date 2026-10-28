@@ -17,7 +17,7 @@
 | 数据导入与检查 | 已实现 | `/data`：导入 XLSX，查看数据概况、质量检查、测点分布和时序信息 |
 | 模型训练 | 已实现 | `/train`：特征构造、参数优化、任务进度与取消、诊断图表、模型保存 |
 | 空间温度场的构建 | 已实现 | `/field`：断面 / 三维切换、时间选择、点位读数、坐标查询、剖切控制 |
-| 模型库 | 已实现 | `/models`、`/models/:id`：保存、查看和选择模型；入口位于系统顶栏 |
+| 模型库 | 已实现 | `/models`、`/models/:id`：保存、查看和选择模型；入口位于训练模式左侧导航栏 |
 | 实时监测 | 已实现演示流程 | `/live`：独立文件回放、三维 / 断面展示、环境参数、沿棚均温与视图控制 |
 | 温度场智能助手 | 已预留导航，待开发 | 预留 `/assistant`；尚无问答页面、模型接入和问答接口 |
 | 历史数据 | 已预留导航，待开发 | 预留 `/history`；尚无专用查询页面、历史归档和回放服务 |
@@ -195,6 +195,12 @@ npm run dev -- --host 127.0.0.1
 工作簿约定包括“建模对齐数据”“插值标记”“测点字典”等工作表，时间字段为 `timestamp`，并包含匹配配置的棚内温湿度测点与背景气象字段。“处理说明”“字段说明”用于描述数据来源与含义。
 
 具体结构以 [字段与几何配置](backend/src/tfield/config.py) 和 [数据加载实现](backend/src/tfield/data/loader.py) 为准。Java 入口的上传版本保存在 `backend/configs/datasets/<UUID>/source.xlsx`；旧 Python 入口仍使用 `backend/configs/uploads/`，这些文件不进入 Git。
+
+### 泛化实验数据划分
+
+已制定 A／B／C 时间划分：**A 训练集 576 个时刻、B 跨时段验证集 288 个时刻、C 最终测试集 444 个时刻**。本机导出目录为 `outputs/generalization-20261021/`，包含三个 XLSX、文件摘要和数据核对记录；数据文件不进入 Git。划分规则见 [generalization-split-v1.json](backend/configs/generalization-split-v1.json)，使用方法与数据限制见 [泛化实验数据说明](docs/development/07-generalization-datasets.md)。
+
+本阶段完成数据划分与用途标记，冻结模型评估入口尚未实现。B／C 的温度值均为源文件已经线性对齐的值；上传接口目前不强制实验角色，勿将 B／C 上传后重新训练并作为独立测试结果。
 
 ### 生成实时演示数据
 

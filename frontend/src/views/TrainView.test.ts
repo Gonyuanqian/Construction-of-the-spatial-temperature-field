@@ -243,6 +243,14 @@ describe('页② 模型训练', () => {
     vi.useRealTimers()
   })
 
+  it('标题旁显示当前数据集文件名，并去除服务器路径', async () => {
+    stub({ '/api/features': FEATURES, '/api/calibration': CAL,
+      '/api/dataset': { file: 'C:/datasets/B_validation.xlsx' } })
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.find('.dataset-badge strong').text()).toBe('B_validation.xlsx')
+  })
+
   it('三段的次序就是流水线的次序', async () => {
     stub({ '/api/features': FEATURES, '/api/calibration': CAL })
     const w = mount(TrainView)
@@ -251,7 +259,7 @@ describe('页② 模型训练', () => {
     // 用 `text.indexOf('模型训练')` 会被页顶 <h2>模型训练</h2> 抢先命中（索引 0），
     // 测的就不是次序了。这条同时钉住「次序」与「恰好三段」。
     const h3 = w.findAll('h3').map((e) => e.text())
-    expect(h3).toEqual(['特征值的构造', '最优参数的选择', '模型训练'])
+    expect(h3).toEqual(['特征构造', '参数配置', '空间验证结果', '模型训练'])
   })
 
   it('特征构造表逐组列出列名与列数', async () => {
@@ -305,7 +313,8 @@ describe('页② 模型训练', () => {
     const tables = card!.findAll('table').map((t) =>
       t.findAll('th').map((th) => th.text()))
     // 这一段里只剩平台区间那一张（维度 / 下界 / 上界）：十二个参数一张表都没有。
-    expect(tables).toEqual([['维度', '下界', '上界']])
+    expect(tables).toEqual([])
+    expect(w.find('.optimization-results .parameter-ranges').exists()).toBe(true)
   })
 
   it('口径说明原样显示 —— 这一页最大的谎就在这句话缺位的时候', async () => {
@@ -336,8 +345,8 @@ describe('页② 模型训练', () => {
     stub({ '/api/features': FEATURES, '/api/calibration': CAL })
     const w = mount(TrainView)
     await flushPromises()
-    expect(w.text()).toContain('0.115698')
-    expect(w.text()).toContain('0.162401')
+    expect(w.text()).toContain('0.1157')
+    expect(w.text()).toContain('0.1624')
     expect(w.text()).toContain('负数是好消息')
   })
 
@@ -369,19 +378,79 @@ describe('页② 模型训练', () => {
     expect(w.text()).toContain('metric.lx')
   })
 
-  it('随包数字与现场重算分得开（出处图章）', async () => {
+  it('没有优选记录时等待完成，不展示历史验证数值', async () => {
+    stub({
+      '/api/features': FEATURES,
+      '/api/calibration': {
+        ...CAL, present: false, source: null, reason: '尚未完成参数优选',
+        metrics: [], per_point: [], ab: null, worst_fold: null,
+      },
+    })
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.find('.optimization-status').attributes('title')).toBe('等待参数优选完成')
+    expect(w.find('.optimization-empty').text()).toContain('点击「参数优选」并等待完成')
+    expect(w.find('.selection-scores').exists()).toBe(false)
+    expect(w.find('.optimization-metrics').exists()).toBe(false)
+  })
+
+  it('参数优选正在运行且尚无记录时显示进度，不提前展示成绩', async () => {
+    const running = {
+      id: 'j7', state: 'running', progress: '正在搜索参数', elapsed_s: 3,
+      error: null, created_at: '2026-10-26T13:00:00+00:00',
+    }
+    stub({
+      '/api/calibration/jobs/j7': running,
+      '/api/features': FEATURES,
+      '/api/calibration': {
+        ...CAL, present: false, source: null, reason: '尚未完成参数优选',
+        metrics: [], per_point: [], ab: null, worst_fold: null, job: running,
+      },
+    })
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.find('.optimization-status').attributes('title')).toBe('参数优选进行中')
+    expect(w.find('.optimization-empty').text()).toContain('优选完成后')
+    expect(w.find('.selection-scores').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('已有模型库记录时标明来源，避免被误认成刚完成的优选', async () => {
     stub({ '/api/features': FEATURES, '/api/calibration': CAL })
     const w = mount(TrainView)
     await flushPromises()
-    const stamps = w.findAll('.prov')
-    expect(stamps.length, '这一页一个出处图章都没有').toBeGreaterThan(0)
-    expect(stamps.map((s) => s.text())).toContain('包')
-    // 这一条要的是**两种来源都说得清自己的来历**，不是「包」恰好排在第一枚。
-    // 页顶那一排指标卡插进来之后，第一枚图章是「特征列」那格的「算」
-    // （它取自 /api/features，是现算的），所以按次序取 [0] 就不对了。
-    const titles = stamps.map((s) => s.attributes('title') ?? '')
-    expect(titles.some((t) => t.includes('随标定包'))).toBe(true)
-    expect(titles.some((t) => t.includes('现场重算'))).toBe(true)
+    expect(w.find('.optimization-status').attributes('title')).toBe('已有模型库优选记录')
+    expect(w.find('.optimization-results').text()).toContain('当前展示模型库中已保存的历史优选记录')
+    expect(w.find('.selection-scores').exists()).toBe(true)
+  })
+
+  it('模型库记录属于其他数据集时等待当前数据优选，不展示旧误差', async () => {
+    stub({
+      '/api/features': FEATURES,
+      '/api/calibration': { ...CAL, mismatch_note: '参数不是用当前数据标出来的' },
+    })
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.find('.optimization-status').attributes('title')).toBe('等待当前数据集参数优选完成')
+    expect(w.find('.optimization-empty').text()).toContain('现有验证结果属于其他数据集')
+    expect(w.find('.selection-scores').exists()).toBe(false)
+    expect(w.find('.optimization-metrics').exists()).toBe(false)
+    expect(w.findAll('.stat').map(card => card.text()).join('')).not.toContain('空间留出 MAE')
+  })
+
+  it('未保存的优选结果与模型库历史记录显示不同状态', async () => {
+    stub({ '/api/features': FEATURES, '/api/calibration': { ...CAL, source: 'unsaved' } })
+    const w = mount(TrainView)
+    await flushPromises()
+    expect(w.find('.optimization-status').attributes('title')).toBe('已有未保存的优选记录')
+    expect(w.find('.optimization-results').text()).toContain('结果尚未保存到模型库')
+  })
+
+  it('随包数字与现场重算分得开（出处图章）', async () => {
+    const w = await mountWithDiag()
+    const titles = w.findAll('.prov').map(stamp => stamp.attributes('title') ?? '')
+    expect(titles.some(title => title.includes('随标定包'))).toBe(true)
+    expect(titles.some(title => title.includes('现场重算'))).toBe(true)
   })
 
   it('页标题就是导航里那条的标签（房规：页标题 = 导航标签）', async () => {
@@ -415,16 +484,14 @@ describe('页② 模型训练', () => {
   })
 
   it('A/B 组的数也可以是 null，表格显示无值而不是崩', async () => {
-    stub({
-      '/api/features': FEATURES,
-      '/api/calibration': { ...CAL, ab: { mae_a: null, mae_b: 0.162401, gap: null } },
-    })
+    stub({ '/api/features': FEATURES,
+      '/api/calibration': { ...CAL, ab: { mae_a: null, mae_b: 0.162401, gap: null } } })
     const w = mount(TrainView)
     await flushPromises()
-    const rows = w.findAll('tbody tr').map((r) => r.text())
-    const rowA = rows.find((t) => t.includes('挑参数用的那一组'))
-    expect(rowA, 'A 组那一行要渲染出来').toBeDefined()
-    expect(rowA).toContain('—')
+    const scores = w.findAll('.selection-scores > div')
+    expect(scores[0].find('dd').text()).toBe('—')
+    expect(scores[1].find('dd').text()).toBe('0.1624')
+    expect(scores[2].find('dd').text()).toBe('—')
   })
 
   it('上屏的文字里没有被禁的连接符与 markdown 标记', async () => {
@@ -441,33 +508,29 @@ describe('页② 模型训练', () => {
     expect(text).not.toContain('↳')
   })
 
-  it('一排指标卡，五格，其中一格不是数字（spec §6.2 页②、§十 的判据）', async () => {
+  it('特征数量与验证摘要各归所属区域，保留最差折名称', async () => {
     stub({ '/api/features': FEATURES, '/api/calibration': CAL })
     const w = mount(TrainView)
     await flushPromises()
-    const cards = w.findAll('.stat')
-    expect(cards.map((c) => c.find('.label').text()))
-      .toEqual(['特征列', '折数', 'MAE', 'gap', '最差折'])
-    // 第五格是折名，不是数 —— 通用的大数字栅格不会有这样一格
-    expect(Number.isNaN(Number(cards[4].find('.value').text()))).toBe(true)
+    expect(w.find('.feature-count').text()).toBe('13 个特征')
+    expect(w.findAll('.selection-scores > div')).toHaveLength(3)
+    expect(w.find('.record-meta').text()).toContain(CAL.worst_fold.fold)
   })
 
   it('MAE 那一格报的是 B 组，不是挑参数用的 A 组', async () => {
-    // 这是本页最贵的口径：`ab` 的 A 组 MAE（0.115698）比 B 组（0.162401）好看，
-    // 而 A 组正是**拿来挑参数的那一组**。印 A 组 = 用调过参的那组自夸。
     stub({ '/api/features': FEATURES, '/api/calibration': CAL })
     const w = mount(TrainView)
     await flushPromises()
-    const mae = w.findAll('.stat').find((c) => c.find('.label').text() === 'MAE')!
-    expect(mae.find('.value').text()).toBe('0.162')
+    const holdout = w.findAll('.selection-scores > div')
+      .find(score => score.find('dt').text() === '空间留出组 MAE / ℃')!
+    expect(holdout.find('dd').text()).toBe('0.1624')
   })
 
-  it('五格全挂在标定包上，图章只有一个字「包」（spec §七）', async () => {
+  it('空间验证记录的来源标注为标定包', async () => {
     stub({ '/api/features': FEATURES, '/api/calibration': CAL })
     const w = mount(TrainView)
     await flushPromises()
-    const cards = w.findAll('.stat')
-    expect(cards.map((c) => c.find('.prov').text())).toEqual(['算', '包', '包', '包', '包'])
+    expect(w.find('.record-description .prov').text()).toBe('包')
   })
 
   it('指标卡不改三段标题的数量与次序（spec §十三.1）', async () => {
@@ -475,8 +538,8 @@ describe('页② 模型训练', () => {
     const w = mount(TrainView)
     await flushPromises()
     expect(w.findAll('h3').map((e) => e.text()))
-      .toEqual(['特征值的构造', '最优参数的选择', '模型训练'])
-    expect(w.findAll('.stat').length).toBeGreaterThan(0)
+      .toEqual(['特征构造', '参数配置', '空间验证结果', '模型训练'])
+    expect(w.find('.selection-scores').exists()).toBe(true)
   })
 
   it('未标定时标定那四格一张都不渲染 —— 包里没有的数不许凑（spec §6.2）', async () => {
@@ -490,8 +553,8 @@ describe('页② 模型训练', () => {
     })
     const w = mount(TrainView)
     await flushPromises()
-    const labels = w.findAll('.stat').map((c) => c.find('.label').text())
-    expect(labels).toEqual(['特征列'])
+    expect(w.find('.feature-count').text()).toBe('13 个特征')
+    expect(w.find('.selection-scores').exists()).toBe(false)
   })
 
   it('散文折进唯一一处「口径与出处」', async () => {
@@ -503,7 +566,7 @@ describe('页② 模型训练', () => {
     expect(why[0].text()).toContain('留一测点')
   })
 
-  it('换数据集之后说清「参数与当前数据集不匹配」，并给出该跑哪条命令', async () => {
+  it('换数据集后指出历史记录时间，并提示为当前数据重新优选', async () => {
     // 规格书 §七。这一句与「还没标定」是**两件事**：
     // 后者是系统的正常起点，前者说明屏上这些数背后是另一份数据。
     stub({
@@ -520,9 +583,9 @@ describe('页② 模型训练', () => {
     })
     const w = mount(TrainView)
     await flushPromises()
-    expect(w.text()).toContain('参数与当前数据集不匹配')
+    expect(w.text()).toContain('上次优选记录对应')
     expect(w.text()).toContain('2026-07-27T20:00:00')
-    expect(w.text()).toContain('scripts/calibrate.py')
+    expect(w.text()).toContain('请为当前数据集运行参数优选')
   })
 
   it('没有 mismatch 时不说那句话 —— 「从来没标过」是另一件事', async () => {
@@ -597,7 +660,7 @@ describe('页② 模型训练', () => {
     const w = mount(TrainView)
     await flushPromises()
     expect(w.findAll('h3').map((e) => e.text()))
-      .toEqual(['特征值的构造', '最优参数的选择', '模型训练'])
+      .toEqual(['特征构造', '参数配置', '空间验证结果', '模型训练'])
   })
 
   // ⚠️ 下面两条是从 Task 7 挪过来的：它们在计划的 Task 7 里，
@@ -676,23 +739,23 @@ describe('页② 模型训练', () => {
     expect(w.text()).toContain('基线没算出来')
   })
 
-  it('点完训练之后，指标卡里多一格「基线 MAE」，图章是「算」', async () => {
-    // 基线是**现场算的**（它不在标定包里），所以它的图章是「算」不是「包」——
-    // 两组图章在同一个页面上同时出现，正是 §七 那套三态要表达的东西。
+  it('训练完成后在右侧展示诊断，可切回空间验证', async () => {
     const w = await mountWithDiag()
-    const cards = w.findAll('.stat')
-    expect(cards.map((c) => c.find('.label').text()))
-      .toEqual(['特征列', '折数', 'MAE', '基线 MAE', 'gap', '最差折'])
-    expect(cards.map((c) => c.find('.prov').text()))
-      .toEqual(['算', '包', '包', '算', '包', '包'])
+    expect(w.find('.diagnostics-body').text()).toContain(DIAG.accuracy.baseline.label)
+    expect(w.find('.diagnostics-body').text()).toContain(DIAG.accuracy.baseline.mae.toFixed(4))
+    expect(w.find('.diagnostics-body .prov').text()).toBe('算')
+    await w.findAll('.result-tabs button').find(button => button.text() === '空间验证')!.trigger('click')
+    expect(w.find('.selection-scores').exists()).toBe(true)
+    expect(w.find('.record-description .prov').text()).toBe('包')
   })
 
-  it('没点训练之前没有「基线 MAE」那一格', async () => {
+  it('未训练时显示验证记录，训练状态为尚未开始', async () => {
     stub({ '/api/features': FEATURES, '/api/calibration': CAL })
     const w = mount(TrainView)
     await flushPromises()
-    expect(w.findAll('.stat').map((c) => c.find('.label').text()))
-      .toEqual(['特征列', '折数', 'MAE', 'gap', '最差折'])
+    expect(w.find('.diagnostics-body').exists()).toBe(false)
+    expect(w.text()).not.toContain(DIAG.accuracy.baseline.label)
+    expect(w.find('.training-status').text()).toBe('尚未开始')
   })
 
   it('点完训练之后两张图都挂上去了', async () => {
@@ -761,7 +824,7 @@ describe('页② 模型训练', () => {
     await vi.advanceTimersByTimeAsync(1000)
     await flushPromises()
     expect(cals(), '任务跑完之后没有重取标定包').toBe(2)
-    expect(w.findAll('span.note').map((s) => s.text()).join('')).toContain('标定完成')
+    expect(w.find('.optimization-progress').text()).toContain('标定完成')
     w.unmount()
   })
 
@@ -857,15 +920,14 @@ describe('页② 模型训练', () => {
     // 先证明它本来是在的。用 `:574` 与 `:695` 那两条用例认过的字串，
     // 不另编一个（编出来的那个万一不在屏上，这两条断言就成了摆设）。
     expect(w.text()).toContain('拿背景温度当棚温')
-    expect(w.findAll('.stat').map((c) => c.find('.label').text())).toContain('基线 MAE')
+    expect(w.find('.diagnostics-body').text()).toContain(DIAG.accuracy.baseline.mae.toFixed(4))
 
     const depth = rowOf(w, 'trend.max_depth')
     ;(depth.find('input[type="range"]').element as HTMLInputElement).value = '0'
     await depth.find('input[type="range"]').trigger('input')
 
     expect(w.text(), '上一套参数的基线还在屏上').not.toContain('拿背景温度当棚温')
-    expect(w.findAll('.stat').map((c) => c.find('.label').text()),
-      '上一套参数的「基线 MAE」还挂在指标卡里').not.toContain('基线 MAE')
+    expect(w.find('.diagnostics-body').find('table').exists()).toBe(false)
     // 不能静默：数字一转眼没了，用户得知道它们为什么没了、怎么弄回来。
     expect(w.text()).toContain('参数换过了')
   })
@@ -1008,8 +1070,7 @@ describe('保存到模型库', () => {
     stubSaving(NEW)
     const w = mount(TrainView)
     await flushPromises()
-    expect(w.findAll('.stat').map((c) => c.find('.prov').text()))
-      .toEqual(['算', '未入库', '未入库', '未入库', '未入库'])
+    expect(w.find('.record-description .prov').text()).toBe('未入库')
     expect(w.text()).toContain(MODELS.saveTitle)
   })
 
@@ -1019,8 +1080,7 @@ describe('保存到模型库', () => {
     stubSaving(LIB)
     const w = mount(TrainView)
     await flushPromises()
-    expect(w.findAll('.stat').map((c) => c.find('.prov').text()))
-      .toEqual(['算', '包', '包', '包', '包'])
+    expect(w.find('.record-description .prov').text()).toBe('包')
     expect(w.text()).not.toContain(MODELS.saveTitle)
   })
 
@@ -1051,8 +1111,7 @@ describe('保存到模型库', () => {
     // **重取了一次** —— 不重取的话 `source` 还停在载荷里那个 'unsaved' 上，
     // 图章不翻、那一行不消失，用户会以为没保存成功，再点一次吃 409。
     expect(s.cals(), '保存之后没有重取标定包').toBe(2)
-    expect(w.findAll('.stat').map((c) => c.find('.prov').text()))
-      .toEqual(['算', '包', '包', '包', '包'])
+    expect(w.find('.record-description .prov').text()).toBe('包')
     expect(w.text()).not.toContain(MODELS.saveTitle)
   })
 

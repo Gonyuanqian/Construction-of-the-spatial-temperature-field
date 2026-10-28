@@ -31,6 +31,7 @@ defineProps<{
     label: string
     /** 已经格式化好的字符串。这一层不做任何数值格式化。 */
     value: string
+    sub?: string
     /** 值那一行的语气。默认 `plain`。 */
     tone?: 'plain' | 'ok' | 'warn'
   }[]
@@ -40,15 +41,41 @@ defineProps<{
 <template>
   <div class="strip">
     <div v-for="c in cells" :key="c.key" class="cell">
+      <span v-if="$slots[`icon-${c.key}`]" class="status-icon"><slot :name="`icon-${c.key}`" /></span>
+      <div class="cell-copy">
       <p class="label">
-        <span class="ico"><slot :name="`icon-${c.key}`" /></span>{{ c.label }}
+        {{ c.label }}
       </p>
       <p class="value num" :class="c.tone ?? 'plain'">{{ c.value }}</p>
+      <p v-if="c.sub" class="sub note">{{ c.sub }}</p>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+.strip { position: relative; border: 1px solid var(--interact); }
+.strip::before, .strip::after { content: ''; position: absolute; width: 14px; height: 14px; pointer-events: none; filter: var(--panel-corner-glow); }
+.strip::before { top: -1px; left: -1px; border-top: 2px solid var(--edge); border-left: 2px solid var(--edge); }
+.strip::after { bottom: -1px; right: -1px; border-bottom: 2px solid var(--edge); border-right: 2px solid var(--edge); }
+.strip .cell { display: flex; align-items: center; gap: 14px; position: relative; }
+.strip .cell + .cell { border-left: 0; }
+.cell + .cell::before { content: ''; position: absolute; left: 0; top: 15%; bottom: 15%; width: 1px; background: linear-gradient(transparent, var(--edge), transparent); box-shadow: var(--panel-line-glow); }
+.status-icon { position: relative; display: flex; align-items: center; justify-content: center; flex: 0 0 58px; height: 58px; border: 1px solid var(--interact); border-radius: 50%; color: var(--edge); background: radial-gradient(circle, color-mix(in srgb, var(--interact) 22%, transparent), transparent 70%); }
+.status-icon::before { content: ''; position: absolute; inset: 4px; border: 1px solid var(--interact); border-radius: 50%; }
+.status-icon::after { content: ''; position: absolute; inset: -4px; border: 1px solid var(--interact); border-left-color: transparent; border-right-color: transparent; border-radius: 50%; opacity: 0.65; }
+.status-icon :deep(.icon) { --icon-size: 30px; filter: var(--panel-corner-glow); }
+.cell-copy { min-width: 0; }
+.strip .value { margin: 2px 0; font-family: var(--font-latin); color: var(--edge); font-size: 23px; line-height: 1.3; overflow-wrap: anywhere; }
+.strip .value.warn { color: var(--ink-muted); }
+.sub { margin: 0; font-size: 11px; }
+@media (max-width: 1350px) {
+  .status-icon { flex-basis: 42px; height: 42px; }
+  .status-icon :deep(.icon) { --icon-size: 24px; }
+  .strip .cell { gap: 10px; padding-right: 8px; padding-left: 12px; }
+  .strip .value { font-size: 18px; }
+}
+@media (max-width: 900px) { .status-icon { display: none; } }
 /* 一条长条：几格**等分**，格与格之间一条竖线（参考图那条分隔线）。
    ⚠️ `min-width: 0` 在窄屏上让文案自己折行，而不是把这一条撑出横向滚动。
    ⚠️ 纵向内边距 2026-10-16 从 `--gap-m` 收到 `--gap-s`（省 16px）。

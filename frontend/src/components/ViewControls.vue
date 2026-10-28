@@ -9,6 +9,7 @@
  * `scene/orbit.ts`，调用者是 `VolumeScene`）。这一层因此不需要 Three，
  * 也不需要 jsdom 能跑 canvas。
  */
+import { ref } from 'vue'
 import type { ViewCmd } from '../scene/viewCmd'
 import Icon from './Icon.vue'
 
@@ -20,6 +21,17 @@ withDefaults(defineProps<{
   /** panel 用于实时页卡片；toolbar 保留画布上的紧凑摆法。 */
   layout?: 'toolbar' | 'panel'
 }>(), { layout: 'toolbar' })
+const activeMode = ref<'rotate' | 'zoom' | 'pan'>('rotate')
+const emit = defineEmits<{ mode: [value: 'rotate' | 'zoom' | 'pan'] }>()
+const modes = [
+  { key: 'rotate', label: '旋转', icon: 'rotate' },
+  { key: 'zoom', label: '缩放', icon: 'zoom' },
+  { key: 'pan', label: '平移', icon: 'move' },
+] as const
+function selectMode(mode: 'rotate' | 'zoom' | 'pan') {
+  activeMode.value = mode
+  emit('mode', mode)
+}
 </script>
 
 <template>
@@ -29,37 +41,19 @@ withDefaults(defineProps<{
       <strong>三维视图控制</strong>
     </div>
     <div class="panel-grid">
-      <section class="control-tile" aria-label="旋转">
-        <Icon name="rotate" class="tile-icon" />
-        <strong>旋转</strong>
-        <div class="action-row">
-          <button type="button" data-view-act="yaw-left" :disabled="!ok" title="绕竖直轴左转" @click="run('yaw-left')">左转</button>
-          <button type="button" data-view-act="yaw-right" :disabled="!ok" title="绕竖直轴右转" @click="run('yaw-right')">右转</button>
-        </div>
-      </section>
-      <section class="control-tile" aria-label="缩放">
-        <Icon name="zoom" class="tile-icon" />
-        <strong>缩放</strong>
-        <div class="action-row">
-          <button type="button" data-view-act="zoom-in" :disabled="!ok" title="相机靠近棚体" @click="run('zoom-in')">拉近</button>
-          <button type="button" data-view-act="zoom-out" :disabled="!ok" title="相机远离棚体" @click="run('zoom-out')">推远</button>
-        </div>
-      </section>
-      <section class="control-tile" aria-label="平移">
-        <Icon name="move" class="tile-icon" />
-        <strong>平移</strong>
-        <div class="action-row pan-actions">
-          <button type="button" data-view-act="pan-left" :disabled="!ok" title="画面向左移" @click="run('pan-left')">左</button>
-          <button type="button" data-view-act="pan-right" :disabled="!ok" title="画面向右移" @click="run('pan-right')">右</button>
-          <button type="button" data-view-act="pan-up" :disabled="!ok" title="画面向上移" @click="run('pan-up')">上</button>
-          <button type="button" data-view-act="pan-down" :disabled="!ok" title="画面向下移" @click="run('pan-down')">下</button>
-        </div>
-      </section>
+      <button v-for="mode in modes" :key="mode.key" type="button" class="mode-tile"
+              :class="{ selected: activeMode === mode.key }" :aria-pressed="activeMode === mode.key"
+              :disabled="!ok" @click="selectMode(mode.key)">
+        <Icon :name="mode.icon" />
+        <span>{{ mode.label }}</span>
+      </button>
     </div>
-    <button type="button" class="reset-action" data-view-act="reset" :disabled="!ok" title="回到自动取景" @click="run('reset')">
-      <Icon name="reset" />复位
-    </button>
-    <p class="panel-help"><Icon name="cube" />拖动鼠标可查看三维模型。</p>
+    <div class="panel-footer">
+      <span class="help-cube"><Icon name="cube" /></span>
+      <p class="panel-help">{{ activeMode === 'rotate' ? '拖动鼠标旋转三维模型' : activeMode === 'zoom' ? '上下拖动鼠标缩放三维模型' : '拖动鼠标平移三维模型' }}</p>
+      <button type="button" class="compact-reset" data-view-act="reset" :disabled="!ok"
+              title="回到自动取景" aria-label="复位视图" @click="run('reset')"><Icon name="reset" /></button>
+    </div>
   </div>
 
   <div v-else class="view-ctl-group" role="group" aria-label="视角">
@@ -87,6 +81,19 @@ withDefaults(defineProps<{
 </template>
 
 <style scoped>
+.panel-head { position: relative; }
+.panel-head::after { content: ''; position: absolute; right: 0; bottom: -1px; width: 7px; height: 2px; background: var(--interact); }
+.panel-grid .mode-tile { min-width: 0; min-height: 84px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--interact); color: var(--ink-muted); background: transparent; font-size: var(--size-label); }
+.mode-tile :deep(.icon) { --icon-size: 26px; color: var(--nav-blue); }
+.panel-grid .mode-tile.selected { color: var(--ink); border-color: var(--edge); background: var(--card-2); }
+.mode-tile.selected :deep(.icon) { color: var(--edge); }
+.panel-grid .mode-tile:hover:not(:disabled) { border-color: var(--edge); color: var(--ink); }
+.panel-footer { display: flex; align-items: center; gap: 12px; margin-top: 20px; }
+.help-cube { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; flex: none; border: 1px solid var(--interact); border-radius: var(--radius); color: var(--edge); }
+.help-cube :deep(.icon) { --icon-size: 30px; }
+.panel-footer .panel-help { margin: 0; flex: 1; }
+.compact-reset { display: flex; align-items: center; justify-content: center; padding: 5px; color: var(--ink-muted); }
+
 /* ⚠️ 这些规则**从 `VolumeScene.vue` 搬过来**，一个字都没改：
    两处摆法共用同一组按钮，样式分两处写迟早会漂成两种长相。
    ⚠️ 定位与那层底（`position: absolute` / `background` / `box-shadow`）**留在

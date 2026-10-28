@@ -27,12 +27,8 @@ import type { ArchPayload, DatasetPayload, Position } from '../../api/types'
 import { fmt1 } from '../../design/format'
 import type { ColorKey, Palette } from '../../design/palette'
 
-/**
- * 纵轴下界。**不从 0 起**：拱脚在 z ≈ 0.45 m、最低测点在 0.40，从 0 起画
- * 下面四成是空的。取 0.2 是因为它正好落在横网格线的步长上（0.2 / 0.4 / …），
- * 参考图同样把下界抬到了 0.25 附近。
- */
-const Z_MIN = 0.2
+/** 新参考图从地面 0 m 起标注，便于核对拱脚与三层测点高度。 */
+const Z_MIN = 0
 /** 网格步长，与参考图一致：横线每 0.2 m，竖线每 0.5 m。 */
 const X_STEP = 0.5
 const Z_STEP = 0.2
@@ -53,7 +49,7 @@ const Z_STEP = 0.2
  *               往外画，没有这块地方就会被卡片边裁掉。
  * 上下两成留白照旧：上面给纵轴名，下面给横轴名与它的刻度。
  */
-const GRID = { left: '12%', width: '80%', top: '10%', bottom: '14%' }
+const GRID = { left: '12%', width: '80%', top: '10%', bottom: '19%' }
 
 /**
  * 层从高到低取哪一档色。**层的名字（`ztop` / `z0.7` / `z0.4`）不进这里** ——
@@ -75,6 +71,13 @@ export function buildSensorLayoutOption(
   // 均值的排列都用它 —— 两边各排各的话，p2 的数会挂在 p3 的名下，
   // 而这种错在屏幕上长得和对的一模一样。
   const shedIds = sheds.map((s) => s.id)
+  const layers = byLayer(ds, p, shedIds).map(group => {
+    const first = group.points[0]
+    const last = group.points[group.points.length - 1]
+    const range = first && last && first[2]
+      ? `（${first[2]}${first[2] === last[2] ? '' : `–${last[2]}`}）` : ''
+    return { ...group, name: `高度 ${first ? fmt1(first[1]) : group.layer} m${range}` }
+  })
   const series: Record<string, unknown>[] = [
     {
       name: '拱形轮廓',
@@ -87,9 +90,9 @@ export function buildSensorLayoutOption(
     },
   ]
 
-  for (const { layer, color, points } of byLayer(ds, p, shedIds)) {
+  for (const { name, color, points } of layers) {
     series.push({
-      name: `${layer} 测点`,
+      name,
       type: 'scatter',
       data: points,
       symbolSize: 18,
@@ -114,6 +117,11 @@ export function buildSensorLayoutOption(
     backgroundColor: 'transparent',
     animation: false,
     grid: GRID,
+    legend: {
+      data: layers.map(group => group.name), bottom: 0, left: 'center',
+      itemWidth: 10, itemHeight: 10, itemGap: 18,
+      textStyle: { color: p.inkMuted, fontSize: p.chartAxis },
+    },
     xAxis: {
       type: 'value',
       min: arch.x_min,

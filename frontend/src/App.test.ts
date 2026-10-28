@@ -240,7 +240,7 @@ describe('应用外壳', () => {
     expect(w.find('.body').classes(), '训练侧的外壳被改成三栏了').not.toContain('live')
   })
 
-  it('实时模式开关放在左侧导航上方，训练侧入口保持原位', async () => {
+  it('实时模式开关位于导航上方，训练模式开关并入标题栏', async () => {
     const w = await mountAt('/live')
     await flushPromises()
     expect(w.find('.live-nav-stack nav[aria-label="模式"]').exists(),
@@ -249,6 +249,8 @@ describe('应用外壳', () => {
       '实时模式开关仍占着中央画布的高度').toBe(false)
     const train = await mountAt('/data')
     await flushPromises()
+    expect(train.find('.titlebar').find('nav[aria-label="模式"]').exists(),
+      '训练侧模式开关没有并入标题栏').toBe(true)
     expect(train.find('.page nav[aria-label="模式"]').exists(),
       '训练侧的模式开关也被挪进去了').toBe(false)
   })

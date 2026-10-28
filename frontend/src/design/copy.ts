@@ -23,24 +23,24 @@ export const MODES = [
 ] as const
 
 /**
- * 左侧导航。**次序就是流水线的次序** —— 数据可信 → 特征与参数定下来 → 场长出来 →
- * 误差有多大。顺序本身是信息，不许改成按字母或按使用频率排。
+ * 训练模式左侧导航：数据导入、模型训练、模型库、构场与影响分析。
+ * 模型库紧接训练，便于保存结果后查看和选择构场模型。
  *
  * 未开放的两项**留位并说明**，不做成空页：空页比没有更难看
  * （spec 2026-10-04 §二.4）。
  */
 export const NAV_ITEMS = [
-  { key: 'data', label: '数据导入与检查', to: '/data', enabled: true, why: '' },
-  { key: 'train', label: '模型训练', to: '/train', enabled: true, why: '' },
-  // 位置留在这里而不是排到最后：四页的次序**本身是信息** ——
-  // 先看数据、再训模型、再构建场、最后谈影响，与流水线的次序一致。
-  { key: 'field', label: '空间温度场的构建', to: '/field', enabled: true, why: '' },
+  { key: 'data', label: '数据导入与检查', to: '/data', enabled: true, why: '', icon: 'upload' },
+  { key: 'train', label: '模型训练', to: '/train', enabled: true, why: '', icon: 'chart' },
+  { key: 'models', label: '模型库', to: '/models', enabled: true, why: '', icon: 'database' },
+  { key: 'field', label: '空间温度场的构建', to: '/field', enabled: true, why: '', icon: 'cube' },
   {
     key: 'impact',
     label: '影响分析',
     to: '/impact',
     enabled: false,
     why: '本轮不做。后端还没有逐点误差与按时段的接口，内容也还没定下来。',
+    icon: 'network',
   },
 ] as const
 
@@ -67,8 +67,7 @@ export const NAV_ITEMS = [
  * 扫「未开放项必带理由」，`LIVE_NAV_ITEMS` 也在它扫的名单里。已开放的那一项
  * 按 `NAV_ITEMS` 的老规矩是空串（它没有「为什么没开」可写）。
  *
- * `icon` 是 `design/icons.ts` 里的名字。**只有这一份带图标**：训练侧那四页的
- * 左栏没有图标（用户 2026-10-16 裁的是实时那一屏）。
+ * `icon` 是 `design/icons.ts` 里的名字。训练侧与实时侧都通过这份单一图标表取图。
  */
 export const LIVE_NAV_ITEMS = [
   {
@@ -155,7 +154,7 @@ export const NO_DATASET = {
  */
 export const IMPORT = {
   title: '数据集导入',
-  hint: '选一份 xlsx。导入之后，这一份就是全系统在用的数据，各页内容都按它重新算一遍。',
+  hint: '导入后将更新训练与分析数据。',
   idle: '导入',
   busy: '正在导入…',
   done: '当前数据集',
@@ -164,33 +163,27 @@ export const IMPORT = {
 /**
  * 模型库（规格书 §六、§七）。
  *
- * ⚠️ `effectHead` 是**表头**，不是标签：它必须带上「空间折，B 组」。
- * 不带的话那三个小数会被读成「这个模型多好」的通用分，而它们回答的只是
- * 「换个位置还准不准」——**没有任何时间泛化的证据**（规格书 §八）。
- *
- * ⚠️ `listHint` 里那个 0.8896 是 `validation/metrics.py:1-5` 的原话：
- * 本数据上不做任何建模、直接拿背景温度当棚温就有这个 R²。不写它，两个
- * 小数会把 R² 读成「这个模型多好」。
+ * 空间验证组使用描述名称，避免与 A/B/C 时间数据集混淆。
+ * 不把旧交付数据的背景温度基线数字套用到后来上传的数据。
  */
 export const MODELS = {
   title: '模型库',
   entry: '模型库',
-  effectHead: '模型效果（空间折，B 组）',
-  listHint: '本数据上 R² 没有区分度：不做任何建模、直接拿背景温度当棚温就有 0.8896',
+  effectHead: '空间留出验证结果',
+  listHint: 'R² 需结合相同数据、验证划分与基线一起解读；这些指标不代表跨时段泛化效果。',
   empty: '模型库里还没有模型',
-  emptyWhy: '到「模型训练」那一页跑一次标定，判过之后把它保存进来。',
+  emptyWhy: '在模型训练页面完成训练并保存，模型会显示在这里。',
   saveTitle: '保存到模型库',
   savePlaceholder: '给这个模型起个名字',
   saveHint: '保存之后它就是全站当前模型，「空间温度场的构建」那一页会拿它来构场。',
   back: '回模型库',
-  current: '当前模型',
-  setCurrent: '设为当前',
-  view: '查看',
-  /** ⚠️ 「未固化」是**图章上那三个字**。完整的一句解释是后端
-   *  `routes/models.py` 的 `_NO_ARTIFACT_WHY`，跟着载荷的 `why` 到屏上 ——
-   *  前端**不另写**，与 `BORROWED` 那一节同一条规矩。 */
-  notSolid: '未固化',
-  notSolidWhy: '这一条还没有成品，选中时会用它的参数现训一遍',
+  current: '工作区选用',
+  setCurrent: '设为工作区模型',
+  view: '查看详情',
+  artifactReady: '已保存成品',
+  differentSource: '训练来源不同',
+  notSolid: '仅保存参数',
+  notSolidWhy: '这份记录仅保存参数，构场时可能使用当前数据重新拟合；固定模型评估需先训练并保存成品。',
   /** 保存按钮在忙的那几秒。**说清它会慢** —— 现固化要重训一遍，
    *  十几秒里只写「保存中」，用户只会以为这台机器卡了。 */
   fixating: '正在固化成品',
@@ -212,6 +205,12 @@ export const MODELS = {
  */
 export const FIELD_MODEL = {
   pick: '用哪个模型',
+  placeholder: '请选择用于构场的模型',
+  build: '开始构场',
+  building: '正在构场…',
+  rebuild: '重新构场',
+  waiting: '等待开始构场',
+  waitingWhy: '请先选择模型，再点击“开始构场”生成温度场。',
   none: '还没有能用的模型',
   noneWhy: '这一页的场要拿模型库里的一份标定过的模型来构 —— 库里现在还没有。',
   toLibrary: '去模型库挑一个',
@@ -270,8 +269,7 @@ export interface RailItem {
   readonly enabled: boolean
   readonly why: string
   /**
-   * `design/icons.ts` 里的图标名。**可选** —— `NAV_ITEMS` 四项都没有，
-   * 它们渲染出来与改动前逐像素相同（图标是这一轮只给实时那一屏加的）。
+   * `design/icons.ts` 里的图标名。**可选** —— 未提供时导航项可以只显示文字。
    */
   readonly icon?: IconName
 }

@@ -122,6 +122,19 @@ function mountView() {
 
 const charts = (w: ReturnType<typeof mountView>) => w.findAllComponents({ name: 'EChart' })
 
+async function startField(w: ReturnType<typeof mountView>, id = '1'): Promise<void> {
+  await w.get('#field-model').setValue(id)
+  await w.get('[data-action="build-field"]').trigger('click')
+  await flushPromises()
+}
+
+async function mountBuiltView() {
+  const w = mountView()
+  await flushPromises()
+  await startField(w)
+  return w
+}
+
 /**
  * 等一个条件成立。
  *
@@ -146,8 +159,7 @@ describe('页③ 空间温度场的构建', () => {
     // 点选交互一起撤掉了（见 `FieldView.vue` 文件顶）。写成精确的 2，才拦得住
     // 那两张卡悄悄接回来、或者又长出一张新图。
     stub(OK)
-    const w = mountView()
-    await flushPromises()
+    const w = await mountBuiltView()
     expect(charts(w).length).toBe(2)          // 切面场、ΔT
     expect(w.text()).toContain('空间温度场的构建')
     // 撤掉的那两张卡上的标题不该还在屏上。
@@ -157,8 +169,7 @@ describe('页③ 空间温度场的构建', () => {
 
   it('切面图画的是后端送来的那三格', async () => {
     stub(OK)
-    const w = mountView()
-    await flushPromises()
+    const w = await mountBuiltView()
     const o = charts(w)[0].props('option') as any
     expect(o.series).toHaveLength(15)
     expect(o.visualMap.min).toBe(SECTIONS.vmin)
@@ -169,8 +180,7 @@ describe('页③ 空间温度场的构建', () => {
     // 名字只说这条测试真做的事：夹具对任何 t_index 都回同一个 time，
     // 「显示的时刻跟着变」在这里断言不了 —— 写进名字就是一句空话。
     stub(OK)
-    const w = mountView()
-    await flushPromises()
+    const w = await mountBuiltView()
     const slider = w.find('input[type="range"]')
     expect(slider.exists(), '时刻游标不在').toBe(true)
     await slider.setValue('13')
@@ -187,8 +197,7 @@ describe('页③ 空间温度场的构建', () => {
     // 带理由」，这条管「开放了就别再挂理由」）。少了这一条，删掉 `why` 却忘了
     // 改 `enabled` 的话，界面上会同时出现一个能点的按钮和一句「排在下一份计划」。
     stub(OK)
-    const w = mountView()
-    await flushPromises()
+    const w = await mountBuiltView()
     const btn = w.findAll('button').find((b) => b.text().includes('三维'))
     expect(btn).toBeTruthy()
     expect(btn!.attributes('disabled')).toBeUndefined()
@@ -208,8 +217,7 @@ describe('页③ 空间温度场的构建', () => {
     // （连带 Three）。正是要这样 —— 「没切过去就不加载」这句话的证据，
     // 只能是「切过去之后它真的出来了」。
     stub(OK)
-    const w = mountView()
-    await flushPromises()
+    const w = await mountBuiltView()
     expect(charts(w).length).toBe(2)                  // 断面那一套：切面场 + ΔT
     expect(w.text()).not.toContain('棚体三维温度场')
 
@@ -227,8 +235,7 @@ describe('页③ 空间温度场的构建', () => {
 
   it('ΔT 面板报出门禁口径', async () => {
     stub(OK)
-    const w = mountView()
-    await flushPromises()
+    const w = await mountBuiltView()
     expect(w.text()).toContain('门禁')
     expect(w.text()).toContain('812')
   })
@@ -237,8 +244,7 @@ describe('页③ 空间温度场的构建', () => {
     // 兜底参数与标定后的数**同折族、不同参数，不可直接比大小** ——
     // 界面上不标，看图的人会以为这是标定过的结果。
     stub({ ...OK, '/api/field/sections': { ...SECTIONS, calibrated: false } })
-    const w = mountView()
-    await flushPromises()
+    const w = await mountBuiltView()
     expect(w.text()).toContain('未标定')
   })
 
@@ -255,8 +261,7 @@ describe('页③ 空间温度场的构建', () => {
 
   it('一排四张指标卡，第四格在拒绝报数（spec §6.2 页③）', async () => {
     stub(OK)
-    const w = mountView()
-    await flushPromises()
+    const w = await mountBuiltView()
     const cards = w.findAll('.stat')
     expect(cards.map((c) => c.find('.label').text()))
       .toEqual(['时刻', '色标', '标定', '无测量带'])
@@ -273,8 +278,7 @@ describe('页③ 空间温度场的构建', () => {
     // 不是表）。原来这条钉的是「第一张表仍然是读数表」—— 现在钉它的反面：
     // 读数表没了。留着「第一张表是读数表」就等于在讲一个屏上不存在的东西。
     stub(OK)
-    const w = mountView()
-    await flushPromises()
+    const w = await mountBuiltView()
     expect(w.find('table').exists(), '读数表又回来了').toBe(false)
 
     const why = w.findAll('details.why')
@@ -293,8 +297,7 @@ describe('页③ 空间温度场的构建', () => {
     // 而页③ 这边一直没带（实时屏有）——两条页面对同一件事给了两套钩子，
     // 改的时候只测得到一半。
     stub(OK)
-    const w = mountView()
-    await flushPromises()
+    const w = await mountBuiltView()
     const seg = w.find('fieldset.rail-box .seg')
     expect(seg.exists(), '视图切换没有分段控件的底').toBe(true)
     expect(seg.findAll('button').map((b) => b.text())).toEqual(['断面', '三维'])
@@ -309,8 +312,7 @@ describe('页③ 空间温度场的构建', () => {
     // （指标卡的「时刻」与左栏游标下面那一行）——同一页上两个时刻两种写法，
     // 正是本次要治的「文档感」的另一种形态。
     stub(OK)
-    const w = mountView()
-    await flushPromises()
+    const w = await mountBuiltView()
     expect(w.text(), '屏上还印着带 T 的时间戳').not.toContain('2026-07-27T')
 
     const card = w.findAll('.stat')[0]
@@ -339,6 +341,82 @@ describe('模型库与页③', () => {
     return mountView()
   }
 
+  it('首次进入即使已有工作区模型，也只加载列表并等待选择', async () => {
+    const w = mountWithModels(USABLE)
+    await flushPromises()
+    expect((w.get('#field-model').element as HTMLSelectElement).value).toBe('')
+    expect(w.get('[data-action="build-field"]').attributes('disabled')).toBeDefined()
+    expect(w.text()).toContain(FIELD_MODEL.waiting)
+    expect(charts(w)).toHaveLength(0)
+    expect(w.findAll('.stat')).toHaveLength(0)
+    expect(w.find('[data-view]').exists()).toBe(false)
+    expect(urls).toEqual(['/api/models'])
+  })
+
+  it('启用模型完成前不构场，连续点击也只启用一次', async () => {
+    const w = mountWithModels(USABLE)
+    await flushPromises()
+    const respond = vi.mocked(fetch).getMockImplementation()!
+    let finish!: (response: Response) => void
+    const pending = new Promise<Response>((resolve) => { finish = resolve })
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      if (String(input).endsWith('/current')) {
+        urls.push(String(input))
+        return pending
+      }
+      return respond(input, init)
+    })
+    await w.get('#field-model').setValue('2')
+    await w.get('[data-action="build-field"]').trigger('click')
+    await w.get('[data-action="build-field"]').trigger('click')
+    expect(urls.filter((u) => u.includes('/api/field/'))).toEqual([])
+    expect(urls.filter((u) => u.endsWith('/current'))).toEqual(['/api/models/2/current'])
+    expect(w.get('#field-model').attributes('disabled')).toBeDefined()
+    finish(new Response('{"id":2}', { status: 200 }))
+    await flushPromises()
+    expect(charts(w)).toHaveLength(2)
+  })
+
+  it('启用模型失败会显示原因，不构场且允许重试', async () => {
+    const w = mountWithModels(USABLE)
+    await flushPromises()
+    const respond = vi.mocked(fetch).getMockImplementation()!
+    let fail = true
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      if (String(input).endsWith('/current') && fail) {
+        urls.push(String(input))
+        return Promise.resolve(new Response('{"detail":"所选模型暂不可用"}', { status: 409 }))
+      }
+      return respond(input, init)
+    })
+    await startField(w)
+    expect(w.get('[role="alert"]').text()).toBe('所选模型暂不可用')
+    expect(urls.filter((u) => u.includes('/api/field/'))).toEqual([])
+    expect(charts(w)).toHaveLength(0)
+    expect(w.get('[data-action="build-field"]').attributes('disabled')).toBeUndefined()
+    fail = false
+    await w.get('[data-action="build-field"]').trigger('click')
+    await flushPromises()
+    expect(charts(w)).toHaveLength(2)
+    expect(w.find('[role="alert"]').exists()).toBe(false)
+  })
+
+  it('准备模型期间离开页面，不再发起构场请求', async () => {
+    const w = mountWithModels(USABLE)
+    await flushPromises()
+    let finish!: (response: Response) => void
+    vi.mocked(fetch).mockImplementation((input) => {
+      urls.push(String(input))
+      return new Promise<Response>((resolve) => { finish = resolve })
+    })
+    await w.get('#field-model').setValue('1')
+    await w.get('[data-action="build-field"]').trigger('click')
+    w.unmount()
+    finish(new Response('{"id":1}', { status: 200 }))
+    await flushPromises()
+    expect(urls.filter((u) => u.includes('/api/field/'))).toEqual([])
+  })
+
   it('页首有一个下拉，库里的三档都列出来', async () => {
     const w = mountWithModels(USABLE)
     await flushPromises()
@@ -348,7 +426,7 @@ describe('模型库与页③', () => {
     expect(all).toContain('别人家的棚.xlsx')
     // 三档各在：本地的、借来的、用不了的。少一档这条就红 ——
     // 「库里有的都能挑」这句话，靠的正是每一行都列在这儿。
-    expect(opts).toHaveLength(3)
+    expect(opts).toHaveLength(4) // 待选择占位 + 三档模型。
   })
 
   it('借来的那一项**选得中**，而且标着「借来的」', async () => {
@@ -386,8 +464,7 @@ describe('模型库与页③', () => {
     // 一处改了另一处没改。所以这里断的是「载荷里那串字原样在屏上」。
     const NOTE = '这一份模型的参数不是用当前这份数据标出来的'
     stub({ ...OK, '/api/field/sections': { ...SECTIONS, mismatch_note: NOTE } })
-    const w = mountView()
-    await flushPromises()
+    const w = await mountBuiltView()
     expect(w.text()).toContain(`已标定（${BORROWED}）`)
     // ⚠️ 在「口径与出处」里，不是常驻在屏上：它是解释，不是读数。
     // `design/prose.test.ts`（spec §十二.11）判的正是这件事。
@@ -400,8 +477,7 @@ describe('模型库与页③', () => {
     // 上面那条的反面。少了它，一个「永远说借来的」的实现照样能全绿 ——
     // 而那是这条标注最坏的坏法：本地模型也被标成来路不明。
     stub(OK)                                    // `SECTIONS.mismatch_note` 缺省
-    const w = mountView()
-    await flushPromises()
+    const w = await mountBuiltView()
     expect(w.text()).toContain('已标定')
     expect(w.text()).not.toContain(`已标定（${BORROWED}）`)
   })
@@ -438,53 +514,48 @@ describe('模型库与页③', () => {
     expect(urls.filter((u) => u.includes('/api/field/'))).toEqual([])
   })
 
-  it('有可用模型时照常画场，并且页首有下拉', async () => {
-    // 上面两条的反面。少了它，一个「永远走空态」的实现照样全绿 ——
-    // 而那是这条规则最坏的坏法：页③ 从此什么都画不出来，还不报错。
+  it('有可用模型时，确认构场后才请求并展示温度场', async () => {
     const w = mountWithModels(USABLE)
     await flushPromises()
     expect(w.find('#field-model').exists()).toBe(true)
     expect(w.text()).not.toContain(FIELD_MODEL.none)
-    // 与文件里那条既有的「一开始就挂上」同数：切面场、ΔT，一张不多一张不少
-    // （曲线要等点选）。写成精确值才拦得住「模型对不上也照样把两张画上」。
+    expect(charts(w)).toHaveLength(0)
+    await startField(w)
     expect(charts(w), '有可用模型却没画').toHaveLength(2)
     expect(urls.some((u) => u.includes('/api/field/sections'))).toBe(true)
   })
 
-  it('选另一个模型会把它设成全站当前', async () => {
-    // 页③ 与页⑤ 共用「当前模型」这一个概念（规格书 D3）—— 换一处两处都换。
-    //
-    // ⚠️ 这里挑的是**第二行（借来的那一份）**：2026-10-10 之前它选不中，
-    // 所以这条用例得先在载荷里把它改成 `compatible: true` 才演得下去 ——
-    // 那个改动本身就是当时「数据集签名拦着选」的一个反证。现在夹具里它
-    // 本来就是能用的（`ModelRowPayload.compatible` 只看特征组），所以
-    // 那两行补丁连同它们的注释一起去掉了：拿默认载荷直接演。
-    // 对不上那一项的处置由上面「对不上的选项被标出来而且选不了」钉着。
+  it('选择模型只更新选项，点击开始构场才启用所选模型', async () => {
     const w = mountWithModels(USABLE)
     await flushPromises()
     await w.get('#field-model').setValue('2')
     await flushPromises()
+    expect(urls.filter((u) => /\/current|\/api\/field\//.test(u))).toEqual([])
+    await w.get('[data-action="build-field"]').trigger('click')
+    await flushPromises()
     expect(urls.some((u) => u.includes('/api/models/2/current')),
-      '换了一个模型却没有把它设成全站当前').toBe(true)
+      '确认构场后没有启用所选模型').toBe(true)
+    expect(urls.indexOf('/api/models/2/current'))
+      .toBeLessThan(urls.findIndex((u) => u.includes('/api/field/sections')))
   })
 
-  it('换了模型会重取场 —— 否则屏上还是上一个模型的像素', async () => {
-    // ⭐ 终审 Critical 1。`setCurrentModel` 改的是**库里那一行**；屏上这两张场
-    // 来自 `/api/field/sections` 与 `/api/field/compare`（后端按「当前模型」
-    // 现算）。不重新取一次，用户看到的是**上一个模型**的像素，而下拉与
-    // 「当前」都指向新的那个 —— 正是规格书 D4 要杜绝的「看着对的错场」：
-    // 它不报错、也不提示，只是端出一张旧模型算的图。
-    //
-    // ⚠️ 与上一条同样挑第二行（借来的那一份）；夹具有它可用，不用再打补丁。
+  it('更换模型会收起旧场，重新确认后才计算新场', async () => {
     const w = mountWithModels(USABLE)
     await flushPromises()
+    await startField(w)
     const before = urls.filter((u) => u.includes('/api/field/sections')).length
 
     await w.get('#field-model').setValue('2')
     await flushPromises()
+    expect(charts(w)).toHaveLength(0)
+    expect(w.findAll('.stat')).toHaveLength(0)
+    expect(urls.filter((u) => u.includes('/api/field/sections'))).toHaveLength(before)
+    expect(urls).not.toContain('/api/models/2/current')
+    await w.get('[data-action="build-field"]').trigger('click')
+    await flushPromises()
 
     expect(urls.filter((u) => u.includes('/api/field/sections')).length,
-      '换了模型却没重取场：屏上还是上一个模型算的像素').toBeGreaterThan(before)
+      '重新确认后没有构建新模型的场').toBeGreaterThan(before)
     expect(urls.filter((u) => u.includes('/api/field/compare')).length,
       '换了模型却没重取对比那一张').toBeGreaterThan(1)
   })
@@ -492,8 +563,7 @@ describe('模型库与页③', () => {
   it('成品读不动时，口径里印的是后端那句 artifact_note', async () => {
     const NOTE = '这一条的成品读不动（格式是第 2 版，现在是第 1 版），已退回现训。'
     stub({ ...OK, '/api/field/sections': { ...SECTIONS, artifact_note: NOTE } })
-    const w = mountView()
-    await flushPromises()
+    const w = await mountBuiltView()
     // ⚠️ 仍然只有**一个** `details.why` —— 两句解释在同一个块里，不是两块。
     //    多出一块会让 `design/prose.test.ts`（spec §十二.11）那条断言的
     //    「解释只有一处」失效。
@@ -506,8 +576,7 @@ describe('模型库与页③', () => {
     // 这一档是**常态**（成品都在、都读得动）。少了它，一个「永远印那句话」
     // 的实现照样全绿 —— 而它会让每一页都在报一件没发生的事。
     stub(OK)                                  // `SECTIONS.artifact_note` 缺省是 ''
-    const w = mountView()
-    await flushPromises()
+    const w = await mountBuiltView()
     expect(w.text()).not.toContain('成品读不动')
   })
 
@@ -517,8 +586,7 @@ describe('模型库与页③', () => {
     const NOTE = '这一条的成品读不动（字节坏了），已退回现训。'
     stub({ ...OK, '/api/field/sections': {
       ...SECTIONS, mismatch_note: '', artifact_note: NOTE } })
-    const w = mountView()
-    await flushPromises()
+    const w = await mountBuiltView()
     expect(w.text()).toContain('已标定')
     expect(w.text()).not.toContain(`已标定（${BORROWED}）`)
     expect(w.findAll('details.why')[0].text()).toContain(NOTE)

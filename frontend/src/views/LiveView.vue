@@ -371,19 +371,19 @@ const readout = computed(() => {
  * 这一屏演的是三维全场，后端没有「当前剖切位置」这个数，也不该为它编一个。
  */
 type Cell = {
-  key: string; label: string; value: string; tone: 'plain' | 'ok' | 'warn'
+  key: string; label: string; value: string; sub?: string; tone: 'plain' | 'ok' | 'warn'
 }
 
 const overview = computed<readonly Cell[]>(() => [
   {
-    key: 'mean', label: '棚内平均温度', value: meanText.value, tone: 'plain',
+    key: 'mean', label: '棚内平均温度', value: meanText.value, sub: '当前帧棚内均温', tone: 'plain',
   },
   {
-    key: 'scene', label: '棚体三维温度场', value: sceneText.value,
+    key: 'scene', label: '棚体三维温度场', value: sceneText.value, sub: '三维温度分布模型',
     tone: sceneText.value === '取数失败' ? 'warn' : (sceneText.value === '已生成' ? 'ok' : 'plain'),
   },
   {
-    key: 'time', label: '更新时间', value: frameTimeText.value, tone: 'plain',
+    key: 'time', label: '更新时间', value: frameTimeText.value, sub: '当前展示帧的数据时间', tone: 'plain',
   },
 ])
 
@@ -552,13 +552,17 @@ function runAsk(q: { x: number; y: number; z: number }): void {
            裁定没被推翻（`LiveView.test.ts` 两侧都钉着）。
            一律不带 `prov` 图章：三格上的数都是这次请求现算的，印三个
            一模一样的「算」是重复（与页① 同一年的同一条裁定）。 -->
-      <OverviewStrip :cells="overview" />
+      <OverviewStrip :cells="overview">
+        <template #icon-mean><Icon name="thermometer" /></template>
+        <template #icon-scene><Icon name="cube" /></template>
+        <template #icon-time><Icon name="clock" /></template>
+      </OverviewStrip>
 
       <!-- ⚠️ 两块**互斥**、共用一个位子（2026-10-09 第一轮用户裁定）：
            原先断面那张卡没有 `v-if` 拦着，切到三维就成了上下两条。
            页③ 一直是 `v-if` / `v-else`，只有实时这一屏漏了。 -->
       <template v-if="view === 'section'">
-        <Card v-if="frame.data.value" class="block">
+        <Card v-if="frame.data.value" class="block section-stage">
           <div class="row head">
             <!-- ⚠️ 头不再是「第 N 帧」（2026-10-09 第二轮）：帧号是不报的那几个
                  数之一。这一块画的是三个断面，头就写它是什么。 -->
@@ -572,7 +576,7 @@ function runAsk(q: { x: number; y: number; z: number }): void {
             <span class="num">{{ frame.data.value.frame.sensor_temps.map(show).join('、') }}</span>
           </p>
 
-          <EChart v-if="v5" :option="v5" height="420px" @pick="onPick" />
+          <EChart v-if="v5" :option="v5" height="100%" class="section-chart" @pick="onPick" />
           <p v-else class="note state">正在构这一帧的场…</p>
 
         </Card>
@@ -612,50 +616,7 @@ function runAsk(q: { x: number; y: number; z: number }): void {
            棚顶那一组气象读数仍在 `/api/live/frame/{n}` 的返回体里，
            只是这一屏不再印。要恢复，在右栏再加一张卡就行。
            ⚠️ 两块都挂在**帧**这一级，与「看哪一块」无关。 -->
-      <div class="foot">
-        <Card class="env-card">
-          <div class="env-head">
-            <Icon name="thermometer" />
-            <h3>环境参数</h3>
-            <span class="note">（棚体与周边）</span>
-          </div>
-          <div class="env">
-            <GaugeDial
-              :frac="meanFrac" :value-text="meanText" :arc-color="meanColor"
-              label="棚内平均温度" :size="88"
-            />
-            <div class="geom-card">
-              <div class="geom-head"><Icon name="ruler" /><span class="g-label">拱跨宽</span></div>
-              <span class="num g-value">{{ widthText }}</span>
-            </div>
-            <div class="geom-card">
-              <div class="geom-head"><Icon name="cube" /><span class="g-label">拱顶高</span></div>
-              <span class="num g-value">{{ heightText }}</span>
-            </div>
-          </div>
-          <!-- ⚠️ 这两格是**后端算好的真几何**（本数据集里是 2.10 m 与 1.30 m），
-               不是参考图上那个更大的跨度 —— 那一个是沿棚长方向的走廊跨度。
-               见 `routes/field.py::volume_payload`。
-               ⚠️ 2026-10-16 第二回：原先压在这两格底下有一句口径说明，撤进
-               页脚的「口径与出处」了 —— 与均温那一句同一条处置。 -->
-        </Card>
 
-        <Card>
-          <h3>{{ MEAN_CURVE_TITLE }}</h3>
-          <!-- ⚠️ 高度 2026-10-16 从 240px 收到 150px：这一屏要三块同屏不滚动，
-               而这条曲线的形状在 150px 上照样读得出（它说的是「从头到尾哪儿热」
-               的趋势，不是要读刻度）。 -->
-          <EChart v-if="vCurve" :option="vCurve" height="min(150px, 14vh)" />
-          <!-- ⚠️ 这一格**不印后端的原话**：它是底栏的次要一块，把一条接口错误
-               原样摊在这里会盖过温度场。而 `routes.smoke.test.ts` 那条禁字形
-               扫描是逐页扫整页文本的，一句来路不明的错误文案正是最容易带进
-               禁字形的地方。 -->
-          <p v-else class="note state">正在取这一帧的沿棚均温…</p>
-          <!-- ⚠️ 这一格原来压着一句口径说明，2026-10-16 第二回连同左块那一句
-               一起撤进页脚的「口径与出处」了：这一屏要三块同屏不滚动，
-               而底栏是全屏最高的那一块，两句话就是将近五十像素。 -->
-        </Card>
-      </div>
 
       <!-- 右栏（2026-10-12 规格书 §三 D8）。**三档都在的只有三维那一支**：
            `VolumeView` 自己把三张卡投进 `#shell-side`；断面这一档它根本没挂载，
@@ -685,9 +646,56 @@ function runAsk(q: { x: number; y: number; z: number }): void {
           </fieldset>
         </Card>
       </Teleport>
+      <Teleport to="#shell-side" :disabled="view !== 'section'">
+      <div class="foot" :class="{ 'section-foot': view === 'section' }">
+        <Card class="env-card">
+          <div class="env-head">
+            <Icon name="thermometer" />
+            <h3>环境参数</h3>
+            <span class="note">（棚体与周边）</span>
+          </div>
+          <div class="env">
+            <GaugeDial
+              :frac="meanFrac" :value-text="meanText" :arc-color="meanColor"
+              label="棚内平均温度" :size="96" technical
+            />
+            <div class="geom-card">
+              <div class="geom-head"><Icon name="ruler" /><span class="g-label">拱跨宽</span></div>
+              <span class="num g-value">{{ widthText }}</span>
+            </div>
+            <div class="geom-card">
+              <div class="geom-head"><Icon name="cube" /><span class="g-label">拱顶高</span></div>
+              <span class="num g-value">{{ heightText }}</span>
+            </div>
+          </div>
+          <!-- ⚠️ 这两格是**后端算好的真几何**（本数据集里是 2.10 m 与 1.30 m），
+               不是参考图上那个更大的跨度 —— 那一个是沿棚长方向的走廊跨度。
+               见 `routes/field.py::volume_payload`。
+               ⚠️ 2026-10-16 第二回：原先压在这两格底下有一句口径说明，撤进
+               页脚的「口径与出处」了 —— 与均温那一句同一条处置。 -->
+        </Card>
+
+        <Card class="temperature-overview">
+          <div class="temperature-overview-heading"><h3><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="currentColor"><path d="M3 13h4v8H3zM10 7h4v14h-4zM17 2h4v19h-4z" /></svg>{{ MEAN_CURVE_TITLE }}</h3><span class="note" title="颜色表示本帧沿棚均温的相对高低，不与三维全场色标共用范围">本帧均温：蓝低 · 橙高</span></div>
+          <!-- ⚠️ 高度 2026-10-16 从 240px 收到 150px：这一屏要三块同屏不滚动，
+               而这条曲线的形状在 150px 上照样读得出（它说的是「从头到尾哪儿热」
+               的趋势，不是要读刻度）。 -->
+          <EChart v-if="vCurve" :option="vCurve" :height="view === 'section' ? '100%' : 'min(120px, 13vh)'" class="overview-chart" />
+          <!-- ⚠️ 这一格**不印后端的原话**：它是底栏的次要一块，把一条接口错误
+               原样摊在这里会盖过温度场。而 `routes.smoke.test.ts` 那条禁字形
+               扫描是逐页扫整页文本的，一句来路不明的错误文案正是最容易带进
+               禁字形的地方。 -->
+          <p v-else class="note state">正在取这一帧的沿棚均温…</p>
+          <!-- ⚠️ 这一格原来压着一句口径说明，2026-10-16 第二回连同左块那一句
+               一起撤进页脚的「口径与出处」了：这一屏要三块同屏不滚动，
+               而底栏是全屏最高的那一块，两句话就是将近五十像素。 -->
+        </Card>
+      </div>
+      </Teleport>
     </template>
 
     <!-- 口径与出处：一页最多一处（spec §八）。收起来，但内容始终在 DOM 里。 -->
+    <Teleport to="#rail-extra">
     <details class="why">
       <summary>口径与出处</summary>
       <!-- ⚠️ 分级句**原先常驻在屏上**（`data-grading`），2026-10-09 用户裁定
@@ -754,11 +762,35 @@ function runAsk(q: { x: number; y: number; z: number }): void {
         {{ frame.data.value.artifact_note }}
       </p>
     </details>
+    </Teleport>
     </template>
   </section>
 </template>
 
 <style scoped>
+.section-stage { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.live .section-stage { margin-bottom: 0; margin-top: var(--gap-m); }
+.section-stage .section-chart { flex: 1 1 auto; min-height: 260px; }
+.foot.section-foot { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(220px, 1fr); margin-top: 0; gap: 12px; flex: 1 0 auto; order: 1; }
+.section-foot .temperature-overview { display: flex; flex-direction: column; min-height: 220px; }
+.section-foot .overview-chart { flex: 1 1 0; min-height: 165px; }
+.side-card { flex-shrink: 0; }
+.section-foot .temperature-overview-heading { flex-wrap: wrap; gap: 3px; }
+.section-foot .temperature-overview-heading > .note { font-size: 10px; }
+.side-card { padding: 12px; }
+.side-card :deep(fieldset) { min-inline-size: 0; margin: 0 0 8px; padding: 6px 8px; }
+.side-card :deep(.ask .row) { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.side-card :deep(.ask .row label) { min-width: 0; }
+.side-card :deep(.ask input) { width: 100%; min-width: 0; }
+.side-card :deep(.ask .note) { font-size: 11px; line-height: 1.5; }
+
+.temperature-overview { position: relative; border: 1px solid var(--interact); }
+.temperature-overview::before, .temperature-overview::after { content: ''; position: absolute; width: 13px; height: 13px; pointer-events: none; }
+.temperature-overview::before { top: -1px; left: -1px; border-top: 2px solid var(--edge); border-left: 2px solid var(--edge); }
+.temperature-overview::after { bottom: -1px; right: -1px; border-bottom: 2px solid var(--edge); border-right: 2px solid var(--edge); }
+.temperature-overview-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-s); padding-bottom: 6px; margin-bottom: 2px; border-bottom: var(--rule); }
+.temperature-overview-heading h3 { display: flex; align-items: center; gap: var(--gap-s); }
+.temperature-overview-heading svg { color: var(--edge); flex: none; }
 /* ── 一屏装三块（2026-10-16 用户裁定） ─────────────────────────────────
    用户报的：「棚体三维温度场、环境参数、沿栅均温这三个模块应该都能同时
    显现出来，而现在后两块必须下滑才能显示。」
@@ -793,6 +825,7 @@ function runAsk(q: { x: number; y: number; z: number }): void {
    只是这一支不再有 legend。 */
 .rail-switch { border: 0; padding: 0; margin: 0 0 var(--gap-m); }
 /* 底栏两块。左边窄、右边宽 —— 气象是三个数，曲线要的是横向地方。 */
+.foot > .env-card, .foot > .temperature-overview { padding: 10px 12px; }
 .foot {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
@@ -830,31 +863,37 @@ function runAsk(q: { x: number; y: number; z: number }): void {
 /* 2026-10-16 第二回：上边距从 `--gap-l`（28）收到 `--gap-m`（16）。
    这一屏的每一像素都在「三块同屏」那张账上，而这一条与上面那块只差 12px
    的呼吸 —— 收掉它看得出来才怪。 */
-.why { margin-top: var(--gap-m); }
+.why { margin-top: var(--gap-s); padding: 0 var(--gap-m) var(--gap-m); overflow-wrap: anywhere; }
 .why summary { font-size: var(--size-label); color: var(--ink-muted); cursor: pointer; }
 .why > p { margin-top: var(--gap-s); }
 /* 环境参数：温度环与两张几何卡片始终在同一排，收紧占用高度。 */
-.env-card { container-type: inline-size; }
-.env-head { display: flex; align-items: center; gap: var(--gap-s); margin-bottom: var(--gap-m); }
+.env-card { container-type: inline-size; position: relative; border: 1px solid var(--interact); }
+.env-card::before, .env-card::after { content: ''; position: absolute; width: 13px; height: 13px; pointer-events: none; }
+.env-card::before { top: -1px; left: -1px; border-top: 2px solid var(--edge); border-left: 2px solid var(--edge); }
+.env-card::after { bottom: -1px; right: -1px; border-bottom: 2px solid var(--edge); border-right: 2px solid var(--edge); }
+.env-head { display: flex; align-items: center; gap: var(--gap-s); margin-bottom: 6px; padding-bottom: 6px; border-bottom: var(--rule); position: relative; }
+.env-head::after { content: ''; position: absolute; bottom: -1px; right: 0; width: 7px; height: 2px; background: var(--interact); }
 .env-head :deep(.icon) { --icon-size: 22px; color: var(--edge); }
 .env-head .note { margin-left: -4px; }
-.env { display: grid; grid-template-columns: 88px repeat(2, minmax(0, 1fr)); align-items: stretch; gap: var(--gap-s); }
+.env { display: grid; grid-template-columns: 96px repeat(2, minmax(0, 1fr)); align-items: center; gap: 8px; padding: 0; }
 .geom-card {
-  min-width: 0; min-height: 72px; padding: var(--gap-s) 6px;
+  min-width: 0; min-height: 82px; padding: 8px 10px;
   display: flex; flex-direction: column; justify-content: center; gap: var(--gap-s);
-  border: 1px solid var(--steel); border-radius: var(--radius);
+  border: 1px solid var(--interact); border-radius: var(--radius); background: var(--card-2);
 }
 .geom-head { display: flex; align-items: center; gap: 4px; min-width: 0; }
-.geom-head :deep(.icon) { --icon-size: 18px; flex: none; color: var(--interact); }
+.geom-head :deep(.icon) { --icon-size: 24px; flex: none; color: var(--edge); }
 .g-label { font-size: var(--size-label); color: var(--ink-muted); }
-.g-value { font-size: var(--size-h3); font-weight: var(--w-strong); white-space: nowrap; }
+.g-value { font-size: 23px; font-family: var(--font-latin); color: var(--edge); font-weight: var(--w-strong); white-space: nowrap; }
 @container (max-width: 420px) {
-  .env { grid-template-columns: 88px repeat(2, minmax(0, 1fr)); gap: 4px; }
+  .env { grid-template-columns: 96px repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .env :deep(.dial) { --dial-size: 96px !important; }
+  .env :deep(.dial svg) { width: 96px; height: 96px; }
   .geom-card { padding: var(--gap-s) 4px; }
   .geom-head { gap: 2px; }
   .geom-head :deep(.icon) { --icon-size: 16px; }
   .g-label { font-size: var(--size-note); }
-  .g-value { font-size: var(--size-label); }
+  .g-value { font-size: 20px; }
 }
 /* 右栏那张卡：它是 `<Teleport>` 投出去的那个落点里的一块，落点的 `gap`
    管卡片间距，这里只管卡片内部两组之间的间距。 */

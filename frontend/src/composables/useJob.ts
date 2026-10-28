@@ -11,6 +11,8 @@ export interface JobState {
   job: Ref<JobSummary | null>
   error: Ref<string>
   polling: Ref<boolean>
+  /** 提交请求尚未返回时也要保持忙碌，避免重复提交或同时开始训练。 */
+  submitting: Ref<boolean>
   /** 提交一次新任务。**409 不算失败** —— 切去盯已经在跑的那一个。 */
   start: () => Promise<void>
   /** 取消。⚠️ 不自己改成 cancelled，让后端说（见 cancel 的注释）。 */
@@ -19,7 +21,7 @@ export interface JobState {
   attach: (id: string) => void
   /** 拿一份 `GET /api/calibration` 的载荷去接管（刷新之后走这一条）。 */
   attachFrom: (j: JobSummary | null) => void
-  /** 停下定时器，**不改 job 的状态**。卸载、切页时用。 */
+  /** 停下定时器，**不改 job 的状态**。所属工作区销毁时用。 */
   stop: () => void
 }
 
@@ -43,7 +45,7 @@ export function useJob(intervalMs: number = INTERVAL_MS): JobState {
   let seq = 0
   // 收到明确答复后才生成下一次编号；网络断开时重试同一次提交。
   let pendingRequestKey: string | null = null
-  let submitting = false
+  const submitting = ref(false)
 
   function clearTimer() {
     if (timer !== null) {
@@ -107,8 +109,8 @@ export function useJob(intervalMs: number = INTERVAL_MS): JobState {
   }
 
   async function start(): Promise<void> {
-    if (submitting) return
-    submitting = true
+    if (submitting.value) return
+    submitting.value = true
     stop()
     error.value = ''
     const mine = seq
@@ -140,15 +142,17 @@ export function useJob(intervalMs: number = INTERVAL_MS): JobState {
       }
       error.value = e instanceof Error ? e.message : String(e)
     } finally {
-      submitting = false
+      submitting.value = false
     }
   }
 
   async function cancel(): Promise<void> {
     const id = job.value?.id
     if (!id) return
+    const mine = seq
     try {
       const out = await deleteJson<JobSummary>(`/api/calibration/jobs/${id}`)
+      if (mine !== seq) return
       job.value = out
       // ⚠️ **后端回来的照样是 `running`，我们不把它改成 `cancelled`。**
       // 真正的取消点在库里那个 `should_stop` 下一次被问到时；提前改会让
@@ -166,9 +170,10 @@ export function useJob(intervalMs: number = INTERVAL_MS): JobState {
         timer = setTimeout(() => void tick(id), intervalMs)
       }
     } catch (e) {
+      if (mine !== seq) return
       error.value = e instanceof Error ? e.message : String(e)
     }
   }
 
-  return { job, error, polling, start, cancel, attach, attachFrom, stop }
+  return { job, error, polling, submitting, start, cancel, attach, attachFrom, stop }
 }

@@ -168,6 +168,7 @@ onUnmounted(() => { if (timer) clearTimeout(timer) })
 
 /** 拱壳的示意长度 / m。**只改几何、不改场**，所以它不触发任何请求。 */
 const shellLength = ref(SHELL_LENGTH_DEFAULT)
+const fieldMode = ref<'solid' | 'slices'>('solid')
 
 /** 点击钉住的那个格点；`null` = 没钉。钉住时读数不跟鼠标跑（规格书 §6.4）。 */
 const pinned = ref<HoverPick | null>(null)
@@ -194,6 +195,8 @@ watch(() => volume.data.value, (p) => {
 function onHover(p: HoverPick | null) { hovered.value = p }
 function onPick(p: HoverPick | null) { pinned.value = p }
 
+const stageControls = ref<HTMLElement | null>(null)
+const geometryHidden = ref(false)
 const spec = computed(() =>
   volume.data.value ? buildVolumeSpec(volume.data.value, shellLength.value) : null)
 
@@ -371,14 +374,23 @@ function runQuery() {
       <div class="vol-grid" :class="{ 'stage-only': panels === 'shell', stretch }">
         <Teleport to="#shell-side" :disabled="panels === 'all'">
           <Card class="vol-side vol-ask">
-            <table v-if="readout || panels === 'all'" class="pick-readout"
+            <div v-if="panels === 'shell'" class="query-module-heading">
+              <svg viewBox="0 0 28 28" width="27" height="27" aria-hidden="true"
+                   fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="13" cy="15" r="8" />
+                <circle cx="13" cy="15" r="3.5" />
+                <path d="M13 3v5M13 22v4M1 15h5M20 15h5M20 3l5 5M25 3l-5 5" />
+              </svg>
+              <h3>三维信息查询</h3>
+            </div>
+            <table class="pick-readout"
                    :class="{ 'is-empty': !readout }" aria-label="画布选点读数">
               <tbody>
                 <tr>
                   <th>时刻</th>
                   <td class="num">
                     <div class="readout-time">
-                      <span class="reading-value">{{ readout?.time ?? '待选点' }}</span>
+                      <span class="reading-value">{{ readout?.time ?? fmtTime(volume.data.value.time) }}</span>
                       <span class="unpin-slot">
                         <button v-if="readout?.pinned" type="button" class="unpin"
                                 aria-label="取消钉住" title="取消钉住" @click="pinned = null">
@@ -393,7 +405,6 @@ function runQuery() {
                 <tr class="answer-row"><th>回答</th><td><div class="reading-value">{{ readout?.text ?? '待选点' }}</div></td></tr>
               </tbody>
             </table>
-            <p v-else class="note">把鼠标移到棚体上，读最近格点的温度；点一下把读数钉住。</p>
 
             <fieldset class="rail-box query-box">
               <legend>查一个坐标</legend>
@@ -403,16 +414,15 @@ function runQuery() {
                 <label>z <input v-model="query.z" type="number" step="0.01"></label>
                 <button type="button" :disabled="!parsed" @click="runQuery">查询</button>
               </div>
-              <p v-if="queryError && panels === 'shell'" role="alert" class="alert">{{ queryError }}</p>
-              <table v-if="queryAnswer || panels === 'all'" class="query-result"
+              <table class="query-result"
                      :class="{ 'is-empty': !queryAnswer && !queryError }" aria-label="坐标查询结果">
                 <tbody>
                   <tr class="time-row"><th>时刻</th><td class="num"><div class="reading-value">{{ queryAnswer?.time ?? '待查询' }}</div></td></tr>
                   <tr><th>位置</th><td class="num"><div class="reading-value">{{ queryAnswer?.where ?? '待查询' }}</div></td></tr>
                   <tr class="answer-row"><th>回答</th><td>
-                    <div class="reading-value" :class="{ alert: queryError && panels === 'all' }"
-                         :role="queryError && panels === 'all' ? 'alert' : undefined">
-                      {{ queryError && panels === 'all' ? queryError : (queryAnswer?.text ?? '待查询') }}
+                    <div class="reading-value" :class="{ alert: queryError }"
+                         :role="queryError ? 'alert' : undefined">
+                      {{ queryError || queryAnswer?.text || '待查询' }}
                     </div>
                   </td></tr>
                 </tbody>
@@ -437,13 +447,19 @@ function runQuery() {
             :class="{ stretch }"
             :spec="spec" :payload="volume.data.value" :picked="shown" :cut-y="cutAt"
             :show-view-controls="showViewControls"
+            :decorations="panels === 'shell'"
+            :field-mode="panels === 'shell' ? fieldMode : 'slices'"
             @hover="onHover" @pick="onPick" @ready="onSceneReady"
           />
 
           <!-- 实时页的标题、棚位范围和温度色标叠在画布上；训练页布局保持原样。 -->
           <template v-if="panels === 'shell'">
+            <div class="field-mode-toggle" role="group" aria-label="温度场展示状态">
+              <button type="button" :class="{ active: fieldMode === 'solid' }" :aria-pressed="fieldMode === 'solid'" @click="fieldMode = 'solid'">立体态</button>
+              <button type="button" :class="{ active: fieldMode === 'slices' }" :aria-pressed="fieldMode === 'slices'" @click="fieldMode = 'slices'">切面态</button>
+            </div>
             <div class="stage-overlay-head">
-              <h3>棚体三维温度场</h3>
+              <h3 class="field-stage-title"><Icon name="cube" />棚体三维温度场</h3>
               <p v-if="volume.data.value" class="note num stage-axis">
                 棚位 y {{ volume.data.value.y_min.toFixed(2) }} 至
                 {{ volume.data.value.y_max.toFixed(2) }} m
@@ -457,10 +473,17 @@ function runQuery() {
               <span class="scale-bar" :style="{ background: scaleGradient() }" />
               <span class="num scale-end">{{ volume.data.value.vmin.toFixed(1) }} °C</span>
             </div>
+            <div class="stage-geometry-controls" :class="{ collapsed: geometryHidden }">
+              <button type="button" class="geometry-toggle" :aria-expanded="!geometryHidden"
+                      @click="geometryHidden = !geometryHidden">
+                {{ geometryHidden ? '展开调节' : '收起调节' }}
+              </button>
+              <div v-show="!geometryHidden" ref="stageControls" />
+            </div>
           </template>
         </Card>
 
-        <Teleport to="#shell-side" :disabled="panels === 'all'">
+        <Teleport v-if="panels === 'all' || stageControls" :to="stageControls ?? 'body'" :disabled="panels === 'all'">
           <Card class="vol-side vol-geom">
             <!-- 剖切刀。⚠️ **只在场景报「画得出来」之后才挂** —— 没有 WebGL 时
                  刀切的是一个不存在的画面，一个对自己无效的控件比没有更难看。
@@ -486,11 +509,13 @@ function runQuery() {
               <p class="num">{{ shellLength.toFixed(1) }} m（只改几何，不改场）</p>
             </fieldset>
           </Card>
+        </Teleport>
 
+        <Teleport to="#shell-side" :disabled="panels === 'all'">
           <!-- 三维视图控制那张卡**只在页⑤** 上出现：页③ 用的是压在画布角上
                的那一组（`showViewControls`），两处摆法共用一个 `ViewControls`。 -->
-          <Card v-if="panels === 'shell'" class="vol-side">
-            <ViewControls :run="nudge" :ok="sceneOk" layout="panel" />
+          <Card v-if="panels === 'shell'" class="vol-side view-controls-card">
+            <ViewControls :run="nudge" :ok="sceneOk" layout="panel" @mode="scene?.setInteractionMode($event)" />
           </Card>
         </Teleport>
       </div>
@@ -499,6 +524,32 @@ function runQuery() {
 </template>
 
 <style scoped>
+.field-mode-toggle { position: absolute; top: var(--gap-m); right: 100px; display: flex; gap: 4px; z-index: 3; }
+.field-mode-toggle button { background: var(--card); color: var(--ink-muted); padding: 4px 12px; font-size: var(--size-note); }
+.field-mode-toggle button.active { color: var(--edge); border-color: var(--edge); background: var(--card-2); }
+.field-stage-title { display: flex; align-items: center; gap: 9px; }
+.field-stage-title :deep(.icon) { --icon-size: 25px; color: var(--edge); filter: var(--panel-corner-glow); }
+.live-stage .stage-overlay-head { padding-bottom: 10px; border-bottom: 1px solid var(--interact); }
+.query-module-heading { display: flex; align-items: center; gap: 10px; position: relative; padding-bottom: 12px; margin-bottom: var(--gap-m); border-bottom: 1px solid var(--interact); }
+.query-module-heading svg { flex: none; color: var(--edge); filter: var(--panel-corner-glow); }
+.query-module-heading h3 { color: var(--ink); }
+.query-module-heading::after { content: ''; position: absolute; right: 0; bottom: -1px; width: 7px; height: 2px; background: var(--edge); box-shadow: var(--panel-line-glow); }
+.stage-geometry-controls { position: absolute; left: var(--gap-m); bottom: var(--gap-m); z-index: 2; width: min(210px, calc(100% - 100px)); }
+.stage-geometry-controls.collapsed { width: auto; }
+.geometry-toggle { display: block; margin-bottom: 4px; padding: 3px 9px; font-size: var(--size-note); color: var(--ink-muted); background: var(--card); border: var(--rule); }
+.collapsed .geometry-toggle { margin-bottom: 0; }
+.stage-geometry-controls :deep(.vol-geom) { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--gap-m); padding: 10px 14px; border: var(--rule); background: var(--card); }
+.stage-geometry-controls :deep(.rail-box) { min-width: 0; margin: 0; }
+.stage-geometry-controls :deep(legend) { font-size: var(--size-note); }
+.stage-geometry-controls :deep(input[type='range']) { width: 100%; accent-color: var(--edge); }
+.stage-geometry-controls :deep(p) { font-size: 11px; overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .stage-geometry-controls { position: relative; left: auto; bottom: auto; width: 100%; margin-top: var(--gap-s); }
+}
+.view-controls-card { border: 1px solid var(--interact); position: relative; }
+.view-controls-card::before, .view-controls-card::after { content: ''; position: absolute; width: 14px; height: 14px; pointer-events: none; border-color: var(--edge); }
+.view-controls-card::before { top: -1px; left: -1px; border-top: 2px solid var(--edge); border-left: 2px solid var(--edge); }
+.view-controls-card::after { bottom: -1px; right: -1px; border-bottom: 2px solid var(--edge); border-right: 2px solid var(--edge); }
 .block { margin-bottom: var(--gap-xl); }
 .row { display: flex; gap: var(--gap-s); align-items: center; }
 .head { justify-content: space-between; }
@@ -516,7 +567,7 @@ function runQuery() {
   margin-top: var(--gap-m);
 }
 /* 两栏都是内容可能比格子宽的那种（右边那三个坐标框尤其），允许格子窄于内容。 */
-.vol-side { min-width: 0; }
+.vol-side { min-width: 0; max-width: 100%; }
 .vol-ask { min-width: 0; grid-area: ask; }
 .vol-geom { min-width: 0; grid-area: geom; }
 /* `position: relative` 是给角上那枚时刻当落点的（画布铺满这一栏的内容盒）。 */
@@ -565,6 +616,7 @@ function runQuery() {
 .scale-bar { flex: 1 1 auto; width: 10px; min-height: 60px; border-radius: var(--radius); }
 .scale-end { font-size: var(--size-note); color: var(--ink-muted); white-space: nowrap; }
 .vol-stage.live-stage :deep(.view-ctl) { top: auto; right: auto; bottom: var(--gap-s); left: var(--gap-s); }
+.vol-stage.live-stage :deep(.scene-wrap) { margin-right: 64px; min-width: 0; }
 /* 画面右上角那枚时刻。落点是 `--gap-m`（卡片自己的内边距）再加一点点 ——
    画布铺满内容盒，所以这个位置正好是画面右上角往里缩一个 `--gap-s`。
    ⚠️ `pointer-events: none` 不能省：它压在画布上，挡住的正是鼠标悬停读温
@@ -602,22 +654,23 @@ function runQuery() {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
   margin: var(--gap-s) 0;
 }
+.query-box { min-inline-size: 0; }
 .query-box .row label { display: flex; align-items: center; min-width: 0; gap: 4px; }
 .query-box .row input[type='number'] { width: 100%; min-width: 0; }
 .vol-geom .rail-box { margin-bottom: var(--gap-s); }
 .vol-geom .rail-box:last-child, .vol-geom .rail-box p { margin-bottom: 0; }
-/* 只为训练页保留结果行高度；实时页的侧栏继续按实际读数显示。
+/* 两种模式都保留结果行高度，空态与选点使用同一布局。
    长说明在值区域内滚动，完整内容仍可读取，卡片和下方剖切区不跳动。 */
-.vol-grid:not(.stage-only) .vol-ask table { table-layout: fixed; }
-.vol-grid:not(.stage-only) .vol-ask th { width: 4em; }
-.vol-grid:not(.stage-only) .reading-value {
+.vol-ask table { table-layout: fixed; }
+.vol-ask th { width: 4em; }
+.vol-ask .reading-value {
   display: block; min-width: 0; height: calc(2em * var(--lh-body));
   overflow-y: auto; overflow-wrap: anywhere;
 }
-.vol-grid:not(.stage-only) .readout-time .reading-value { flex: 1 1 auto; height: calc(1em * var(--lh-body)); }
-.vol-grid:not(.stage-only) .time-row .reading-value { height: 24px; }
-.vol-grid:not(.stage-only) .answer-row .reading-value { height: calc(3em * var(--lh-body)); }
-.vol-grid:not(.stage-only) .is-empty td { color: var(--ink-muted); }
+.vol-ask .readout-time .reading-value { flex: 1 1 auto; height: calc(1em * var(--lh-body)); }
+.vol-ask .time-row .reading-value { height: 24px; }
+.vol-ask .answer-row .reading-value { height: calc(3em * var(--lh-body)); }
+.vol-ask .is-empty td { color: var(--ink-muted); }
 
 /* ── 把高度让给外面（2026-10-16 页⑤ 一屏装三块） ──────────────────────
    这三条 + `VolumeScene.vue` 里那两条，是「会长会缩」从页面一路通到画布的
