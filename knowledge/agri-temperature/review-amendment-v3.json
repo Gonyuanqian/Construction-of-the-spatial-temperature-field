@@ -1,0 +1,10 @@
+{
+  "reviewed_at":"2026-10-30",
+  "reviewer":"Codex，原文依据审校；非农艺专家会签",
+  "base_release":"agri-temperature-qualitative-20261030-v2",
+  "amendments":[{
+    "id":"OGUNDELE2026-heterogeneity",
+    "text":"该自然通风单跨温室研究的模拟结果显示，高太阳负荷时会出现垂直温度分层和纵向差异。",
+    "reason":"将观察到改为模拟结果显示，严格区分 CFD 结果与现场实测；出处为出版社摘要空间分布段。"
+  }]
+}

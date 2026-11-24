@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tfield.gateway.config.PythonServiceProperties;
 import com.tfield.gateway.dataset.DatasetContextProvider;
 import com.tfield.gateway.dataset.DatasetRecord;
+import com.tfield.gateway.dataset.DatasetStorage;
 import com.tfield.gateway.model.ComputeContextProvider;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -41,11 +42,12 @@ public class LegacyApiController {
     private final ObjectMapper mapper;
     private final DatasetContextProvider contexts;
     private final ComputeContextProvider computeContexts;
+    private final DatasetStorage storage;
 
     public LegacyApiController(LegacyRouteCatalog catalog, PythonServiceProperties properties,
             @Qualifier("pythonClient") RestClient client,
             @Qualifier("pythonComputeClient") RestClient computeClient, ObjectMapper mapper,
-            DatasetContextProvider contexts, ComputeContextProvider computeContexts) {
+            DatasetContextProvider contexts, ComputeContextProvider computeContexts, DatasetStorage storage) {
         this.catalog = catalog;
         this.properties = properties;
         this.client = client;
@@ -53,6 +55,7 @@ public class LegacyApiController {
         this.mapper = mapper;
         this.contexts = contexts;
         this.computeContexts = computeContexts;
+        this.storage = storage;
     }
 
     @RequestMapping({"/api", "/api/**"})
@@ -99,6 +102,7 @@ public class LegacyApiController {
             } else if (needsDataset) {
                 contexts.apply(outgoing, dataset);
             }
+            outgoing.headers(headers -> headers.set("X-TField-Internal-Key", storage.internalKey()));
             if (needsDataset) {
                 response.setHeader("X-TField-Workspace", "default");
                 response.setHeader("X-TField-Dataset-Id", dataset == null ? "none" : dataset.id());

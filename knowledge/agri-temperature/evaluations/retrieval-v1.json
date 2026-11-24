@@ -1,0 +1,886 @@
+{
+  "benchmark_version": "agri-temperature-retrieval-v1",
+  "benchmark_sha256": "615ba3004051b27632bc7e5240856f19d50ef89661883865299d1f3d7d72eb96",
+  "release_id": "agri-temperature-qualitative-20261030-v1",
+  "release_sha256": "72b5d19f39d96814130faa35dce9365c6a481178178a86dcee40c43c364aff0c",
+  "collection": "agri_temperature_qualitative_20261030_v1",
+  "indexing_policy": "title_body_limits-v1",
+  "embedding_model": "BAAI/bge-small-zh-v1.5",
+  "embedding_revision": "7999e1d3359715c523056ef9478215996d62a620",
+  "points": 8,
+  "metrics": {
+    "development": {
+      "answerable_count": 8,
+      "unanswerable_count": 2,
+      "hit_rate_at_1": 1.0,
+      "hit_rate_at_3": 1.0,
+      "hit_rate_at_6": 1.0,
+      "mrr": 1.0,
+      "unanswerable_queries_returning_related_context": 2,
+      "interpretation": "有相关资料不等于问题可回答；不可回答标签按证据支持范围人工标注，未测试最终生成答案。"
+    },
+    "holdout": {
+      "answerable_count": 12,
+      "unanswerable_count": 6,
+      "hit_rate_at_1": 0.8333333333333334,
+      "hit_rate_at_3": 1.0,
+      "hit_rate_at_6": 1.0,
+      "mrr": 0.9166666666666666,
+      "unanswerable_queries_returning_related_context": 6,
+      "interpretation": "有相关资料不等于问题可回答；不可回答标签按证据支持范围人工标注，未测试最终生成答案。"
+    }
+  },
+  "checks": {
+    "all_published_qualitative": true,
+    "source_count": true,
+    "index_count_matches": true,
+    "citation_metadata_valid": true,
+    "no_numeric_thresholds_advertised": true,
+    "holdout_hit_rate_at_3": true
+  },
+  "passed": true,
+  "p50_latency_seconds": 2.8063000000000002,
+  "limitations": "小规模同语料评测；开发与留出问题仍覆盖相同知识主题，不能等同外部盲测或最终回答准确率。",
+  "rows": [
+    {
+      "id": "D01",
+      "split": "development",
+      "question": "棚内空气温度可以直接代表叶片温度吗？",
+      "gold_ids": [
+        "FAO217-temperature-target"
+      ],
+      "retrieved_ids": [
+        "FAO217-temperature-target",
+        "OGUNDELE2026-heterogeneity",
+        "CHOAB2019-design",
+        "GUZMAN2019-transfer-limit",
+        "FAO217-evaporative-cooling",
+        "FAO217-natural-ventilation"
+      ],
+      "scores": [
+        0.7028115,
+        0.66533697,
+        0.6342976,
+        0.60995984,
+        0.5822046,
+        0.51591116
+      ],
+      "reciprocal_rank": 1.0,
+      "gold_rank": 1,
+      "citation_metadata_valid": true,
+      "latency_seconds": 3.4851,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "D02",
+      "split": "development",
+      "question": "自然通风靠什么产生气流？",
+      "gold_ids": [
+        "FAO217-natural-ventilation"
+      ],
+      "retrieved_ids": [
+        "FAO217-natural-ventilation",
+        "OGUNDELE2026-heterogeneity",
+        "FAO217-evaporative-cooling",
+        "CHOAB2019-design",
+        "FAO217-temperature-target",
+        "GUZMAN2019-transfer-limit"
+      ],
+      "scores": [
+        0.6602339,
+        0.50264865,
+        0.41079694,
+        0.38812715,
+        0.34813708,
+        0.26505074
+      ],
+      "reciprocal_rank": 1.0,
+      "gold_rank": 1,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.8026,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "D03",
+      "split": "development",
+      "question": "湿帘在干燥还是潮湿空气中降温效率更高？",
+      "gold_ids": [
+        "FAO217-evaporative-cooling"
+      ],
+      "retrieved_ids": [
+        "FAO217-evaporative-cooling",
+        "OGUNDELE2026-heterogeneity",
+        "FAO217-temperature-target",
+        "CHOAB2019-design",
+        "FAO217-natural-ventilation",
+        "GUZMAN2019-transfer-limit"
+      ],
+      "scores": [
+        0.76191926,
+        0.52764773,
+        0.5253894,
+        0.4314943,
+        0.42996645,
+        0.3643912
+      ],
+      "reciprocal_rank": 1.0,
+      "gold_rank": 1,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.7876,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "D04",
+      "split": "development",
+      "question": "种子萌发时应该关注空气还是基质温度？",
+      "stage": "萌发期",
+      "gold_ids": [
+        "FAO217-germination-medium"
+      ],
+      "retrieved_ids": [
+        "FAO217-germination-medium",
+        "FAO217-temperature-target",
+        "CHOAB2019-design",
+        "FAO217-evaporative-cooling",
+        "OGUNDELE2026-heterogeneity",
+        "FAO217-natural-ventilation"
+      ],
+      "scores": [
+        0.8245515,
+        0.6209352,
+        0.52572155,
+        0.5166906,
+        0.5077671,
+        0.4603414
+      ],
+      "reciprocal_rank": 1.0,
+      "gold_rank": 1,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.9829,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "D05",
+      "split": "development",
+      "question": "温室覆盖材料、形状和朝向与微气候研究有什么关系？",
+      "gold_ids": [
+        "CHOAB2019-design"
+      ],
+      "retrieved_ids": [
+        "CHOAB2019-design",
+        "OGUNDELE2026-heterogeneity",
+        "FAO217-temperature-target",
+        "FAO217-evaporative-cooling",
+        "GUZMAN2019-transfer-limit",
+        "FAO217-natural-ventilation"
+      ],
+      "scores": [
+        0.7409489,
+        0.6305279,
+        0.5633813,
+        0.51680386,
+        0.51457316,
+        0.46038285
+      ],
+      "reciprocal_rank": 1.0,
+      "gold_rank": 1,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.6448,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "D06",
+      "split": "development",
+      "question": "虚拟温度传感器是直接测量还是模型估计？",
+      "gold_ids": [
+        "GUZMAN2019-virtual-sensing"
+      ],
+      "retrieved_ids": [
+        "GUZMAN2019-virtual-sensing",
+        "GUZMAN2019-transfer-limit",
+        "CHOAB2019-design",
+        "FAO217-evaporative-cooling",
+        "OGUNDELE2026-heterogeneity",
+        "FAO217-temperature-target"
+      ],
+      "scores": [
+        0.74016094,
+        0.48967052,
+        0.4852505,
+        0.45178008,
+        0.44923228,
+        0.44253772
+      ],
+      "reciprocal_rank": 1.0,
+      "gold_rank": 1,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.9629,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "D07",
+      "split": "development",
+      "question": "小尺度虚拟传感器研究能证明生产棚只要一个传感器吗？",
+      "gold_ids": [
+        "GUZMAN2019-transfer-limit"
+      ],
+      "retrieved_ids": [
+        "GUZMAN2019-transfer-limit",
+        "GUZMAN2019-virtual-sensing",
+        "OGUNDELE2026-heterogeneity",
+        "CHOAB2019-design",
+        "FAO217-temperature-target",
+        "FAO217-natural-ventilation"
+      ],
+      "scores": [
+        0.7356207,
+        0.60385907,
+        0.476452,
+        0.42592317,
+        0.41367823,
+        0.40593648
+      ],
+      "reciprocal_rank": 1.0,
+      "gold_rank": 1,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.7827,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "D08",
+      "split": "development",
+      "question": "自然通风棚内可能存在垂直分层和纵向温差吗？",
+      "gold_ids": [
+        "OGUNDELE2026-heterogeneity"
+      ],
+      "retrieved_ids": [
+        "OGUNDELE2026-heterogeneity",
+        "FAO217-natural-ventilation",
+        "CHOAB2019-design",
+        "FAO217-temperature-target",
+        "GUZMAN2019-transfer-limit",
+        "FAO217-evaporative-cooling"
+      ],
+      "scores": [
+        0.7783136,
+        0.65650356,
+        0.6085819,
+        0.5858511,
+        0.5462769,
+        0.5360303
+      ],
+      "reciprocal_rank": 1.0,
+      "gold_rank": 1,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.9827,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "D09",
+      "split": "development",
+      "question": "怎么计算股票市盈率？",
+      "gold_ids": [],
+      "unsupported_reason": "领域无关",
+      "retrieved_ids": [
+        "GUZMAN2019-virtual-sensing",
+        "FAO217-temperature-target",
+        "FAO217-natural-ventilation",
+        "FAO217-evaporative-cooling",
+        "OGUNDELE2026-heterogeneity",
+        "GUZMAN2019-transfer-limit"
+      ],
+      "scores": [
+        0.36099344,
+        0.31974363,
+        0.30059913,
+        0.27918765,
+        0.2779939,
+        0.2639704
+      ],
+      "reciprocal_rank": 0,
+      "gold_rank": null,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.6456,
+      "retrieved_context_is_sufficient": false,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "D10",
+      "split": "development",
+      "question": "番茄苗最适空气温度准确是多少摄氏度？",
+      "crop": "番茄",
+      "stage": "苗期",
+      "gold_ids": [],
+      "unsupported_reason": "语料无作物阈值，相关机理不能当处方",
+      "retrieved_ids": [
+        "FAO217-temperature-target",
+        "OGUNDELE2026-heterogeneity",
+        "FAO217-evaporative-cooling",
+        "CHOAB2019-design",
+        "GUZMAN2019-transfer-limit",
+        "FAO217-natural-ventilation"
+      ],
+      "scores": [
+        0.58577687,
+        0.483561,
+        0.47350994,
+        0.45418942,
+        0.40362298,
+        0.34952682
+      ],
+      "reciprocal_rank": 0,
+      "gold_rank": null,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.8871,
+      "retrieved_context_is_sufficient": false,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "H01",
+      "split": "holdout",
+      "question": "温度计测到的棚内气温能不能当成植株叶温使用？",
+      "gold_ids": [
+        "FAO217-temperature-target"
+      ],
+      "retrieved_ids": [
+        "FAO217-temperature-target",
+        "GUZMAN2019-transfer-limit",
+        "OGUNDELE2026-heterogeneity",
+        "CHOAB2019-design",
+        "FAO217-evaporative-cooling",
+        "FAO217-natural-ventilation"
+      ],
+      "scores": [
+        0.65189725,
+        0.60987926,
+        0.6088557,
+        0.590021,
+        0.51887643,
+        0.46117935
+      ],
+      "reciprocal_rank": 1.0,
+      "gold_rank": 1,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.6135,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "H02",
+      "split": "holdout",
+      "question": "植物温度为什么会与周围空气读数不同？",
+      "gold_ids": [
+        "FAO217-temperature-target"
+      ],
+      "retrieved_ids": [
+        "FAO217-temperature-target",
+        "CHOAB2019-design",
+        "OGUNDELE2026-heterogeneity",
+        "FAO217-evaporative-cooling",
+        "FAO217-natural-ventilation",
+        "GUZMAN2019-transfer-limit"
+      ],
+      "scores": [
+        0.7136841,
+        0.58644474,
+        0.58576137,
+        0.55981505,
+        0.4723209,
+        0.46115196
+      ],
+      "reciprocal_rank": 1.0,
+      "gold_rank": 1,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.4194,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "H03",
+      "split": "holdout",
+      "question": "没有机械风机时，风和热浮力怎样推动棚内空气交换？",
+      "gold_ids": [
+        "FAO217-natural-ventilation"
+      ],
+      "retrieved_ids": [
+        "FAO217-natural-ventilation",
+        "OGUNDELE2026-heterogeneity",
+        "FAO217-evaporative-cooling",
+        "CHOAB2019-design",
+        "FAO217-temperature-target",
+        "GUZMAN2019-transfer-limit"
+      ],
+      "scores": [
+        0.6310941,
+        0.5833095,
+        0.50713295,
+        0.5047915,
+        0.504212,
+        0.49192944
+      ],
+      "reciprocal_rank": 1.0,
+      "gold_rank": 1,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.3617,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "H04",
+      "split": "holdout",
+      "question": "只看单帧高温就能确定温室通风故障了吗？",
+      "gold_ids": [
+        "FAO217-natural-ventilation"
+      ],
+      "retrieved_ids": [
+        "OGUNDELE2026-heterogeneity",
+        "FAO217-natural-ventilation",
+        "CHOAB2019-design",
+        "FAO217-evaporative-cooling",
+        "FAO217-temperature-target",
+        "GUZMAN2019-transfer-limit"
+      ],
+      "scores": [
+        0.6391016,
+        0.57570213,
+        0.5681035,
+        0.4976783,
+        0.4821516,
+        0.43895167
+      ],
+      "reciprocal_rank": 0.5,
+      "gold_rank": 2,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.5166,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "H05",
+      "split": "holdout",
+      "question": "喷雾冷却与空气干燥程度有关吗？",
+      "gold_ids": [
+        "FAO217-evaporative-cooling"
+      ],
+      "retrieved_ids": [
+        "FAO217-evaporative-cooling",
+        "OGUNDELE2026-heterogeneity",
+        "FAO217-temperature-target",
+        "CHOAB2019-design",
+        "FAO217-natural-ventilation",
+        "GUZMAN2019-transfer-limit"
+      ],
+      "scores": [
+        0.6608839,
+        0.50252455,
+        0.49911526,
+        0.4724021,
+        0.46645612,
+        0.38519716
+      ],
+      "reciprocal_rank": 1.0,
+      "gold_rank": 1,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.4461,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "H06",
+      "split": "holdout",
+      "question": "水分蒸发是如何参与温室降温的？",
+      "gold_ids": [
+        "FAO217-evaporative-cooling"
+      ],
+      "retrieved_ids": [
+        "FAO217-evaporative-cooling",
+        "CHOAB2019-design",
+        "OGUNDELE2026-heterogeneity",
+        "FAO217-temperature-target",
+        "GUZMAN2019-transfer-limit",
+        "FAO217-natural-ventilation"
+      ],
+      "scores": [
+        0.6993884,
+        0.56213343,
+        0.5535942,
+        0.528756,
+        0.463607,
+        0.38684148
+      ],
+      "reciprocal_rank": 1.0,
+      "gold_rank": 1,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.7233,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "H07",
+      "split": "holdout",
+      "question": "育苗播种后湿基质为什么可能比周围空气更凉？",
+      "stage": "萌发期",
+      "gold_ids": [
+        "FAO217-germination-medium"
+      ],
+      "retrieved_ids": [
+        "FAO217-germination-medium",
+        "FAO217-temperature-target",
+        "FAO217-evaporative-cooling",
+        "OGUNDELE2026-heterogeneity",
+        "CHOAB2019-design",
+        "FAO217-natural-ventilation"
+      ],
+      "scores": [
+        0.6046641,
+        0.5731002,
+        0.5409863,
+        0.47591227,
+        0.41825864,
+        0.3809232
+      ],
+      "reciprocal_rank": 1.0,
+      "gold_rank": 1,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.934,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "H08",
+      "split": "holdout",
+      "question": "播种发芽阶段，只测空气能确认基质温度吗？",
+      "stage": "萌发期",
+      "gold_ids": [
+        "FAO217-germination-medium"
+      ],
+      "retrieved_ids": [
+        "FAO217-germination-medium",
+        "FAO217-temperature-target",
+        "CHOAB2019-design",
+        "OGUNDELE2026-heterogeneity",
+        "GUZMAN2019-transfer-limit",
+        "FAO217-evaporative-cooling"
+      ],
+      "scores": [
+        0.66391647,
+        0.6001178,
+        0.5067923,
+        0.50390625,
+        0.47974223,
+        0.46690354
+      ],
+      "reciprocal_rank": 1.0,
+      "gold_rank": 1,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.8111,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "H09",
+      "split": "holdout",
+      "question": "比较不同棚的热环境时，能忽略覆盖膜和棚体朝向吗？",
+      "gold_ids": [
+        "CHOAB2019-design"
+      ],
+      "retrieved_ids": [
+        "OGUNDELE2026-heterogeneity",
+        "CHOAB2019-design",
+        "FAO217-temperature-target",
+        "GUZMAN2019-transfer-limit",
+        "FAO217-natural-ventilation",
+        "FAO217-evaporative-cooling"
+      ],
+      "scores": [
+        0.6368094,
+        0.58746386,
+        0.5507526,
+        0.507433,
+        0.50610155,
+        0.48723978
+      ],
+      "reciprocal_rank": 0.5,
+      "gold_rank": 2,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.9754,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "H10",
+      "split": "holdout",
+      "question": "用已有传感器读数加模型推算其它位置，属于什么测温方式？",
+      "gold_ids": [
+        "GUZMAN2019-virtual-sensing"
+      ],
+      "retrieved_ids": [
+        "GUZMAN2019-virtual-sensing",
+        "GUZMAN2019-transfer-limit",
+        "CHOAB2019-design",
+        "OGUNDELE2026-heterogeneity",
+        "FAO217-temperature-target",
+        "FAO217-evaporative-cooling"
+      ],
+      "scores": [
+        0.5967536,
+        0.5160341,
+        0.508696,
+        0.47959608,
+        0.46296942,
+        0.4562829
+      ],
+      "reciprocal_rank": 1.0,
+      "gold_rank": 1,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.6739,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "H11",
+      "split": "holdout",
+      "question": "那篇CFD虚拟测温论文是在真实大型生产温室验证的吗？",
+      "gold_ids": [
+        "GUZMAN2019-transfer-limit"
+      ],
+      "retrieved_ids": [
+        "GUZMAN2019-transfer-limit",
+        "CHOAB2019-design",
+        "GUZMAN2019-virtual-sensing",
+        "OGUNDELE2026-heterogeneity",
+        "FAO217-evaporative-cooling",
+        "FAO217-temperature-target"
+      ],
+      "scores": [
+        0.6158652,
+        0.5386836,
+        0.5339968,
+        0.49172765,
+        0.41778177,
+        0.41703358
+      ],
+      "reciprocal_rank": 1.0,
+      "gold_rank": 1,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.8821,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "H12",
+      "split": "holdout",
+      "question": "有自然通风就能保证整个棚内每个高度和前后位置一样热吗？",
+      "gold_ids": [
+        "OGUNDELE2026-heterogeneity"
+      ],
+      "retrieved_ids": [
+        "OGUNDELE2026-heterogeneity",
+        "FAO217-natural-ventilation",
+        "CHOAB2019-design",
+        "FAO217-temperature-target",
+        "FAO217-evaporative-cooling",
+        "GUZMAN2019-transfer-limit"
+      ],
+      "scores": [
+        0.66790575,
+        0.6187888,
+        0.5768157,
+        0.54347646,
+        0.4999341,
+        0.48302725
+      ],
+      "reciprocal_rank": 1.0,
+      "gold_rank": 1,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.9079,
+      "retrieved_context_is_sufficient": true,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "H13",
+      "split": "holdout",
+      "question": "人参苗期的适宜温度上下限分别多少度？",
+      "crop": "人参",
+      "stage": "苗期",
+      "gold_ids": [],
+      "unsupported_reason": "没有人参阶段专属数值规则",
+      "retrieved_ids": [
+        "FAO217-temperature-target",
+        "OGUNDELE2026-heterogeneity",
+        "CHOAB2019-design",
+        "FAO217-evaporative-cooling",
+        "GUZMAN2019-transfer-limit",
+        "FAO217-natural-ventilation"
+      ],
+      "scores": [
+        0.55706525,
+        0.52508175,
+        0.49715483,
+        0.46610996,
+        0.42074046,
+        0.3718437
+      ],
+      "reciprocal_rank": 0,
+      "gold_rank": null,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.9191,
+      "retrieved_context_is_sufficient": false,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "H14",
+      "split": "holdout",
+      "question": "预计明天下午我这个棚会达到多少度？",
+      "gold_ids": [],
+      "unsupported_reason": "文献不包含未来预测和现场数据",
+      "retrieved_ids": [
+        "OGUNDELE2026-heterogeneity",
+        "GUZMAN2019-transfer-limit",
+        "FAO217-temperature-target",
+        "CHOAB2019-design",
+        "FAO217-natural-ventilation",
+        "FAO217-evaporative-cooling"
+      ],
+      "scores": [
+        0.4633669,
+        0.46073097,
+        0.4221771,
+        0.4070013,
+        0.3694497,
+        0.3618154
+      ],
+      "reciprocal_rank": 0,
+      "gold_rank": null,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.7804,
+      "retrieved_context_is_sufficient": false,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "H15",
+      "split": "holdout",
+      "question": "现在棚内最热位置的准确坐标和温度是什么？",
+      "gold_ids": [],
+      "unsupported_reason": "必须调用现场空间工具，不能由文献生成",
+      "retrieved_ids": [
+        "CHOAB2019-design",
+        "OGUNDELE2026-heterogeneity",
+        "FAO217-temperature-target",
+        "GUZMAN2019-transfer-limit",
+        "FAO217-evaporative-cooling",
+        "FAO217-natural-ventilation"
+      ],
+      "scores": [
+        0.60994136,
+        0.60393274,
+        0.5631651,
+        0.5354789,
+        0.46956837,
+        0.456311
+      ],
+      "reciprocal_rank": 0,
+      "gold_rank": null,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.6566,
+      "retrieved_context_is_sufficient": false,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "H16",
+      "split": "holdout",
+      "question": "这批芹菜已经持续热害多久了？",
+      "crop": "芹菜",
+      "gold_ids": [],
+      "unsupported_reason": "需要现场时序及作物胁迫规则",
+      "retrieved_ids": [
+        "OGUNDELE2026-heterogeneity",
+        "CHOAB2019-design",
+        "FAO217-temperature-target",
+        "FAO217-natural-ventilation",
+        "FAO217-evaporative-cooling",
+        "GUZMAN2019-transfer-limit"
+      ],
+      "scores": [
+        0.39135206,
+        0.37721935,
+        0.37269896,
+        0.31874412,
+        0.30711198,
+        0.29296553
+      ],
+      "reciprocal_rank": 0,
+      "gold_rank": null,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.829,
+      "retrieved_context_is_sufficient": false,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "H17",
+      "split": "holdout",
+      "question": "按照这些资料，喷雾设备应该自动开启多少分钟？",
+      "gold_ids": [],
+      "unsupported_reason": "没有设备控制或数值处方授权",
+      "retrieved_ids": [
+        "FAO217-evaporative-cooling",
+        "FAO217-natural-ventilation",
+        "CHOAB2019-design",
+        "OGUNDELE2026-heterogeneity",
+        "FAO217-temperature-target",
+        "GUZMAN2019-transfer-limit"
+      ],
+      "scores": [
+        0.46916187,
+        0.42546892,
+        0.39362583,
+        0.3553297,
+        0.34616953,
+        0.34111267
+      ],
+      "reciprocal_rank": 0,
+      "gold_rank": null,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.81,
+      "retrieved_context_is_sufficient": false,
+      "numeric_threshold_support": false
+    },
+    {
+      "id": "H18",
+      "split": "holdout",
+      "question": "如何制作巧克力蛋糕？",
+      "gold_ids": [],
+      "unsupported_reason": "领域无关",
+      "retrieved_ids": [
+        "GUZMAN2019-transfer-limit",
+        "FAO217-evaporative-cooling",
+        "GUZMAN2019-virtual-sensing",
+        "OGUNDELE2026-heterogeneity",
+        "FAO217-temperature-target",
+        "CHOAB2019-design"
+      ],
+      "scores": [
+        0.3398262,
+        0.27825233,
+        0.2438693,
+        0.22091317,
+        0.21832477,
+        0.19909537
+      ],
+      "reciprocal_rank": 0,
+      "gold_rank": null,
+      "citation_metadata_valid": true,
+      "latency_seconds": 2.8908,
+      "retrieved_context_is_sufficient": false,
+      "numeric_threshold_support": false
+    }
+  ]
+}

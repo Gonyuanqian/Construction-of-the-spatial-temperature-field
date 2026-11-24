@@ -3,7 +3,24 @@
  * 有一组测试盯着这件事：任何 .vue 里出现十六进制色值都会红。
  * 所以这一条不是自觉，是判据。
  */
+:root.theme-management { --leaf: var(--management-primary); --leaf-soft: var(--management-tint); --interact: var(--management-primary); --nav-blue: var(--management-primary); --nav-tint: var(--management-tint); }
 :root {
+  --control-amber: #F4B942;
+  --control-amber-soft: rgba(244,185,66,.10);
+  --design-plant: #5EA870;
+  --design-plant-light: #97C958;
+  --design-frame: #B9D2DE;
+  --design-cover: #B9DDEF;
+  --design-soil: #4D5540;
+  --design-path: #8D9A98;
+  --management-primary: #0878F9;
+  --management-tint: #EAF5FF;
+  --management-line: #D8E9FA;
+  --management-danger: #D93A40;
+  --management-success: #008873;
+  --management-success-soft: #E8F5F1;
+  --management-backdrop: rgba(18, 36, 66, 0.28);
+  --assistant-paper: #FFFFFF;
   --training-warning: #92551C;
   --training-warning-soft: #FFF5E7;
   /* 训练侧按参考图使用明亮冷灰页面、白色卡片与浅灰边线。 */

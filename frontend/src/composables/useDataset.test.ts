@@ -18,6 +18,14 @@ function stub(status: number, body: unknown = {}) {
 }
 
 describe('useDataset', () => {
+  it('账号切换后，旧探测响应不能覆盖新工作区状态', async () => {
+    let resolve!: (response: Response) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(r => { resolve = r })))
+    const d = useDataset(); const pending = d.probe()
+    d.reset(); d.onImported(RESULT)
+    resolve(new Response('{"detail":"无数据"}', { status: 409 })); await pending
+    expect(d.state.value).toBe('ok'); expect(d.lastImport.value).toEqual(RESULT)
+  })
   beforeEach(() => {
     vi.restoreAllMocks()
     // 单例：每条用例先把状态打回起点，否则上一条的结果留给下一条。

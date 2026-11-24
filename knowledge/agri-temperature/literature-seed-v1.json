@@ -1,0 +1,140 @@
+{
+  "release_id": "agri-temperature-literature-20261030-draft1",
+  "embedding_model": "BAAI/bge-m3",
+  "status": "draft",
+  "review_scope": "文献来源与定性摘要初核；未作农艺专家审核，不含可执行温度处方。",
+  "sources": [
+    {
+      "id": "FAO217", "title": "Good Agricultural Practices for greenhouse vegetable crops: Principles for Mediterranean climate areas",
+      "issuer": "Food and Agriculture Organization of the United Nations", "year": 2013,
+      "identifier": "FAO Plant Production and Protection Paper 217; ISBN 978-92-5-107649-1",
+      "url": "https://www.fao.org/4/i3284e/i3284e.pdf", "access": "publisher_pdf_text_checked",
+      "retrieved_at": "2026-10-30", "scope": "地中海气候区设施蔬菜；向中国棚区迁移时须重新核对。"
+    },
+    {
+      "id": "CHOAB2019", "title": "Review on greenhouse microclimate and application: Design parameters, thermal modeling and simulation, climate controlling technologies",
+      "authors": "Noureddine Choab; Amine Allouhi; Anas El Maakoul; Tarik Kousksou; Said Saadeddine; Abdelmajid Jamil",
+      "journal": "Solar Energy", "year": 2019, "volume": "191", "pages": "109–137",
+      "doi": "10.1016/j.solener.2019.08.042", "url": "https://www.sciencedirect.com/science/article/pii/S0038092X19308205",
+      "access": "publisher_abstract_and_introduction_checked_fulltext_not_obtained", "retrieved_at": "2026-10-30"
+    },
+    {
+      "id": "GUZMAN2019", "title": "Implementation of Virtual Sensors for Monitoring Temperature in Greenhouses Using CFD and Control",
+      "authors": "Cesar H. Guzmán et al.", "journal": "Sensors", "year": 2019,
+      "published_online": "2018-12-24", "volume": "19(1)", "article": "60",
+      "doi": "10.3390/s19010060", "url": "https://www.mdpi.com/1424-8220/19/1/60",
+      "access": "publisher_abstract_and_introduction_checked", "retrieved_at": "2026-10-30",
+      "scope": "小尺度温室方法研究；引言声明未提供真实生产温室实验结果。"
+    },
+    {
+      "id": "CHEN2025", "title": "A Review of Environmental Control Strategies and Models for Modern Agricultural Greenhouses",
+      "authors": "Shuailiang Chen; Aolong Liu; Fei Tang; Pei Hou; Yanli Lu; Pei Yuan",
+      "journal": "Sensors", "year": 2025, "published_online": "2025-02-25", "volume": "25(5)", "article": "1388",
+      "doi": "10.3390/s25051388", "url": "https://www.mdpi.com/1424-8220/25/5/1388",
+      "access": "publisher_metadata_and_abstract_checked_fulltext_not_obtained", "retrieved_at": "2026-10-30"
+    },
+    {
+      "id": "OGUNDELE2026", "title": "Analysis of temperature distribution in a naturally ventilated single-span greenhouse using computational fluid dynamics",
+      "authors": "Oluwasegun Moses Ogundele et al.", "journal": "Journal of Agricultural Engineering", "year": 2026,
+      "published_online": "2026-02-23", "volume": "57(2)", "article": "1971",
+      "doi": "10.4081/jae.2026.1971", "url": "https://www.agroengineering.org/jae/article/view/1971",
+      "access": "publisher_metadata_and_abstract_checked", "retrieved_at": "2026-10-30",
+      "scope": "自然通风单跨温室的具体研究案例，摘要结果不能直接移作本项目真值。"
+    },
+    {
+      "id": "JIAO2020", "title": "Computational Fluid Dynamics-Based Simulation of Crop Canopy Temperature and Humidity in Double-Film Solar Greenhouse",
+      "authors": "Wei Jiao; Qi Liu; Lijun Gao; Kunyu Liu; Rui Shi; Na Ta",
+      "journal": "Journal of Sensors", "year": 2020, "published_online": "2020-10-17", "article": "8874468",
+      "doi": "10.1155/2020/8874468", "url": "https://onlinelibrary.wiley.com/doi/full/10.1155/2020/8874468",
+      "access": "publisher_fulltext_sections_checked", "retrieved_at": "2026-10-30",
+      "integrity_check": "本次出版页未发现撤稿文字；尚未完成 Crossmark/撤稿数据库交叉核验，保持草稿。",
+      "scope": "内蒙古双膜日光温室芹菜冠层试验；不提供其他作物通用阈值。"
+    }
+  ],
+  "chunks": [
+    {
+      "id": "FAO217-temperature-target", "source_id": "FAO217", "title": "空气、植物和根区温度需要区分",
+      "locator": "Chapter 2, printed p.31; PDF page 47 (1-based)",
+      "text": "空气温度不等于叶片等植物部位温度；辐射、蒸腾与空气运动会造成差异。解释读数时须注明温度对象，不能将空气测点直接当作叶温或根温。",
+      "crop": "*", "stage": "*", "status": "draft", "review_status": "source_checked",
+      "reviewer": "Codex 原文定位初核，非农艺专家审定", "reviewed_at": "2026-10-30"
+    },
+    {
+      "id": "FAO217-natural-ventilation", "source_id": "FAO217", "title": "自然通风的驱动力",
+      "locator": "Chapter 3, printed p.50; PDF page 66 (1-based)",
+      "text": "自然通风由开口两侧压差驱动，风与热浮力均可参与。诊断降温问题需同时考虑室外风况、温差和开口条件，单个棚内温度不能确定通风失效的原因。",
+      "crop": "*", "stage": "*", "status": "draft", "review_status": "source_checked",
+      "reviewer": "Codex 原文定位初核，非农艺专家审定", "reviewed_at": "2026-10-30"
+    },
+    {
+      "id": "FAO217-evaporative-cooling", "source_id": "FAO217", "title": "蒸发降温与环境湿度",
+      "locator": "Chapter 4, printed pp.70–71; PDF pages 86–87 (1-based)",
+      "text": "蒸发降温把显热转为潜热，其效果与空气干燥程度有关。讨论湿帘或喷雾时需考虑湿度和系统条件，不能只凭气温推荐持续加湿。",
+      "crop": "*", "stage": "*", "status": "draft", "review_status": "source_checked",
+      "reviewer": "Codex 原文定位初核，非农艺专家审定", "reviewed_at": "2026-10-30"
+    },
+    {
+      "id": "FAO217-germination-medium", "source_id": "FAO217", "title": "萌发期应关注基质温度",
+      "locator": "Chapter 13, printed p.358; PDF page 374 (1-based)",
+      "text": "种子萌发管理应监测基质温度；湿基质蒸发可使其温度低于空气。空气读数不足以单独确认育苗基质是否处在合适范围。",
+      "crop": "*", "stage": "萌发期", "status": "draft", "review_status": "source_checked",
+      "reviewer": "Codex 原文定位初核，非农艺专家审定", "reviewed_at": "2026-10-30"
+    },
+    {
+      "id": "CHOAB2019-design", "source_id": "CHOAB2019", "title": "温室热环境受设计与运行条件共同影响",
+      "locator": "Publisher abstract; Introduction",
+      "text": "该综述从覆盖材料、形状与朝向、热模型及调控技术讨论温室微气候。比较不同棚区时应记录这些差异，不宜把一个棚的温度规律直接套用到另一棚。本文摘要不构成具体作物处方。",
+      "crop": "*", "stage": "*", "status": "draft", "review_status": "source_checked",
+      "reviewer": "Codex 出版社摘要核对，全文待取得", "reviewed_at": "2026-10-30"
+    },
+    {
+      "id": "CHOAB2019-energy-balance", "source_id": "CHOAB2019", "title": "热模型的输入与适用条件",
+      "locator": "Introduction, discussion of physical models",
+      "text": "温室物理建模需要估计太阳辐射及热量、质量交换相关参数。模型解释应说明边界条件与适用环境；本研究概述不能证明本项目模型的误差水平。",
+      "crop": "*", "stage": "*", "status": "draft", "review_status": "source_checked",
+      "reviewer": "Codex 出版社引言核对，全文待取得", "reviewed_at": "2026-10-30"
+    },
+    {
+      "id": "GUZMAN2019-virtual-sensing", "source_id": "GUZMAN2019", "title": "虚拟传感器是估计值",
+      "locator": "Abstract; Section 1, definition of virtual sensors",
+      "text": "该研究把物理传感器信息与模型结合，用虚拟传感器估计目标位置温度。软件估计与直接测量的来源不同，界面应保留这种区别。",
+      "crop": "*", "stage": "*", "status": "draft", "review_status": "source_checked",
+      "reviewer": "Codex 出版社摘要与引言核对", "reviewed_at": "2026-10-30"
+    },
+    {
+      "id": "GUZMAN2019-transfer-limit", "source_id": "GUZMAN2019", "title": "小尺度研究不能替代生产棚验证",
+      "locator": "Section 1, final paragraph before article organization",
+      "text": "作者说明此工作采用小尺度温室，未给出真实生产温室实验结果。引用时只能作为方法研究，不能据此声称任意生产棚只需一个温度传感器或已达到相同精度。",
+      "crop": "*", "stage": "*", "status": "draft", "review_status": "source_checked",
+      "reviewer": "Codex 出版社引言限制段核对", "reviewed_at": "2026-10-30"
+    },
+    {
+      "id": "CHEN2025-coupled-control", "source_id": "CHEN2025", "title": "环境调控包含多个变量与能耗目标",
+      "locator": "Publisher abstract",
+      "text": "该综述覆盖温度、湿度、光照和二氧化碳管理，以及结构和控制算法。分析温度管理方案应注意相关环境变量与能耗约束；摘要未给出本项目可直接采用的作物阈值。",
+      "crop": "*", "stage": "*", "status": "draft", "review_status": "source_checked",
+      "reviewer": "Codex 出版社摘要核对，全文待取得", "reviewed_at": "2026-10-30"
+    },
+    {
+      "id": "OGUNDELE2026-heterogeneity", "source_id": "OGUNDELE2026", "title": "通风温室也可能存在空间热不均匀",
+      "locator": "Publisher abstract, spatial-distribution results",
+      "text": "该单跨自然通风温室案例报告了高太阳负荷下的垂直分层与纵向梯度。它说明需要检查空间分布，但不能证明本项目最热位置、温差或误差与该试验相同。",
+      "crop": "*", "stage": "*", "status": "draft", "review_status": "source_checked",
+      "reviewer": "Codex 出版社摘要核对，具体实验条件待全文复核", "reviewed_at": "2026-10-30"
+    },
+    {
+      "id": "JIAO2020-canopy", "source_id": "JIAO2020", "title": "冠层条件是微气候建模因素",
+      "locator": "Section 1; Section 2.1 Study Site and Sensor System Settings",
+      "text": "研究以双膜日光温室芹菜冠层为对象，设置不同冠层高度并进行温湿度观测与模拟。解释冠层内部温度时应核对作物结构及测量高度，不能只用棚体几何说明全部变化。",
+      "crop": "芹菜", "stage": "*", "status": "draft", "review_status": "source_checked_integrity_pending",
+      "reviewer": "Codex 原文初核，出版完整性与领域审核待完成", "reviewed_at": "2026-10-30"
+    },
+    {
+      "id": "JIAO2020-validation", "source_id": "JIAO2020", "title": "模型验证须保留试验与测点条件",
+      "locator": "Section 2.1, sensor placement and boundary/verification observations",
+      "text": "该试验同时布设冠层和环境传感器，为边界条件与模拟核对提供观测。引用这类工作时应记录测点布置和试验条件，论文验证结果不是本系统当前帧的现场误差。",
+      "crop": "芹菜", "stage": "*", "status": "draft", "review_status": "source_checked_integrity_pending",
+      "reviewer": "Codex 原文初核，出版完整性与领域审核待完成", "reviewed_at": "2026-10-30"
+    }
+  ]
+}

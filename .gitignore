@@ -17,6 +17,9 @@ backend/configs/uploads/
 backend/configs/datasets/
 backend/configs/training-jobs/
 backend/configs/live-sessions/
+backend/configs/weather-models/
+backend/configs/weather-results/
+backend/configs/weather-training/
 
 # 页⑤ 自己的两份数据源（由 scripts/make_live_source.py 从上面那份切出来）。
 # 理由同上：内容与源数据集等量齐观，而源数据集不进仓库。
@@ -32,6 +35,8 @@ outputs/generalization-*/
 
 # 模型评估归档含实际数据、逐点预测和实验成品，保留在本机独立文件夹。
 outputs/model-evaluation-*/
+outputs/*.jpg
+outputs/weather-demo-*/
 
 # Node
 node_modules/

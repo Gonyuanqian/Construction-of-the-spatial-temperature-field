@@ -1,11 +1,11 @@
+import { beforeEach as beforeAuthCase } from 'vitest'
+import { loginAs } from '../test/authFixture'
+beforeAuthCase(() => loginAs())
 /**
- * 实时那一屏：三个控件各打哪个接口、指标行说的是什么、分级句**收在哪儿**。
+ * 实时那一屏：三个控件各打哪个接口、气象概览说的是什么、分级句**收在哪儿**。
  *
- * ⚠️ 2026-10-09 第二轮用户裁定（在原先「只留温度场」之后）：按一张深蓝科技风的
- * 仪表盘参考图重做，**风格与内容都借过来**。于是同一天早些时候撤掉的那排指标卡
- * **回来了** —— 但回来的是三张，说的全是温度场的事（棚内均温 / 三维温度场 /
- * 本帧时刻），那张「第几帧、共几帧」仍然一张都没有：「不报帧数」这条裁定没变。
- * 「本帧时刻」也随之从三维影像的角上**挪回指标卡**（用户原话：「本帧时刻挪到指标卡」）。
+ * 2026-11-06：顶部改为外部温度、湿度、光照强度与省市地区四项；
+ * 使用当前气象帧保存的输入，棚内均温仍在底部环境参数中展示。
  *
  * 这一屏的风险比静态图高：静态图可以慢慢看标注，实时是一帧一帧刷过去的，
  * 观众只会记住「它在动」。**分级看不见，就等于把「混合出来的」渲染成
@@ -19,6 +19,8 @@ import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory } from 'vue-router'
 
 import LiveView from './LiveView.vue'
+import { testArchive } from '../test/archiveFixture'
+import { usableModels } from '../api/models'
 import { createAppRouter } from '../router'
 import { BORROWED, FIELD_MODEL } from '../design/copy'
 import { makeLiveFramePayload, makeLiveStatus, makeModelsPayload,
@@ -83,7 +85,8 @@ function stubFetch(frame = makeLiveFramePayload(),
                    modelsStatus = 200,
                    // 本卷均温。`null` 是后端的**真状态**（拱内一格都没测到），
                    // 不是错误 —— 2026-10-09 终审 Important 2 的另一半要走到那一支。
-                   mean: number | null = 26.5) {
+                   mean: number | null = 26.5,
+                   initialReady = false) {
   // **替身必须与真后端同形，否则它守不住任何东西。** 两处照真契约来：
   //
   // ① `prepare` 的回执**只有** `{state, seconds}`（规格书 §五）—— 回一份完整的
@@ -91,7 +94,7 @@ function stubFetch(frame = makeLiveFramePayload(),
   //    这条替身原来就是这么写的，于是那个 bug 一路绿着走到了终审。
   // ② `status` 得**有状态**：prepare 之前 idle、之后 ready，start / pause 改 running。
   //    回一个写死的状态，页面永远走不到第二条分支，控件那一组也白测。
-  let prepared = false
+  let prepared = initialReady
   let running = false
   let cursor = 0
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -99,7 +102,7 @@ function stubFetch(frame = makeLiveFramePayload(),
     calls.push(`${init?.method ?? 'GET'} ${url}`)
     let body: unknown
     let status = 200
-    if (url.includes('/api/models')) { body = models; status = modelsStatus }
+    if (url.includes('/api/user/greenhouses')) { body = usableModels(models as ReturnType<typeof makeModelsPayload>).length ? [testArchive] : []; status = modelsStatus }
     else if (url.endsWith('/live/prepare')) {
       prepared = true
       body = { state: 'ready', seconds: 2.3 }      // 真形状：不是 LiveStatus
@@ -116,7 +119,7 @@ function stubFetch(frame = makeLiveFramePayload(),
     // 第 n 帧那一刻的场（`makeVolumePayload` 的默认时刻是页③ 那卷的
     // 2026-07-23，直接用它会让替身与真后端不同形 —— 而画面上那枚时刻
     // 读的正是载荷自己的 `time`，替身不同形它就指着另一个时刻）。
-    } else if (url.includes('/live/volume')) body = makeVolumePayload({ time: frame.frame.time, mean })
+    } else if (url.includes('/live/volume')) body = makeVolumePayload({ time: frame.frame.time, frame: { n: cursor, time: frame.frame.time }, mean })
     else if (url.includes('/live/frame')) body = frame
     else body = makeLiveStatus({ state: prepared ? 'ready' : 'idle', running, cursor })
     return new Response(JSON.stringify(body), {
@@ -138,20 +141,26 @@ function stubFetch(frame = makeLiveFramePayload(),
  * 空态那一支挂着 `<RouterLink>`，所以每一处挂载都要带路由 ——
  * 不给的话 Vue 按未知标签渲染并打警告，断言照样绿但每次都刷一遍。
  */
-function mountLive() {
+async function mountLive() {
+  const rail = document.createElement('div')
+  rail.id = 'rail-extra'
+  document.body.appendChild(rail)
   const side = document.createElement('div')
   side.id = 'shell-side'
   document.body.appendChild(side)
+  const liveRouter = createAppRouter(createMemoryHistory())
+  await liveRouter.push('/live')
+  await liveRouter.isReady()
   return mount(LiveView, {
     attachTo: document.body,
-    global: { plugins: [createAppRouter(createMemoryHistory())] },
+    global: { plugins: [liveRouter] },
   })
 }
 
 /** 右栏那一个落点（`mountLive` 造的那个）。 */
 const sidePanel = (): HTMLElement => document.getElementById('shell-side')!
 
-afterEach(() => { document.getElementById('shell-side')?.remove() })
+afterEach(() => { document.getElementById('shell-side')?.remove(); document.getElementById('rail-extra')?.remove() })
 
 beforeEach(() => {
   installEnvironment()
@@ -166,7 +175,7 @@ describe('LiveView', () => {
     // 就没必要展示出来，后端系统知道就行」。
     // 那条状态句整句说的都是帧数，跟着指标卡一起走。
     stubFetch()
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     const text = w.text()
     expect(text, '还在报一共多少帧').not.toContain('共 144 帧')
@@ -176,7 +185,7 @@ describe('LiveView', () => {
 
   it('会话恢复口径放在折叠说明中，不占温度场空间', async () => {
     stubFetch()
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     const why = w.findAll('details.why')
     expect(why, '「口径与出处」只有一个').toHaveLength(1)
@@ -198,7 +207,7 @@ describe('LiveView', () => {
       }
       return original(input, init)
     }))
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     await w.get('[data-act="prepare"]').trigger('click')
     await flushPromises()
@@ -226,7 +235,7 @@ describe('LiveView', () => {
       }
       return original(input, init)
     }))
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     expect(w.get('[data-act="prepare"]').text()).toBe('恢复实时源')
     await w.get('[data-act="prepare"]').trigger('click')
@@ -238,7 +247,7 @@ describe('LiveView', () => {
 
   it('三个控件各打自己那条接口', async () => {
     stubFetch()
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     await w.get('button[data-act="prepare"]').trigger('click')
     await flushPromises()
@@ -255,7 +264,7 @@ describe('LiveView', () => {
 
   it('准备之前只有「准备」，不摆一排按不动的按钮', async () => {
     stubFetch()
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     expect(w.find('button[data-act="start"]').exists()).toBe(false)
     expect(w.find('button[data-act="prepare"]').exists()).toBe(true)
@@ -273,7 +282,7 @@ describe('LiveView', () => {
     // 裁定删了，证据换成**控件换了一屏**：三个播放控件只在 `ready` 时在，
     // 它们出来了就说明 `status` 真的被刷新过，而不是 receipt 冒充的。
     stubFetch()
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     await w.get('button[data-act="prepare"]').trigger('click')
     await flushPromises()
@@ -298,7 +307,7 @@ describe('LiveView', () => {
     // `text()` 把折起来的内容一起算进去，`not.toContain('三种回答')` 在这里
     // 是一条**永远绿**的断言，删掉整句也照样过。
     stubFetch()
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     // 分级只在源准备好之后才在（没准备时屏上只有「准备实时源」一件事）。
     await w.get('button[data-act="prepare"]').trigger('click')
@@ -324,7 +333,7 @@ describe('LiveView', () => {
     // 那唯一一句）—— 与页③ 同一句、同一个来源。
     const NOTE = '这一份模型的参数不是用当前这份数据标出来的'
     stubFetch(makeLiveFramePayload({ mismatch_note: NOTE }))
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     await w.get('button[data-act="prepare"]').trigger('click')
     await flushPromises()
@@ -344,7 +353,7 @@ describe('LiveView', () => {
     // 同日用户裁定。页③ 那条写的是「视图」（两个字），实时这一屏写的却是
     // 一句话，而底下两个按钮本来就写着「断面」「三维」。
     stubFetch()
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     await w.get('button[data-act="prepare"]').trigger('click')
     await flushPromises()
@@ -365,7 +374,7 @@ describe('LiveView', () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     try {
       stubFetch()
-      const w = mountLive()
+      const w = await mountLive()
       await flushPromises()
       await w.get('button[data-act="prepare"]').trigger('click')
       await flushPromises()
@@ -398,7 +407,7 @@ describe('LiveView', () => {
     // 这条钉的就是那个「只换取数口」：少了它，实时屏要么自己画一份（判定与
     // 文案就有了第二处），要么悄悄去打页③ 的接口、拿到**另一帧**的场。
     stubFetch()
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     await w.get('button[data-act="prepare"]').trigger('click')
     await flushPromises()
@@ -417,60 +426,34 @@ describe('LiveView', () => {
     expect(calls.some((c) => c.includes('/api/field/volume'))).toBe(false)
   })
 
-  it('概览长条三格，说的全是温度场的事，仍然不报帧数（2026-10-09 用户裁定）', async () => {
-    // 用户按参考图把这一行要了回来，原话是「本帧时刻挪到指标卡」。
-    // ⚠️ 但同一天早些时候那条「第几帧、一共多少帧没必要展示」**没被推翻** ——
-    // 所以这里断的不只是「有三张」，还有「三张里没有一张说帧数」。
-    stubFetch()
-    const w = mountLive()
+  it('气象概览横排四项，显示同一帧的外部输入与省市', async () => {
+    const base = makeLiveFramePayload()
+    stubFetch(makeLiveFramePayload({live: {...base.live,
+      weather: {bg_temp: 22.5, bg_rh: 61.5, bg_light: 800},
+      location: {province_code: '220000', province_name: '吉林省', city_code: '220600', city_name: '白山市', district_name: '抚松县'},
+    }}), makeModelsPayload(), 200, 26.5, true)
+    const w = await mountLive()
     await flushPromises()
-    await w.get('button[data-act="prepare"]').trigger('click')
-    await flushPromises()
-
-    // 三格，一格都不说帧数。⚠️ 2026-10-12 起概览是一条长条
-    // （`OverviewStrip`），不再是 `StatRow` + `StatCard` 那一排；
-    // 三格的名字也照规格书 §六 那张表定稿（棚内平均温度 / 棚体三维温度场 /
-    // 更新时间），所以下面读的标签跟着换。
-    expect(w.findAll('.strip .cell'), '概览那一条不在').toHaveLength(3)
-    const text = w.text()
-    expect(text).toContain('棚内平均温度')
-    expect(text).toContain('三维温度场')
-    expect(text).toContain('更新时间')
-    // 本帧时刻走 `fmtTime`：同一个数在四页上是同一种写法，不把 ISO 的 T 印给人看。
-    expect(text).toContain('2026-07-27 12:00')
-    expect(text, '屏上还印着带 T 的时间戳').not.toContain('2026-07-27T')
-    // 反面：帧数一张都没有。
-    expect(text).not.toContain('共 144 帧')
-    expect(text).not.toContain('5 分钟一帧')
-    expect(text, '第几帧又回来了').not.toMatch(/第 \d+ 帧/)
-
-    // ⚠️ 只断「这三个标签在」不够：把 `meanText` 改接底栏那个 `bg_temp`（替身里是
-    // 28.4），上面每一行照样全绿 —— 标签在，值也「看着像个温度」
-    // （2026-10-09 终审 Important 2）。所以这里**读值**：替身里拱内均温 26.5 与
-    // 棚顶气温 28.4 是两个不同的数，读 26.5 那句话就再也糊不过去。
-    const meanCell = w.findAll('.strip .cell')
-      .find((s) => s.text().includes('棚内平均温度'))
-    expect(meanCell, '「棚内平均温度」那一格不在').toBeTruthy()
-    expect(meanCell!.find('.value').text(), '那一格印的不是本卷均温').toBe('26.5 °C')
+    expect(w.findAll('.strip .label').map(cell => cell.text()))
+      .toEqual(['外部温度', '相对湿度', '光照强度'])
+    expect(w.findAll('.strip .value').map(cell => cell.text()))
+      .toEqual(['22.5 °C', '61.5 %', '800'])
+    expect(w.get('.region-selector').text()).toBe('吉林省 · 白山市')
+    expect(w.get('.strip').text()).not.toContain('抚松县')
+    expect(w.get('.strip').text()).not.toContain('26.5')
   })
 
-  it('这一卷一个可用格子都没测到时，均温那一张说「不报数」，不说 0（终审 Important 2）', async () => {
-    // `mean === null` 是后端会真的回的状态（拱内一格都没测到），不是错误。
-    // 翻成 `0.0 °C` 会印出一个**看起来完全正常**的读数，而它其实是「没测到」——
-    // 这一屏上再没有第二个地方能把它揭穿。
-    stubFetch(makeLiveFramePayload(), makeModelsPayload(), 200, null)
-    const w = mountLive()
+  it('底部棚内均温缺失时说不报数，不说零', async () => {
+    stubFetch(makeLiveFramePayload(), makeModelsPayload(), 200, null, true)
+    const w = await mountLive()
     await flushPromises()
-    await w.get('button[data-act="prepare"]').trigger('click')
-    await flushPromises()
-    const cell = w.findAll('.strip .cell').find((s) => s.text().includes('棚内平均温度'))
-    expect(cell, '「棚内平均温度」那一格不在').toBeTruthy()
-    expect(cell!.find('.value').text(), 'null 被翻成了一个数').toBe('不报数')
+    expect(w.get('.env-card').text()).toContain('不报数')
+    expect(w.get('.env-card').text()).not.toContain('0.0 °C')
   })
 
   it('散文折进唯一一处「口径与出处」', async () => {
     stubFetch()
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     const why = w.findAll('details.why')
     expect(why.length).toBe(1)
@@ -479,114 +462,44 @@ describe('LiveView', () => {
     expect(why[0].text().length).toBeGreaterThan('口径与出处'.length)
   })
 
-  it('视图切换是一条分段控件，不是一排带圆角边框的按钮（spec §九 / 终审 I-1）', async () => {
-    // 与页③ 的视图切换同一块 chrome、同一条要求：它得像个开关。
-    // 这条与页③ 那条合起来才说明「两页共用一种控件」，只测一页等于没测另一半。
-    stubFetch()
-    const w = mountLive()
-    await flushPromises()
-    await w.get('button[data-act="prepare"]').trigger('click')
-    await flushPromises()
-    const seg = w.find('fieldset.rail-box .seg')
-    expect(seg.exists(), '视图切换没有分段控件的底').toBe(true)
-    expect(seg.findAll('[data-view]').map((b) => b.attributes('data-view')))
-      .toEqual(['section', 'volume'])
+  it('实时监测顶部不再提供断面与三维切换', async () => {
+    stubFetch(makeLiveFramePayload(), makeModelsPayload(), 200, 26.5, true)
+    const w=await mountLive(); await flushPromises()
+    expect(w.findAll('[data-view]')).toHaveLength(0)
+    expect(w.find('.section-stage').exists()).toBe(false)
+    expect(w.find('.stage').exists()).toBe(true)
   })
 
-  it('断面与三维共用一个位子 —— 切过去是**换掉**，不是接在下面', async () => {
-    // 2026-10-09 用户裁定。原先这一屏的视图切换只加不换：断面那张卡没有
-    // `v-if` 拦着，切到三维就成了「断面卡 + 三维块」上下两条 —— 用户得往下翻
-    // 才看得全，而这一屏的版面因此没法按「一屏」来设计。
-    // 页③ 那一份一直是对的（`v-if` / `v-else`），只有实时这一屏漏了。
-    //
-    // 两条断言缺一不可：只钉「切到三维有三维」的话，叠加着也照样绿 ——
-    // 而叠加正是要改掉的那件事。
-    stubFetch()
-    const w = mountLive()
-    await flushPromises()
-    await w.get('button[data-act="prepare"]').trigger('click')
-    await flushPromises()
-
-    // ① 默认落在三维：进这一屏先看棚体，不必先点一下。
-    expect(
-      w.find('button[data-view="volume"]').classes(), '默认没落在三维',
-    ).toContain('on')
-    // 三维那一块是懒加载的，等它真的上来（`vi.waitFor` 默认 1s 上限）。
-    // ⚠️ 等的是**三维那一块自己**（`.scene-wrap`），不是「棚体三维温度场」那个串：
-    // 2026-10-12 起概览第一格也叫这个名字，那一句于是变成「一进页面就成立」的
-    // 条件，后面的断言会在三维还没上来的时候就跑（这一条会因此变得什么都挡不住）。
-    await vi.waitFor(() => expect(w.find('.scene-wrap').exists()).toBe(true))
-    // ⚠️ 原先这里断的是「断面图不存在」。现在底栏那条沿棚均温曲线**两档都在**，
-    // 所以断的是**数量**：三维这一支只有那一张（1），断面那一支是两张（2）。
-    // 断「存在」的话，「两张都挂着」这条错法会绿。
-    expect(
-      w.findAll('.chart-stub'), '三维这一支里多出来的那张图是谁',
-    ).toHaveLength(1)
-
-    // ② 切到断面：三维那一块要**走开**，不是留在下面。
-    await w.get('button[data-view="section"]').trigger('click')
-    await flushPromises()
-    expect(w.find('button[data-view="section"]').classes()).toContain('on')
-    expect(w.findAll('.chart-stub'), '切到断面却没有断面图').toHaveLength(2)
-    expect(w.find('.scene-wrap').exists(), '切到断面了，三维那一块还留在下面').toBe(false)
+  it('去掉顶部重复标题后保留原三维区域', async () => {
+    stubFetch(makeLiveFramePayload(), makeModelsPayload(), 200, 26.5, true)
+    const w=await mountLive(); await flushPromises()
+    expect(w.find('h2').exists()).toBe(false)
+    expect(w.find('.empty-status').exists()).toBe(false)
+    expect(w.find('.weather-overview').exists()).toBe(true)
+    expect(w.findAll('.stage')).toHaveLength(1)
   })
 
-  it('本帧时刻在概览条上，走 `fmtTime`，不在三维的角上了', async () => {
-    // 2026-10-09 第二轮用户裁定：「本帧时刻挪到指标卡」。第一轮的处置是
-    // 把它印到三维影像的角上（`show-clock`），这一轮挪回来。
-    // 「手上这一屏画的是哪一刻」是温度场唯一的元信息，值得一直看得见 ——
-    // 而它落在指标行里，断面与三维两档都看得见；角上那份只有三维那一档有。
-    stubFetch()
-    const w = mountLive()
+  it('气象概览不再占用一格展示更新时间', async () => {
+    stubFetch(makeLiveFramePayload(), makeModelsPayload(), 200, 26.5, true)
+    const w = await mountLive()
     await flushPromises()
-    await w.get('button[data-act="prepare"]').trigger('click')
-    await flushPromises()
-
-    expect(w.text(), '屏上还印着带 T 的时间戳').not.toContain('2026-07-27T')
-    // ⚠️ 这一格 2026-10-12 起叫「更新时间」（规格书 §六 那张表）。
-    const stat = w.findAll('.strip .cell').find((s) => s.text().includes('更新时间'))
-    expect(stat, '「更新时间」那一格不在').toBeTruthy()
-    expect(stat!.text()).toContain('2026-07-27 12:00')
-
-    // 三维那一块懒加载上来之后，角上那份**不该**再有 —— 同一件事印两处，
-    // 迟早有一处是旧的。⚠️ 等的是 `.scene-wrap`，理由同上一条。
-    await vi.waitFor(() => expect(w.find('.scene-wrap').exists()).toBe(true))
-    expect(w.find('.stage-clock').exists(), '角上那份还留着').toBe(false)
+    expect(w.get('.strip').text()).not.toContain('更新时间')
+    expect(w.get('.strip').text()).not.toContain('2026-07-27')
   })
 
-  it('底栏两块是环境参数与沿棚均温，两档视图下都在', async () => {
-    // 参考图下方那两块。⚠️ 2026-10-12 用户裁定「照参考图换掉」：
-    // 左块由「棚顶气象」换成「环境参数（棚体与周边）」。**这是一次内容的
-    // 净损失**，明写在这里 —— 数据仍在 `/api/live/frame/{n}` 的返回体里
-    // （`bg_temp` / `bg_rh` / `bg_light`），只是这一屏不再印。
-    stubFetch()
-    const w = mountLive()
+  it('底栏展示环境监测预警与温度分布概览', async () => {
+    stubFetch(makeLiveFramePayload(), makeModelsPayload(), 200, 26.5, true)
+    const w = await mountLive()
     await flushPromises()
-    await w.get('button[data-act="prepare"]').trigger('click')
-    await flushPromises()
-
-    expect(w.text()).toContain('环境参数')
-    expect(w.text(), '棚顶气象撤走了，却还在屏上').not.toContain('棚顶气象')
-    expect(w.text()).toContain('拱跨宽')
-    expect(w.text()).toContain('拱顶高')
-    expect(w.text()).toContain('沿棚均温')
-    // 几何是两个**真数**：后端给的拱跨宽与拱顶高（不是参考图的 18.0 / 6.0）。
-    expect(w.text()).toContain('2.10 m')
-    expect(w.text()).toContain('1.30 m')
-    // 均温的口径句要在（它是这一屏最容易看错的那个数）。
-    // ⚠️ 断的是「都不进平均」而不是「拱内」：后者只在注释里出现过
-    // （`liveMeanCurve.ts`、`types.ts`），模板上一个字都没有，永远绿不了。
-    // ⚠️ 2026-10-16 起它**不在屏上常驻**了：用户裁定把它连同概览条那三句
-    // 副文案一起从中央区撤下来，它现在折在页脚的「口径与出处」里
-    // （与 2026-10-09 那句分级句同一条处置：降级不是删除）。
-    // 这一条**仍然绿**，因为 `<details>` 收起来，内容也始终在 DOM 里 ——
-    // 断的是「话还在」，不是「话在屏上」。
-    expect(w.text()).toContain('都不进平均')
-
-    await w.get('button[data-view="section"]').trigger('click')
-    await flushPromises()
-    expect(w.text(), '切到断面，环境参数就没了').toContain('环境参数')
-    expect(w.text()).toContain('沿棚均温')
+    const environment = w.get('.env-card')
+    expect(environment.text()).toContain('环境监测预警')
+    expect(environment.text()).toContain('温度预警')
+    expect(environment.text()).toContain('湿度预警')
+    expect(environment.text()).toContain('棚内平均温度')
+    expect(environment.text()).not.toContain('拱跨宽')
+    expect(environment.text()).not.toContain('拱顶高')
+    expect(w.get('.temperature-overview').text()).toContain('温度分布概览')
+    expect(document.body.textContent).toContain('都不进平均')
   })
 
   it('画面上方那两行说明不占这一屏的地方（2026-10-09 用户裁定）', async () => {
@@ -598,7 +511,7 @@ describe('LiveView', () => {
     // ⚠️ 反面必须一起钉：只断「那两行不在」的话，把左右两栏整块删掉也绿 ——
     // 而规格书 §5.3 要求的「棚体示意」正是由左栏那个滑块接管的。
     stubFetch()
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     await w.get('button[data-act="prepare"]').trigger('click')
     await flushPromises()
@@ -618,7 +531,7 @@ describe('LiveView', () => {
   it('右栏三张卡在三维那一档上齐了，且问数在最上面', async () => {
     // 规格书 §三 D8 那张表：问数（两档）/ 几何与剖切（只三维）/ 视图控制（只三维）。
     stubFetch()
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     await w.get('button[data-act="prepare"]').trigger('click')
     await flushPromises()
@@ -640,7 +553,7 @@ describe('LiveView', () => {
   it('断面那一档上右栏只剩问数那一张', async () => {
     // 几何与剖切、视图控制服务的是三维，断面档上没有它们的事（规格书 D8）。
     stubFetch()
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     await w.get('button[data-act="prepare"]').trigger('click')
     await flushPromises()
@@ -667,7 +580,7 @@ describe('LiveView', () => {
     // ⚠️ 答案的形状是「棚位名 + 吸附后的 x、z」，与「点一个格子」之后那份
     // 读数（`readout`）**一模一样**：这一档里 y 的名字就是 p1/p2/p3。
     stubFetch()
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     await w.get('button[data-act="prepare"]').trigger('click')
     await flushPromises()
@@ -696,7 +609,7 @@ describe('LiveView', () => {
     // ⚠️ 绝不从范围外吸进来：吸到最近的边上格点，屏幕上写的还是「最近格点」，
     // 而用户以为自己问的是 100 米处 —— 一个不是他问的答案，看起来却完全正常。
     stubFetch()
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     await w.get('button[data-act="prepare"]').trigger('click')
     await flushPromises()
@@ -712,36 +625,24 @@ describe('LiveView', () => {
     expect(sidePanel().textContent).toContain('超出这一帧的范围')
   })
 
-  it('概览那一条是长条，不是一排等宽卡片', async () => {
-    // 规格书 §六 版面纪律：三格不用 `StatRow` + `StatCard`（那是页① 的规矩）。
-    stubFetch()
-    const w = mountLive()
+  it('气象概览保持一条长条和四个单元', async () => {
+    stubFetch(makeLiveFramePayload(), makeModelsPayload(), 200, 26.5, true)
+    const w = await mountLive()
     await flushPromises()
-    await w.get('button[data-act="prepare"]').trigger('click')
-    await flushPromises()
-    expect(w.find('.strip').exists(), '概览不是长条').toBe(true)
-    expect(w.findAll('.stat'), '`StatCard` 又回来了').toHaveLength(0)
-    // ⚠️ 规格书 §三 D10：概览三格**不印**「（切割 y = 18.00）」。
-    // 后端没有「当前剖切位置」这个数，印它就得在前端编一个 ——
-    // 而编出来的数会在屏上冒充后端给的事实。参考图上那一格是切面视图才有的，
-    // 这一屏演的是三维全场。
-    expect(w.text(), '概览里编了一个剖切位置').not.toContain('切割')
-    // ⚠️ 2026-10-16 用户裁定：每格那第三行副文案整块撤了（见
-    // `OverviewStrip.test.ts`）。这一屏的版面账就压在它省下的那几十像素上。
-    expect(w.find('.strip .sub').exists(), '每格那第三行又回来了').toBe(false)
+    expect(w.find('.strip').exists()).toBe(true)
+    expect(w.findAll('.stat')).toHaveLength(0)
+    expect(w.findAll('.strip .cell')).toHaveLength(4)
   })
+
 })
 
 describe('实时模式与模型库', () => {
   beforeEach(() => { installEnvironment(); vi.restoreAllMocks(); calls.length = 0 })
-
-  /** 「一条能用的都没有」：把每一行都标成对不上。 */
   function noneUsable() {
-    const p = makeModelsPayload()
-    p.rows = p.rows.map((r) => ({ ...r, compatible: false,
-                                  why: '数据来源不同：别人家的棚.xlsx' }))
-    p.current_id = null
-    return p
+    const payload = makeModelsPayload()
+    payload.rows = payload.rows.map(row => ({...row, compatible: false, why: '数据来源不同：别人家的棚.xlsx'}))
+    payload.current_id = null
+    return payload
   }
 
   it('库里**只有一份借来的模型**也照画 —— 用户报的就是这一种', async () => {
@@ -758,7 +659,7 @@ describe('实时模式与模型库', () => {
     p.rows = [p.rows[1]]        // 第二行：借来的那一份
     p.current_id = 2
     stubFetch(makeLiveFramePayload(), p)
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
 
     expect(w.text(), '库里有一份能用的模型，这一屏却走了空态').not.toContain(FIELD_MODEL.none)
@@ -772,12 +673,13 @@ describe('实时模式与模型库', () => {
     // ⚠️ 与页③ 同一套空态文案：两页对同一件事说同一句话
     // （`copy.ts` 里 `FIELD_MODEL` 的注释写的理由）。
     stubFetch(makeLiveFramePayload(), noneUsable())
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
 
-    expect(w.text()).toContain(FIELD_MODEL.none)
-    expect(w.text()).toContain(FIELD_MODEL.toLibrary)
-    expect(w.text()).toContain(FIELD_MODEL.toTrain)
+    expect(w.text()).toContain('等待构建温度场')
+    expect(w.text()).toContain('接入外部气象')
+    expect(w.find('a[href="/models"]').exists()).toBe(false)
+    expect(w.find('a[href="/train"]').exists()).toBe(false)
     // ⚠️ 断的是 `.chart-stub`，不是 `canvas`：这个文件里 `EChart` 是替身
     // （`<div class="chart-stub" />`），jsdom 里本来就没有 canvas ——
     // `findAll('canvas')` 是一条**永远绿**的断言，删掉整块面板它也绿。
@@ -795,17 +697,17 @@ describe('实时模式与模型库', () => {
     // 挂一个没人读的 `w` 过不了 `vue-tsc -b`（`noUnusedLocals`），
     // 而报错离「这个变量没人用」很远。挂载本身仍然必要：那一句
     // 「不要问」写在挂载钩子里。
-    mountLive()
+    await mountLive()
     await flushPromises()
-    expect(calls.filter((c) => c.includes('/api/live/')),
-      '没有可用模型却去问了实时接口').toEqual([])
+    expect(calls.filter((c) => c.includes('/api/live/frame/') || c.includes('/api/live/volume/')),
+      '没有当前气象结果却读取了温度场').toEqual([])
   })
 
   it('有可用模型时照常渲染帧（空态那两条的反面）', async () => {
     // 少了这条，一个「永远走空态」的实现照样全绿 —— 而那是这条规则
     // 最坏的坏法：页⑤ 从此什么都放不出来，还不报错。
     stubFetch()
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     expect(w.text()).not.toContain(FIELD_MODEL.none)
     // 「照常渲染」现在拿什么当证据：状态句没了，`status` 一到（idle）屏上
@@ -820,7 +722,7 @@ describe('实时模式与模型库', () => {
     // 可用的模型」是把「还不知道」说成「没有」。与后端那句规矩同一条
     // （连不上必须说连不上，不许说成空库）的界面版本。
     stubFetch()
-    const w = mountLive()          // 故意不 flushPromises
+    const w = await mountLive()          // 故意不 flushPromises
     expect(w.text()).not.toContain(FIELD_MODEL.none)
     expect(w.find('button[data-act="prepare"]').exists()).toBe(false)
     await flushPromises()
@@ -833,7 +735,7 @@ describe('实时模式与模型库', () => {
     // 空库是一个用户能「解决」的状态（去训一个），连不上不是。
     // 说成空库，用户会去训一个模型，然后保存的时候再撞一次同样的 500。
     stubFetch(makeLiveFramePayload(), { detail: '数据库连不上' }, 500)
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     expect(w.text()).not.toContain(FIELD_MODEL.none)
     expect(w.text()).toContain('数据库连不上')
@@ -844,7 +746,7 @@ describe('实时模式与模型库', () => {
   it('成品读不动时，页⑤ 口径里印的是后端那句 artifact_note', async () => {
     const NOTE = '这一条的成品读不动（格式是第 2 版，现在是第 1 版），已退回现训。'
     stubFetch(makeLiveFramePayload({ artifact_note: NOTE }))
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     await w.get('button[data-act="prepare"]').trigger('click')
     await flushPromises()
@@ -859,7 +761,7 @@ describe('实时模式与模型库', () => {
   it('artifact_note 不改变页⑤ 那个「已标定 / 借来的」图章', async () => {
     const NOTE = '这一条的成品读不动（字节坏了），已退回现训。'
     stubFetch(makeLiveFramePayload({ mismatch_note: '', artifact_note: NOTE }))
-    const w = mountLive()
+    const w = await mountLive()
     await flushPromises()
     await w.get('button[data-act="prepare"]').trigger('click')
     await flushPromises()
@@ -870,3 +772,12 @@ describe('实时模式与模型库', () => {
     expect(w.text()).toContain(NOTE)
   })
 })
+
+ it('用户模式回放只读取棚体目录与本账号气象接口',async()=>{
+   loginAs('USER'); stubFetch()
+   const w=await mountLive(); await flushPromises()
+   expect(calls.some(path=>path.includes('/api/user/greenhouses'))).toBe(true)
+   expect(calls.some(path=>path.includes('/api/models') || path.includes('/api/dataset'))).toBe(false)
+   expect(w.find('a[href="/models"]').exists()).toBe(false)
+   expect(w.find('a[href="/train"]').exists()).toBe(false)
+ })

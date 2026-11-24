@@ -1,14 +1,15 @@
 /**
  * 全站文案的单一来源。
  *
- * 标题改过一次（「预测」→「重建」，spec 2026-10-04 §六 第 6 项）：实时模式按设计是
+ * 标题曾由「预测」改为「重建」（spec 2026-10-04 §六 第 6 项）：实时模式按设计是
  * **用当下数据算当下的构场**，不是外推未来，而「未来预测」被明确划在范围外。
+ * 当前页面展示名称为「人参棚式空间温度场的监测」。
  * 这个名字同时出现在 copy.ts、index.html 和若干组件里 —— 写死三份就会漂成两个名字，
  * 而验收时看到的正是它。所以有一条测试扫全仓来守。
  */
 import type { IconName } from './icons'
 
-export const SYSTEM_TITLE = '棚式空间温度场重建系统'
+export const SYSTEM_TITLE = '人参棚式空间温度场的监测'
 
 /**
  * 顶部模式开关的两项。实时模式现在**开着了**：后端扩库与重标定都做完了，
@@ -23,25 +24,32 @@ export const MODES = [
 ] as const
 
 /**
- * 训练模式左侧导航：数据导入、模型训练、模型库、构场与影响分析。
+ * 训练模式左侧导航：数据导入、模型训练、模型库与构场。
  * 模型库紧接训练，便于保存结果后查看和选择构场模型。
- *
- * 未开放的两项**留位并说明**，不做成空页：空页比没有更难看
- * （spec 2026-10-04 §二.4）。
  */
 export const NAV_ITEMS = [
   { key: 'data', label: '数据导入与检查', to: '/data', enabled: true, why: '', icon: 'upload' },
   { key: 'train', label: '模型训练', to: '/train', enabled: true, why: '', icon: 'chart' },
   { key: 'models', label: '模型库', to: '/models', enabled: true, why: '', icon: 'database' },
   { key: 'field', label: '空间温度场的构建', to: '/field', enabled: true, why: '', icon: 'cube' },
-  {
-    key: 'impact',
-    label: '影响分析',
-    to: '/impact',
-    enabled: false,
-    why: '本轮不做。后端还没有逐点误差与按时段的接口，内容也还没定下来。',
-    icon: 'network',
-  },
+] as const
+
+export const ADMIN_NAV_ITEMS = [
+  { key: 'users', label: '用户管理', to: '/admin/users', enabled: true, why: '', icon: 'users' },
+  { key: 'greenhouses', label: '棚体档案管理', to: '/admin/greenhouses', enabled: true, why: '', icon: 'cube' },
+] as const
+export const USER_NAV_ITEMS = [
+  { key: 'live', label: '实时监测', to: '/live', enabled: true, why: '', icon: 'pulse' },
+  { key: 'greenhouse-design', label: '温室设计', to: '/greenhouse-design', enabled: true, why: '', icon: 'ruler' },
+  { key: 'greenhouse-control', label: '温室控制', to: '/greenhouse-control', enabled: true, why: '', icon: 'controls' },
+  { key: 'alert-log', label: '预警日志', to: '/alert-log', enabled: true, why: '', icon: 'alert' },
+  { key: 'assistant', label: 'AgriSeek', to: '/assistant', enabled: true, why: '', icon: 'chat' },
+] as const
+
+/** 管理员通过右上角进入后台，侧栏集中展示开发与管理功能。 */
+export const DEVELOPER_NAV_ITEMS = [
+  ...NAV_ITEMS,
+  ...ADMIN_NAV_ITEMS,
 ] as const
 
 /**
@@ -54,8 +62,7 @@ export const NAV_ITEMS = [
  * 在这个系统里已经 redirect 到 `/data`（数据导入页），叫「首页」却跳去实时屏，
  * 名实分家。参考图那一条写的是「首页」，此处**有意不照图**。
  *
- * 后三项**都还没有页面**，所以一律 `enabled: false`，与 `NAV_ITEMS` 里
- * 「影响分析」同一套形状：留位、写明理由、不做成空页（`spec 2026-10-04 §二.4`）。
+ * 监测与助手已开放，历史和设置仍保留禁用占位及说明。
  *
  * ⚠️ **不是把 `NAV_ITEMS` 改掉**：训练模式那四页的左栏仍然是流水线那四项，
  * 标签、次序、`enabled` 一个都不动（`App.test.ts` 按 `NAV_ITEMS` 推导着断言）。
@@ -74,8 +81,8 @@ export const LIVE_NAV_ITEMS = [
     key: 'live', label: '实时监测', to: '/live', enabled: true, icon: 'pulse', why: '',
   },
   {
-    key: 'assistant', label: '温度场智能助手', to: '/assistant', enabled: false, icon: 'chat',
-    why: '尚未开放。计划支持温度查询、结果解释与三维视图联动。',
+    key: 'assistant', label: 'AgriSeek', to: '/assistant', enabled: true, icon: 'chat',
+    why: '',
   },
   {
     key: 'history', label: '历史数据', to: '/history', enabled: false, icon: 'clock',
@@ -175,10 +182,8 @@ export const MODELS = {
   emptyWhy: '在模型训练页面完成训练并保存，模型会显示在这里。',
   saveTitle: '保存到模型库',
   savePlaceholder: '给这个模型起个名字',
-  saveHint: '保存之后它就是全站当前模型，「空间温度场的构建」那一页会拿它来构场。',
+  saveHint: '保存后可在“空间温度场的构建”页面选择此模型，再点击“开始构场”。',
   back: '回模型库',
-  current: '工作区选用',
-  setCurrent: '设为工作区模型',
   view: '查看详情',
   artifactReady: '已保存成品',
   differentSource: '训练来源不同',

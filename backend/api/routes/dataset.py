@@ -312,7 +312,7 @@ def get_preview(limit: int | None = None) -> dict[str, Any]:
     切面图同源（同一个 `_point_codes`），棚前缀与 tooltip 同源（都是 shed id）。
     而 `key` **照旧是宽表里的列名** —— 表里任何一格因此都还追得回文件那一列。
 
-    湿度列与光照列不进表：本系统没有一处读它们，摆进来只是把宽度翻倍。
+    三项外部气象位于测点之前；光照保留原始量纲，不擅自换算为辐射或 lux。
 
     ⚠️ 每个数都过 `_finite`：缺失格子是 NaN，进了响应体就是
     `JSONResponse(allow_nan=False)` → HTTP 500（与上面两条出口同一个坑）。
@@ -329,8 +329,11 @@ def get_preview(limit: int | None = None) -> dict[str, Any]:
 
     codes = _point_codes(ds)
     columns: list[dict[str, str]] = []
-    if C.BG_TEMP in wide.columns:
-        columns.append({"key": C.BG_TEMP, "label": "背景温度"})
+    for key, label, unit in ((C.BG_TEMP, '背景温度', '℃'),
+                             (C.BG_LIGHT, '背景光照强度', '源数据单位'),
+                             (C.BG_RH, '背景湿度', '%')):
+        if key in wide.columns:
+            columns.append({'key': key, 'label': label, 'unit': unit})
     for shed in C.SHED_ORDER:
         # ⚠️ 走 `codes` 的次序，**不是** `ds.layout` 的。
         # `SENSOR_LAYOUT` 是按参考图上的坐标一条条写下来的（x0.15、x0.4、x0.8…），

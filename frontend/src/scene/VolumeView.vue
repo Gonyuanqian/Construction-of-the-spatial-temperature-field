@@ -7,13 +7,12 @@
  * （全前端唯一那处），吸附走 `scene/hover.ts`（纯函数），画的那一半在
  * `VolumeScene.vue`。
  *
- * **这一块不做任何数值计算**（硬约束 1）：温度是查表查出来的，坐标是**吸附**到
- * 已经算好的格点上的，两者都不插值。插值就是在前端把 R2 重算一遍 ——
- * 两条路径漂了不报错。
+ * 连续坐标读数走后端 point 接口，与画布使用相同的约束后网格。
+ * 前端只负责坐标拾取与显示，不计算温度。
  */
 import { computed, onMounted, onUnmounted, ref, watch, withDefaults } from 'vue'
 
-import type { VolumePayload } from '../api/types'
+import type { VolumePayload, VolumePointPayload } from '../api/types'
 import { getJson } from '../api/client'
 import { interpretVolumePick, pickText } from '../charts/pick'
 import { tempStops } from '../charts/scale'
@@ -23,13 +22,16 @@ import Card from '../components/Card.vue'
 import Icon from '../components/Icon.vue'
 import ViewControls from '../components/ViewControls.vue'
 import { useAsync } from '../composables/useAsync'
+import { useRetainedTeleport } from '../composables/useRetainedTeleport'
 import { calibratedLabel } from '../design/copy'
 import { fmtTime } from '../design/format'
 import { markerPoint, snapIndex, type HoverPick } from './hover'
+import { pointText } from './pointReading'
 import VolumeScene from './VolumeScene.vue'
 import type { ViewCmd } from './viewCmd'
 import {
-  SHELL_LENGTH_DEFAULT, SHELL_LENGTH_MAX, SHELL_LENGTH_MIN, buildVolumeSpec,
+  ALL_TEMPERATURE_LAYERS, SHELL_LENGTH_DEFAULT, SHELL_LENGTH_MAX, SHELL_LENGTH_MIN, buildVolumeSpec,
+  isVisibleTemperatureHeight, type TemperatureLayerCuts, type TemperatureLayerVisibility,
 } from './volumeView'
 
 const props = withDefaults(defineProps<{
@@ -50,6 +52,10 @@ const props = withDefaults(defineProps<{
   source?: 'field' | 'live'
   /** 实时会话变更时重新取数；训练模式不使用此引用。 */
   sessionId?: string
+  frozenSnapshotId?: string
+  initialPosition?: { x: number; y: number; z: number }
+  layerCuts?: TemperatureLayerCuts
+  layerVisibility?: TemperatureLayerVisibility
   /**
    * 画面上要不要挂一枚时刻（2026-10-09 用户裁定）。
    *
@@ -144,8 +150,13 @@ const props = withDefaults(defineProps<{
   stretch: false,
 })
 
+const { target: sidebarTarget, disabled: sidebarSuspended } = useRetainedTeleport('#shell-side')
+const emit = defineEmits<{
+  'update:layerCuts': [cuts: TemperatureLayerCuts]
+  'update:layerVisibility': [visibility: TemperatureLayerVisibility]
+}>()
 const volume = useAsync(() => getJson<VolumePayload>(
-  props.source === 'live'
+  props.frozenSnapshotId ? `/api/assistant/snapshots/${encodeURIComponent(props.frozenSnapshotId)}/volume` : props.source === 'live'
     ? `/api/live/volume/${props.tIndex}${props.sessionId ? `?session_id=${encodeURIComponent(props.sessionId)}` : ''}`
     : `/api/field/volume?t_index=${props.tIndex}`))
 
@@ -162,19 +173,63 @@ function reload() {
   timer = setTimeout(() => { void volume.run() }, DEBOUNCE_MS)
 }
 
-onMounted(() => { void volume.run() })
+onMounted(() => { void volume.run().then(() => {
+  if (props.initialPosition) { query.value = { ...props.initialPosition }; void runQuery() }
+}) })
 watch(() => [props.tIndex, props.sessionId], reload)
 onUnmounted(() => { if (timer) clearTimeout(timer) })
 
 /** 拱壳的示意长度 / m。**只改几何、不改场**，所以它不触发任何请求。 */
 const shellLength = ref(SHELL_LENGTH_DEFAULT)
 const fieldMode = ref<'solid' | 'slices'>('solid')
+const roofHeight = computed(() => volume.data.value?.shed_height ?? 0)
+const visibleLayerCuts = computed<TemperatureLayerCuts | undefined>(() => {
+  if (!props.layerCuts || !(roofHeight.value > 0)) return undefined
+  return [Math.min(props.layerCuts[0], roofHeight.value), Math.min(props.layerCuts[1], roofHeight.value)]
+})
+const layerNames = ['近地层', '作物冠层', '上层']
+const layerVisibility = computed(() => props.layerVisibility ?? ALL_TEMPERATURE_LAYERS)
+const lastVisibleLayer = computed(() => layerVisibility.value.filter(Boolean).length === 1)
+const temperatureLayers = computed(() => visibleLayerCuts.value
+  ? { cuts: visibleLayerCuts.value, visible: layerVisibility.value } : undefined)
+
+function toggleLayer(index: number) {
+  const visible: [boolean, boolean, boolean] = [...layerVisibility.value]
+  if (visible[index] && lastVisibleLayer.value) return
+  visible[index] = !visible[index]
+  emit('update:layerVisibility', visible)
+}
+
+function adjustLayerCut(index: 0 | 1, event: Event) {
+  const cuts = visibleLayerCuts.value
+  if (!cuts || !props.layerCuts) return
+  const value = (event.target as HTMLInputElement).valueAsNumber
+  if (!Number.isFinite(value)) return
+  const min = index === 0 ? 0 : cuts[0]
+  const max = index === 0 ? cuts[1] : roofHeight.value
+  const next = value >= max ? max : Math.max(min, Math.min(max, Math.round(value * 100) / 100))
+  emit('update:layerCuts', index === 0 ? [next, props.layerCuts[1]] : [cuts[0], next])
+}
+
+function layerRange(start: number, end: number) {
+  return end > start ? `${start.toFixed(2)}–${end.toFixed(2)} m` : '无空间'
+}
 
 /** 点击钉住的那个格点；`null` = 没钉。钉住时读数不跟鼠标跑（规格书 §6.4）。 */
 const pinned = ref<HoverPick | null>(null)
 /** 鼠标当前指着的格点。 */
 const hovered = ref<HoverPick | null>(null)
 const shown = computed(() => pinned.value ?? hovered.value)
+watch(temperatureLayers, (layers) => {
+  const p = volume.data.value
+  if (!p) return
+  if (pinned.value && !isVisibleTemperatureHeight(pinned.value.position?.[2] ?? p.z[pinned.value.iz], layers)) pinned.value = null
+  if (hovered.value && !isVisibleTemperatureHeight(hovered.value.position?.[2] ?? p.z[hovered.value.iz], layers)) hovered.value = null
+})
+const continuousReading = ref<VolumePointPayload | null>(null)
+const readingError = ref('')
+let readingSequence = 0
+let readingTimer: ReturnType<typeof setTimeout> | undefined
 
 /**
  * 换了载荷就把悬停清掉 —— 鼠标可能早就不在那一片上了。
@@ -185,7 +240,10 @@ const shown = computed(() => pinned.value ?? hovered.value)
 watch(() => volume.data.value, (p) => {
   hovered.value = null
   const k = pinned.value
-  if (k && p && (k.planeIndex >= p.planes.length || k.ix >= p.x.length || k.iz >= p.z.length)) {
+  const outside = k?.position && p ? snapIndex(p.x, k.position[0]) === null
+    || snapIndex(p.planes.map(pl => pl.y), k.position[1]) === null || snapIndex(p.z, k.position[2]) === null
+    : k && p && (k.planeIndex >= p.planes.length || k.ix >= p.x.length || k.iz >= p.z.length)
+  if (outside) {
     pinned.value = null
   }
 })
@@ -197,8 +255,12 @@ function onPick(p: HoverPick | null) { pinned.value = p }
 
 const stageControls = ref<HTMLElement | null>(null)
 const geometryHidden = ref(false)
-const spec = computed(() =>
-  volume.data.value ? buildVolumeSpec(volume.data.value, shellLength.value) : null)
+const spec = computed(() => {
+  const p=volume.data.value
+  if(!p)return null
+  const result=buildVolumeSpec(p,p.transfer?.requested_dimensions.length_m??shellLength.value)
+  return p.transfer?{...result,shellNote:'原型估算：参考截面映射，沿长度均匀展开。'}:result
+})
 
 /** 面板显示的那个格点（钉住的优先），连同它的人话与时刻。 */
 const readout = computed(() => {
@@ -212,10 +274,12 @@ const readout = computed(() => {
     // 都走它，三维这一半跟上 —— 否则「同一个数四页同一种写法」在**同一页内**
     // 就先破了（终审 I-3）。
     time: fmtTime(p.time),
-    where: `最近格点 (${mx.toFixed(2)}, ${my.toFixed(2)}, ${mz.toFixed(2)})`,
-    text: pickText(interpretVolumePick(p, k.planeIndex, k.ix, k.iz), p.max_measured_z),
+    where: `${k.position ? '选中坐标' : '最近格点'} (${coordinate(mx)}, ${coordinate(my)}, ${coordinate(mz)})`,
+    text: k.position ? readingError.value || (continuousReading.value
+      ? pointText(continuousReading.value) : '正在查询该坐标…')
+      : pickText(interpretVolumePick(p, k.planeIndex, k.ix, k.iz), p.max_measured_z),
     // 「密度即可信度」在读数上也说一遍：这一片是量的，还是算的（规格书 §5.3）。
-    layer: plane.measured
+    layer: p.transfer ? `原型估算截面（y = ${my.toFixed(2)} m，沿长度均匀展开）` : k.position ? k.method === 'volume' ? '连续空间重建（表面或剖切面选点）' : '切面内重建（原坐标查询）' : plane.measured
       ? `实测断面（${plane.shed} 在 y = ${plane.y.toFixed(2)} m）`
       : `混合出来的片（y = ${plane.y.toFixed(2)} m，不是实测断面）`,
     pinned: pinned.value !== null,
@@ -310,8 +374,71 @@ const parsed = computed(() => {
 
 const queryAnswer = ref<{ time: string; where: string; text: string } | null>(null)
 const queryError = ref('')
+const queryLoading = ref(false)
+let querySequence = 0
+function coordinate(v: number): string {
+  return v.toLocaleString('en-US', { useGrouping: false, minimumFractionDigits: 2, maximumFractionDigits: 6 })
+}
 
-function runQuery() {
+function pointUrl(p: VolumePayload, q: { x: number; y: number; z: number }): string {
+  if (props.frozenSnapshotId) return `/api/assistant/snapshots/${encodeURIComponent(props.frozenSnapshotId)}/point?${new URLSearchParams({ x:String(q.x), y:String(q.y), z:String(q.z) })}`
+  const params = new URLSearchParams({ x: String(q.x), y: String(q.y), z: String(q.z),
+    preset: p.preset, monotonic: String(p.monotonic), y_step: String(p.y_step),
+    y_min: String(p.y_min), y_max: String(p.y_max) })
+  if (p.field_ref) params.set('expected_ref', p.field_ref)
+  if (props.source === 'live') {
+    if (props.sessionId) params.set('session_id', props.sessionId)
+    return `/api/live/point/${p.frame?.n ?? props.tIndex}?${params}`
+  }
+  params.set('t_index', String(p.t_index))
+  return `/api/field/point?${params}`
+}
+
+async function requestPoint(p: VolumePayload, q: { x: number; y: number; z: number }) {
+  if (props.source === 'live' && p.live?.session_id && p.live.session_id !== props.sessionId) {
+    throw new Error('实时会话已变化，请等待新画布加载后查询')
+  }
+  const out = await getJson<VolumePointPayload>(pointUrl(p, q))
+  if (out.time !== p.time || out.x !== q.x || out.y !== q.y || out.z !== q.z
+      || out.t_index !== p.t_index
+      || (p.field_ref && out.field_ref !== p.field_ref)) {
+    throw new Error('查询结果与当前画布的时刻或坐标不一致，请重新取场')
+  }
+  pointText(out)
+  return out
+}
+
+watch([shown, () => volume.data.value], ([pick, p]) => {
+  const mine = ++readingSequence
+  if (readingTimer) clearTimeout(readingTimer)
+  continuousReading.value = null
+  readingError.value = ''
+  if (!pick?.position || !p) return
+  const [x, y, z] = pick.position
+  readingTimer = setTimeout(async () => {
+    try {
+      const out = await requestPoint(p, { x, y, z })
+      if (mine === readingSequence) continuousReading.value = out
+    } catch (e) {
+      if (mine === readingSequence) readingError.value = e instanceof Error ? e.message : String(e)
+    }
+  }, 180)
+})
+
+function clearPointRequests() {
+  ++querySequence; ++readingSequence
+  if (readingTimer) clearTimeout(readingTimer)
+  queryAnswer.value = null; queryError.value = ''; queryLoading.value = false
+  continuousReading.value = null; readingError.value = ''
+}
+watch(() => [props.tIndex, props.sessionId], clearPointRequests)
+watch(() => volume.data.value, () => {
+  ++querySequence
+  queryAnswer.value = null; queryError.value = ''; queryLoading.value = false
+})
+onUnmounted(clearPointRequests)
+
+async function runQuery() {
   const q = parsed.value
   const p = volume.data.value
   if (!q || !p) return
@@ -325,21 +452,30 @@ function runQuery() {
     const y0 = p.planes[0].y
     const y1 = p.planes[p.planes.length - 1].y
     queryError.value =
-      '坐标超出这一卷的范围，没有可吸附的格点：' +
+      '坐标超出这一卷的范围：' +
       `x ${p.x[0].toFixed(2)} 至 ${p.x[p.x.length - 1].toFixed(2)} m，` +
       `y ${y0.toFixed(2)} 至 ${y1.toFixed(2)} m，` +
       `z ${p.z[0].toFixed(2)} 至 ${p.z[p.z.length - 1].toFixed(2)} m。`
     return
   }
   queryError.value = ''
-  const k = { planeIndex, ix, iz }
-  const [mx, my, mz] = markerPoint(p, k)
   queryAnswer.value = {
     time: fmtTime(p.time),
-    // 吸附后的坐标**必须写出来**：用户输的是 5.4、拿到的是 5.5 的值，
-    // 不写出来就是撒谎（规格书 §6.2）。
-    where: `最近格点 (${mx.toFixed(2)}, ${my.toFixed(2)}, ${mz.toFixed(2)})`,
-    text: pickText(interpretVolumePick(p, k.planeIndex, k.ix, k.iz), p.max_measured_z),
+    where: `查询坐标 (${coordinate(q.x)}, ${coordinate(q.y)}, ${coordinate(q.z)})`,
+    text: '正在查询该坐标…',
+  }
+  const mine = ++querySequence
+  queryLoading.value = true
+  try {
+    const out = await requestPoint(p, q)
+    if (mine === querySequence) queryAnswer.value = {
+      time: fmtTime(out.time), where: `查询坐标 (${coordinate(out.x)}, ${coordinate(out.y)}, ${coordinate(out.z)})`,
+      text: pointText(out),
+    }
+  } catch (e) {
+    if (mine === querySequence) { queryAnswer.value = null; queryError.value = e instanceof Error ? e.message : String(e) }
+  } finally {
+    if (mine === querySequence) queryLoading.value = false
   }
 }
 </script>
@@ -352,7 +488,7 @@ function runQuery() {
     <div v-if="panels === 'all'" class="row head">
       <h3>棚体三维温度场</h3>
       <span v-if="volume.data.value" class="tag">
-        {{ calibratedLabel(volume.data.value) }}
+        {{ volume.data.value.transfer ? '尺寸原型' : calibratedLabel(volume.data.value) }}
       </span>
     </div>
 
@@ -372,8 +508,8 @@ function runQuery() {
            三张卡通过命名区域同时指定行和列，避免按源码次序自动换行造成错位。
            源码仍按 [查询, 画布, 几何] 排列，实时页投进外壳右栏时查询保持在前。 -->
       <div class="vol-grid" :class="{ 'stage-only': panels === 'shell', stretch }">
-        <Teleport to="#shell-side" :disabled="panels === 'all'">
-          <Card class="vol-side vol-ask">
+        <Teleport :to="sidebarTarget" :disabled="panels === 'all' || sidebarSuspended">
+          <Card class="vol-side vol-ask" :class="{ 'compact-query': panels === 'shell' }">
             <div v-if="panels === 'shell'" class="query-module-heading">
               <svg viewBox="0 0 28 28" width="27" height="27" aria-hidden="true"
                    fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
@@ -401,7 +537,7 @@ function runQuery() {
                   </td>
                 </tr>
                 <tr><th>位置</th><td class="num"><div class="reading-value">{{ readout?.where ?? '待选点' }}</div></td></tr>
-                <tr><th>这一片</th><td><div class="reading-value">{{ readout?.layer ?? '待选点' }}</div></td></tr>
+                <tr v-if="panels !== 'shell'"><th>来源</th><td><div class="reading-value">{{ readout?.layer ?? '待选点' }}</div></td></tr>
                 <tr class="answer-row"><th>回答</th><td><div class="reading-value">{{ readout?.text ?? '待选点' }}</div></td></tr>
               </tbody>
             </table>
@@ -412,8 +548,9 @@ function runQuery() {
                 <label>x <input v-model="query.x" type="number" step="0.01"></label>
                 <label>y <input v-model="query.y" type="number" step="0.01"></label>
                 <label>z <input v-model="query.z" type="number" step="0.01"></label>
-                <button type="button" :disabled="!parsed" @click="runQuery">查询</button>
+                <button type="button" :disabled="!parsed || queryLoading || volume.loading.value" @click="runQuery">{{ queryLoading ? '查询中…' : '查询' }}</button>
               </div>
+              <p class="note state">按输入坐标查询空间重建温度，不吸附切片；体内点可输入坐标或移动剖切面选择。</p>
               <table class="query-result"
                      :class="{ 'is-empty': !queryAnswer && !queryError }" aria-label="坐标查询结果">
                 <tbody>
@@ -448,25 +585,32 @@ function runQuery() {
             :spec="spec" :payload="volume.data.value" :picked="shown" :cut-y="cutAt"
             :show-view-controls="showViewControls"
             :decorations="panels === 'shell'"
-            :field-mode="panels === 'shell' ? fieldMode : 'slices'"
+            :field-mode="fieldMode"
+            :temperature-layers="temperatureLayers"
             @hover="onHover" @pick="onPick" @ready="onSceneReady"
           />
 
           <!-- 实时页的标题、棚位范围和温度色标叠在画布上；训练页布局保持原样。 -->
-          <template v-if="panels === 'shell'">
             <div class="field-mode-toggle" role="group" aria-label="温度场展示状态">
               <button type="button" :class="{ active: fieldMode === 'solid' }" :aria-pressed="fieldMode === 'solid'" @click="fieldMode = 'solid'">立体态</button>
               <button type="button" :class="{ active: fieldMode === 'slices' }" :aria-pressed="fieldMode === 'slices'" @click="fieldMode = 'slices'">切面态</button>
             </div>
+          <template v-if="panels === 'shell'">
             <div class="stage-overlay-head">
               <h3 class="field-stage-title"><Icon name="cube" />棚体三维温度场</h3>
-              <p v-if="volume.data.value" class="note num stage-axis">
+              <p v-if="volume.data.value?.transfer" class="note num stage-axis">原型估算 · 沿长均匀 · {{volume.data.value.transfer.requested_dimensions.length_m}} × {{volume.data.value.shed_width}} × {{volume.data.value.shed_height}} m</p>
+              <p v-else-if="volume.data.value" class="note num stage-axis">
                 棚位 y {{ volume.data.value.y_min.toFixed(2) }} 至
                 {{ volume.data.value.y_max.toFixed(2) }} m
               </p>
               <span v-if="volume.data.value" class="tag">
-                {{ calibratedLabel(volume.data.value) }}
+                {{ volume.data.value.transfer ? '尺寸原型' : calibratedLabel(volume.data.value) }}
               </span>
+              <div v-if="sceneOk && visibleLayerCuts" class="layer-visibility" role="group" aria-label="温度层显示">
+                <button v-for="(name, index) in layerNames" :key="name" type="button"
+                        :aria-pressed="layerVisibility[index]" :disabled="layerVisibility[index] && lastVisibleLayer"
+                        @click="toggleLayer(index)">{{ name }}</button>
+              </div>
             </div>
             <div v-if="volume.data.value" class="stage-scale">
               <span class="num scale-end">{{ volume.data.value.vmax.toFixed(1) }} °C</span>
@@ -493,13 +637,32 @@ function runQuery() {
               <legend>剖切刀（沿棚长 y）</legend>
               <input
                 :value="cutAt" type="range"
-                :min="cutMin" :max="cutMax" :step="volume.data.value.y_step"
+                :min="cutMin" :max="cutMax" :step="0.01"
                 aria-label="剖切刀" @input="onCut"
               >
               <p class="num">切到 y = {{ cutAt.toFixed(2) }} m 为止</p>
             </fieldset>
 
-            <fieldset class="rail-box">
+            <details v-if="sceneOk && visibleLayerCuts" class="layer-controls">
+              <summary>温度分层</summary>
+              <label>
+                <span>下分界 <b class="num">{{ visibleLayerCuts[0].toFixed(2) }} m</b></span>
+                <input type="range" min="0" :max="visibleLayerCuts[1]" step="any" :value="visibleLayerCuts[0]"
+                       aria-label="下分界高度" @input="adjustLayerCut(0, $event)">
+              </label>
+              <label>
+                <span>上分界 <b class="num">{{ visibleLayerCuts[1].toFixed(2) }} m</b></span>
+                <input type="range" :min="visibleLayerCuts[0]" :max="roofHeight" step="any" :value="visibleLayerCuts[1]"
+                       aria-label="上分界高度" @input="adjustLayerCut(1, $event)">
+              </label>
+              <dl>
+                <div><dt>近地层</dt><dd>{{ layerRange(0, visibleLayerCuts[0]) }}</dd></div>
+                <div><dt>作物冠层</dt><dd>{{ layerRange(visibleLayerCuts[0], visibleLayerCuts[1]) }}</dd></div>
+                <div><dt>上层</dt><dd>{{ layerRange(visibleLayerCuts[1], roofHeight) }}</dd></div>
+              </dl>
+            </details>
+
+            <fieldset v-if="!volume.data.value?.transfer" class="rail-box">
               <legend>棚体示意长度</legend>
               <input
                 v-model.number="shellLength" type="range"
@@ -511,10 +674,10 @@ function runQuery() {
           </Card>
         </Teleport>
 
-        <Teleport to="#shell-side" :disabled="panels === 'all'">
+        <Teleport :to="sidebarTarget" :disabled="panels === 'all' || sidebarSuspended">
           <!-- 三维视图控制那张卡**只在页⑤** 上出现：页③ 用的是压在画布角上
                的那一组（`showViewControls`），两处摆法共用一个 `ViewControls`。 -->
-          <Card v-if="panels === 'shell'" class="vol-side view-controls-card">
+          <Card v-if="panels === 'shell' && source !== 'live'" class="vol-side view-controls-card">
             <ViewControls :run="nudge" :ok="sceneOk" layout="panel" @mode="scene?.setInteractionMode($event)" />
           </Card>
         </Teleport>
@@ -543,6 +706,14 @@ function runQuery() {
 .stage-geometry-controls :deep(legend) { font-size: var(--size-note); }
 .stage-geometry-controls :deep(input[type='range']) { width: 100%; accent-color: var(--edge); }
 .stage-geometry-controls :deep(p) { font-size: 11px; overflow-wrap: anywhere; }
+.layer-controls { min-width: 0; color: var(--ink-muted); font-size: var(--size-note); }
+.layer-controls summary { color: var(--ink); cursor: pointer; font-weight: var(--w-strong); }
+.layer-controls label { display: grid; gap: 4px; margin-top: 9px; }
+.layer-controls label span,.layer-controls dl div { display: flex; justify-content: space-between; gap: 4px; }
+.layer-controls label b { color: var(--ink); font-weight: var(--w-strong); }
+.layer-controls input { width: 100%; margin: 0; accent-color: var(--edge); }
+.layer-controls dl { display: grid; gap: 3px; margin: 7px 0 0; }
+.layer-controls dd { margin: 0; text-align: end; font-variant-numeric: tabular-nums; }
 @media (max-width: 700px) {
   .stage-geometry-controls { position: relative; left: auto; bottom: auto; width: 100%; margin-top: var(--gap-s); }
 }
@@ -606,6 +777,11 @@ function runQuery() {
 }
 .stage-overlay-head h3 { margin: 0; }
 .stage-axis { margin: 0; }
+.layer-visibility { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 4px; }
+.layer-visibility button { pointer-events: auto; padding: 3px 8px; border: var(--rule); border-radius: var(--radius); background: var(--card); color: var(--ink-muted); font-size: var(--size-note); cursor: pointer; }
+.layer-visibility button[aria-pressed=true] { border-color: var(--interact); background: var(--card-2); color: var(--edge); }
+.layer-visibility button:disabled { cursor: default; }
+.layer-visibility button:focus-visible { outline: 2px solid var(--edge); outline-offset: 2px; }
 /* 实时色标：竖条在画布最右侧，高温在上、低温在下。 */
 .stage-scale {
   position: absolute; z-index: 2;
@@ -670,6 +846,7 @@ function runQuery() {
 .vol-ask .readout-time .reading-value { flex: 1 1 auto; height: calc(1em * var(--lh-body)); }
 .vol-ask .time-row .reading-value { height: 24px; }
 .vol-ask .answer-row .reading-value { height: calc(3em * var(--lh-body)); }
+.vol-ask.compact-query .answer-row .reading-value { height: calc(1.5em * var(--lh-body)); }
 .vol-ask .is-empty td { color: var(--ink-muted); }
 
 /* ── 把高度让给外面（2026-10-16 页⑤ 一屏装三块） ──────────────────────

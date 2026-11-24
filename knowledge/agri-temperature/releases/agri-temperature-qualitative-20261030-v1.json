@@ -1,0 +1,230 @@
+{
+  "release_id": "agri-temperature-qualitative-20261030-v1",
+  "status": "published",
+  "embedding_model": "BAAI/bge-small-zh-v1.5",
+  "embedding_dimension": 512,
+  "embedding_revision": "7999e1d3359715c523056ef9478215996d62a620",
+  "approved_scope": "定性文献机理与研究边界；不发布数值阈值、栽培处方或本棚因果诊断",
+  "supports_numeric_thresholds": false,
+  "query_score_threshold": null,
+  "review_sha256": "0c5fd02fb10fa8a090b09e62b9cbc133173b9507abe7fc2f0ce5a9722aa72170",
+  "seed_sha256": "4ade9eadafb344c4a5e5e984ea939ff0d27bf23c8ebbd8970bada68ea9d01978",
+  "sources": [
+    {
+      "id": "FAO217",
+      "title": "Good Agricultural Practices for greenhouse vegetable crops: Principles for Mediterranean climate areas",
+      "issuer": "Food and Agriculture Organization of the United Nations",
+      "year": 2013,
+      "identifier": "FAO Plant Production and Protection Paper 217; ISBN 978-92-5-107649-1",
+      "url": "https://www.fao.org/4/i3284e/i3284e.pdf",
+      "access": "publisher_pdf_text_checked",
+      "retrieved_at": "2026-10-30",
+      "scope": "地中海气候区设施蔬菜；向中国棚区迁移时须重新核对。"
+    },
+    {
+      "id": "CHOAB2019",
+      "title": "Review on greenhouse microclimate and application: Design parameters, thermal modeling and simulation, climate controlling technologies",
+      "authors": "Noureddine Choab; Amine Allouhi; Anas El Maakoul; Tarik Kousksou; Said Saadeddine; Abdelmajid Jamil",
+      "journal": "Solar Energy",
+      "year": 2019,
+      "volume": "191",
+      "pages": "109–137",
+      "doi": "10.1016/j.solener.2019.08.042",
+      "url": "https://www.sciencedirect.com/science/article/pii/S0038092X19308205",
+      "access": "publisher_abstract_and_introduction_checked_fulltext_not_obtained",
+      "retrieved_at": "2026-10-30"
+    },
+    {
+      "id": "GUZMAN2019",
+      "title": "Implementation of Virtual Sensors for Monitoring Temperature in Greenhouses Using CFD and Control",
+      "authors": "Cesar H. Guzmán et al.",
+      "journal": "Sensors",
+      "year": 2019,
+      "published_online": "2018-12-24",
+      "volume": "19(1)",
+      "article": "60",
+      "doi": "10.3390/s19010060",
+      "url": "https://www.mdpi.com/1424-8220/19/1/60",
+      "access": "publisher_abstract_and_introduction_checked",
+      "retrieved_at": "2026-10-30",
+      "scope": "小尺度温室方法研究；引言声明未提供真实生产温室实验结果。"
+    },
+    {
+      "id": "OGUNDELE2026",
+      "title": "Analysis of temperature distribution in a naturally ventilated single-span greenhouse using computational fluid dynamics",
+      "authors": "Oluwasegun Moses Ogundele et al.",
+      "journal": "Journal of Agricultural Engineering",
+      "year": 2026,
+      "published_online": "2026-02-23",
+      "volume": "57(2)",
+      "article": "1971",
+      "doi": "10.4081/jae.2026.1971",
+      "url": "https://www.agroengineering.org/jae/article/view/1971",
+      "access": "publisher_metadata_and_abstract_checked",
+      "retrieved_at": "2026-10-30",
+      "scope": "自然通风单跨温室的具体研究案例，摘要结果不能直接移作本项目真值。"
+    }
+  ],
+  "chunks": [
+    {
+      "id": "FAO217-temperature-target",
+      "source_id": "FAO217",
+      "title": "空气、植物和根区温度需要区分",
+      "locator": "Chapter 2, printed p.31; PDF page 47 (1-based)",
+      "text": "空气与植物各部位的温度可能不同，辐射、蒸腾和空气运动会影响这种差异。",
+      "crop": "*",
+      "stage": "*",
+      "status": "published",
+      "review_status": "source_verified_qualitative",
+      "reviewer": "Codex，逐条原文依据与适用边界审校；非农艺专家会签",
+      "reviewed_at": "2026-10-30",
+      "review_basis": "FAO Chapter 2 印刷 p.31 / PDF p.47，段落说明空气、植物部位温度差异及影响因素。",
+      "usage_limitations": [
+        "不以空气测点代替叶片或根区实测。",
+        "原手册面向地中海设施蔬菜，未给出本棚数值。"
+      ],
+      "evidence_kind": "qualitative",
+      "can_support_numeric_thresholds": false
+    },
+    {
+      "id": "FAO217-natural-ventilation",
+      "source_id": "FAO217",
+      "title": "自然通风的驱动力",
+      "locator": "Chapter 3, printed p.50; PDF page 66 (1-based)",
+      "text": "自然通风的气流来自开口两侧的压差，风与热浮力均可形成驱动力。",
+      "crop": "*",
+      "stage": "*",
+      "status": "published",
+      "review_status": "source_verified_qualitative",
+      "reviewer": "Codex，逐条原文依据与适用边界审校；非农艺专家会签",
+      "reviewed_at": "2026-10-30",
+      "review_basis": "FAO Chapter 3 印刷 p.50 / PDF p.66，Natural ventilation 与两类驱动力段。",
+      "usage_limitations": [
+        "只解释驱动力，不凭单帧判定本棚通风失效原因。",
+        "不提供风速阈值或开窗处方。"
+      ],
+      "evidence_kind": "qualitative",
+      "can_support_numeric_thresholds": false
+    },
+    {
+      "id": "FAO217-evaporative-cooling",
+      "source_id": "FAO217",
+      "title": "蒸发降温与环境湿度",
+      "locator": "Chapter 4, printed pp.70–71; PDF pages 86–87 (1-based)",
+      "text": "湿帘和喷雾利用水分蒸发实现降温，蒸发降温在较干燥空气中效率更高。",
+      "crop": "*",
+      "stage": "*",
+      "status": "published",
+      "review_status": "source_verified_qualitative",
+      "reviewer": "Codex，逐条原文依据与适用边界审校；非农艺专家会签",
+      "reviewed_at": "2026-10-30",
+      "review_basis": "FAO Chapter 4 印刷 pp.70–71 / PDF pp.86–87，Evaporative cooling 段及 GAP 建议。",
+      "usage_limitations": [
+        "不据此推荐持续加湿；需另核对湿度与系统设计。",
+        "不提供喷雾时长或目标温度。"
+      ],
+      "evidence_kind": "qualitative",
+      "can_support_numeric_thresholds": false
+    },
+    {
+      "id": "FAO217-germination-medium",
+      "source_id": "FAO217",
+      "title": "萌发期应关注基质温度",
+      "locator": "Chapter 13, printed p.358; PDF page 374 (1-based)",
+      "text": "种子萌发阶段应关注基质温度；湿基质蒸发可使基质温度低于周围空气。",
+      "crop": "*",
+      "stage": "萌发期",
+      "status": "published",
+      "review_status": "source_verified_qualitative",
+      "reviewer": "Codex，逐条原文依据与适用边界审校；非农艺专家会签",
+      "reviewed_at": "2026-10-30",
+      "review_basis": "FAO Chapter 13 印刷 p.358 / PDF p.374，萌发管理要点两处明确区分基质与空气。",
+      "usage_limitations": [
+        "仅适用于萌发阶段。",
+        "作物、品种与目标温度需要另外的阶段特定依据。"
+      ],
+      "evidence_kind": "qualitative",
+      "can_support_numeric_thresholds": false
+    },
+    {
+      "id": "CHOAB2019-design",
+      "source_id": "CHOAB2019",
+      "title": "温室热环境受设计与运行条件共同影响",
+      "locator": "Publisher abstract; Introduction",
+      "text": "这篇温室微气候综述讨论覆盖材料、棚体形状与朝向，以及热模型和环境调控技术。",
+      "crop": "*",
+      "stage": "*",
+      "status": "published",
+      "review_status": "source_verified_qualitative",
+      "reviewer": "Codex，逐条原文依据与适用边界审校；非农艺专家会签",
+      "reviewed_at": "2026-10-30",
+      "review_basis": "出版社摘要明确综述覆盖材料、形状、朝向、热模型及调控技术；Crossref DOI/题名/期刊一致。",
+      "usage_limitations": [
+        "本条只反映可核验的摘要范围，不声称阅读全文。",
+        "不能将综述直接当作任何作物的温度处方。"
+      ],
+      "evidence_kind": "qualitative",
+      "can_support_numeric_thresholds": false
+    },
+    {
+      "id": "GUZMAN2019-virtual-sensing",
+      "source_id": "GUZMAN2019",
+      "title": "虚拟传感器是估计值",
+      "locator": "Publisher PDF pp.2–3, Sections 1–2",
+      "text": "虚拟传感器利用实际测量和模型估计目标位置的信息；该研究将传感器输出与 CFD 模型结合。",
+      "crop": "*",
+      "stage": "*",
+      "status": "published",
+      "review_status": "source_verified_qualitative",
+      "reviewer": "Codex，逐条原文依据与适用边界审校；非农艺专家会签",
+      "reviewed_at": "2026-10-30",
+      "review_basis": "出版社 PDF 第 2 页 Section 1 定义，及第 3 页 Section 2 说明实测输入与 CFD/系统模型。",
+      "usage_limitations": [
+        "估计结果不等于目标位置的直接实测。",
+        "不能由文献中的方法证明本系统精度。"
+      ],
+      "evidence_kind": "qualitative",
+      "can_support_numeric_thresholds": false
+    },
+    {
+      "id": "GUZMAN2019-transfer-limit",
+      "source_id": "GUZMAN2019",
+      "title": "小尺度研究不能替代生产棚验证",
+      "locator": "Publisher PDF p.3, Section 1, final paragraph",
+      "text": "作者将该工作定位为小尺度温室的方法研究，并声明未提供真实生产温室的实验结果。",
+      "crop": "*",
+      "stage": "*",
+      "status": "published",
+      "review_status": "source_verified_qualitative",
+      "reviewer": "Codex，逐条原文依据与适用边界审校；非农艺专家会签",
+      "reviewed_at": "2026-10-30",
+      "review_basis": "出版社 PDF 第 3 页引言末段明确小尺度研究，且声明未提供真实温室实验结果；Crossref 未报告更新关系。",
+      "usage_limitations": [
+        "不能据此推断所有生产棚只需要一个传感器。",
+        "不能把该论文结果转成本项目现场误差或置信区间。"
+      ],
+      "evidence_kind": "qualitative",
+      "can_support_numeric_thresholds": false
+    },
+    {
+      "id": "OGUNDELE2026-heterogeneity",
+      "source_id": "OGUNDELE2026",
+      "title": "通风温室也可能存在空间热不均匀",
+      "locator": "Publisher abstract, spatial-distribution results",
+      "text": "这项自然通风单跨温室案例在高太阳负荷条件下观察到垂直分层和纵向温度差异。",
+      "crop": "*",
+      "stage": "*",
+      "status": "published",
+      "review_status": "source_verified_qualitative",
+      "reviewer": "Codex，逐条原文依据与适用边界审校；非农艺专家会签",
+      "reviewed_at": "2026-10-30",
+      "review_basis": "期刊出版页 Abstract 空间分布段报告高太阳负荷下垂直分层及纵向梯度；DOI/题名与 Crossref 一致。",
+      "usage_limitations": [
+        "限于论文描述的棚型与工况，不能泛化到所有温室。",
+        "不引用案例数值作为本棚热点、温差、阈值或误差。"
+      ],
+      "evidence_kind": "qualitative",
+      "can_support_numeric_thresholds": false
+    }
+  ]
+}

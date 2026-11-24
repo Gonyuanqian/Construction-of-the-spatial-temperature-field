@@ -7,6 +7,7 @@
  * 4×4 是方阵，若四行四列的数也对称，把 `values[iz][ix]` 写成 `values[ix][iz]`
  * 照样会全绿 —— 而图会整个转置。
  */
+import { testArchive } from './archiveFixture'
 import type {
   LiveFramePayload, LiveStatus, ModelDetailPayload, ModelsPayload,
   SectionShed, SectionsPayload, VolumePayload,
@@ -48,6 +49,7 @@ export function makeVolumePayload(over: Partial<VolumePayload> = {}): VolumePayl
     // （拱外是 NaN、顶部那条外推带又不算）。两个数相等会让「拿气温冒充均温」
     // 这条错法在测试里消失 —— 而它正是页⑤ 指标卡上最可能犯的错。
     mean: 26.5,
+    height_profile: [{z: 0, mean: 7 / 3}, {z: 0.7, mean: 7 / 3}, {z: 1.4, mean: 2}, {z: 2.1, mean: null}],
     x: [0, 0.7, 1.4, 2.1], z: [0, 0.7, 1.4, 2.1],
     arch: [[0, 0], [2.1, 0]],
     sheds: [{ id: 'p1', y: 3 }, { id: 'p2', y: 9 }, { id: 'p3', y: 15 }],
@@ -280,6 +282,7 @@ export const PAGE_PAYLOADS: Record<string, unknown> = {
   // 实时那一屏（`/live` 不进 NAV_ITEMS，逐页循环扫不到它）。**两条都给**：
   // 只给 status 的话，状态条一准备好页面就去取帧、拿到 404，帧那一块
   // （气象、24 路读数、分级那几句）根本渲染不出来。
+  '/api/user/greenhouses': [testArchive],
   '/api/live/status': makeLiveStatus({ state: 'ready', running: false, cursor: 3, total: 144 }),
   '/api/live/frame/': makeLiveFramePayload(),
   // 页⑤ 三维那一块与右栏读的是**体网格**载荷（`/api/live/volume/{n}`）。

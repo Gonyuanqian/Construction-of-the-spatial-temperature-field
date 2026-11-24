@@ -1,5 +1,5 @@
 /**
- * 模型库那四条接口，加上**「哪些模型能用」的唯一一处定义**。
+ * 模型库查询、保存、选用与管理接口，加上「哪些模型能用」的统一定义。
  *
  * 为什么单出一层而不是让每个视图各调 `getJson`：
  * 页③ 与页⑤ 都要回答「现在有没有一个能用的模型」，两页各写一遍
@@ -30,6 +30,15 @@ export function saveModel(name: string): Promise<ModelRowPayload> {
 
 export function setCurrentModel(id: number): Promise<{ id: number }> {
   return postJson<{ id: number }>(`/api/models/${id}/current`)
+}
+
+/** 名称属于管理信息；编辑不改动训练参数与模型成品。 */
+export function renameModel(id: number, name: string): Promise<ModelRowPayload> {
+  return postJson<ModelRowPayload>(`/api/models/${id}/rename`, { name })
+}
+
+export function deleteModels(ids: number[]): Promise<{ deleted: number[] }> {
+  return postJson<{ deleted: number[] }>('/api/models/batch-delete', { ids })
 }
 
 /**

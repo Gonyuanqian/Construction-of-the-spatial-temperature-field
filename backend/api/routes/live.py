@@ -200,6 +200,26 @@ def get_frame(n: int, preset: str = Query(DEFAULT_PRESET), monotonic: bool = Que
         return _get_frame(n, preset, monotonic)
 
 
+@router.get("/live/point/{n}")
+def get_point(n: int, x: float, y: float, z: float, preset: str = DEFAULT_PRESET,
+              monotonic: bool = True, y_step: float = 0.5, y_min: float = 0.0, y_max: float = 18.0,
+              expected_ref: str | None = None):
+    from .field import point_payload
+    with live.guard():
+        src = live.get_live_source()
+        _require_ready(src)
+        _require_walked(src, n)
+        # 已显示帧可查询；不会前进播放游标或换用当前训练模型。
+        t_index = _advance(src, n)
+        payload = point_payload(src.pipeline, x=x, y=y, z=z, t_index=t_index, preset=preset,
+                                monotonic=monotonic, y_step=y_step, y_min=y_min, y_max=y_max,
+                                expected_ref=expected_ref)
+        payload["frame"] = {"n": int(n), "time": str(pd.Timestamp(src.frame(n)[C.COL_TIMESTAMP]))}
+        payload["live"] = {"cursor": int(src.cursor()), "running": bool(src.running),
+                           "interval_s": float(live.LIVE_INTERVAL_S), "total": int(src.total)}
+        return payload
+
+
 @router.get("/live/volume/{n}")
 def get_volume(n: int, preset: str = Query(DEFAULT_PRESET), monotonic: bool = Query(True),
                y_step: float = Query(0.5), y_min: float = Query(0.0), y_max: float = Query(18.0)) -> dict[str, Any]:

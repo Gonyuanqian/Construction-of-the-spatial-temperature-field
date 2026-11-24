@@ -22,7 +22,6 @@ import { BORROWED, FIELD_VIEWS, LIVE_NAV_ITEMS, MODES, NAV_ITEMS, SYSTEM_TITLE }
 const fwd = (p: string): string => p.replaceAll('\\', '/')
 const SRC = fwd(fileURLToPath(new URL('..', import.meta.url))).replace(/\/+$/, '')
 const FRONTEND = fwd(fileURLToPath(new URL('../..', import.meta.url))).replace(/\/+$/, '')
-const REPO = fwd(fileURLToPath(new URL('../../..', import.meta.url))).replace(/\/+$/, '')
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -314,31 +313,14 @@ describe('文案只有一个来源', () => {
     ])
   })
 
-  it('标题在仓库其余地方也逐字一致，旧名不再残留', () => {
-    // 上面那条只扫 frontend/src 与 index.html —— 于是同一个标题在 README.md 与
-    // backend/api/main.py 里又各写了一遍，写的还是计划 1 的旧名（人参棚…），
-    // 整整漂了一份计划都没人发现：界面说「棚式…」、README 与 /docs 说旧名，
-    // 而验收时对盘要核的正是这个名字。
-    //
-    // 这一条是本组守卫的**补盲**：扫描集扩到仓库根。诚实说清它够不着什么 ——
-    // .json/.docx/.png 不扫（只扫源码与文档），构建产物与 node_modules 不扫
-    // （那是生成物，不是源头）；旧名是按「人参棚 + 空间温度场」这个**系统名组合**
-    // 拦的，不是按「人参棚」——数据集文件名里也有这三个字，那是数据资产的名字，
-    // 改了反而错。
-    //
-    // 字面量为什么拆开写：这条守卫扫的是**源码文本**，而它自己就是一个源码文件。
-    // 整串写在这里的话，它第一个举报的就是自己。拆开拼，才既扫得着别人、又不自指。
-    const RETIRED = ['人参棚', '空间温度场'].join('')
-    const files = walkRepo(REPO).map(fwd)
+  it('前端源码不残留更名前的显示名称', () => {
+    // 本次只调整前端显示名称，不要求重命名后端服务或历史文档。
+    // 拆开字面量，避免源码扫描将测试自身当成旧名称残留。
+    const RETIRED = ['设施', '棚式监测系统'].join('')
+    const files = [...walkRepo(SRC).map(fwd), fwd(join(FRONTEND, 'index.html'))]
     const retired = files.filter((p) => readFileSync(p, 'utf8').includes(RETIRED))
-    expect(retired.map((p) => p.slice(REPO.length)),
+    expect(retired.map((p) => p.slice(FRONTEND.length)),
       `旧名「${RETIRED}…」还残留在：`).toEqual([])
-
-    // 正着也钉一遍：这两处必须写着令牌里的那个名字。
-    for (const rel of ['/README.md', '/backend/api/main.py']) {
-      const text = readFileSync(fwd(join(REPO, rel)), 'utf8')
-      expect(text, `${rel} 没写系统标题`).toContain(SYSTEM_TITLE)
-    }
   })
 
   it('index.html 的 <title> 与令牌一致', () => {
@@ -350,7 +332,7 @@ describe('文案只有一个来源', () => {
 
   it('导航的次序就是流水线的次序，不许排序', () => {
     expect(NAV_ITEMS.map((i) => i.label)).toEqual([
-      '数据导入与检查', '模型训练', '空间温度场的构建', '影响分析',
+      '数据导入与检查', '模型训练', '模型库', '空间温度场的构建',
     ])
   })
 

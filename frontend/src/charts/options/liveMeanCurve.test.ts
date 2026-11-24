@@ -1,6 +1,5 @@
 /**
- * 沿棚均温那条曲线。**只断它与载荷的对应**，不断画出来的样子
- * （那由 `EChart.test.ts` 与页③ 那一组兜着）。
+ * 垂直均温曲线。验证高度坐标和后端汇总数据的对应关系。
  */
 import { describe, expect, it } from 'vitest'
 
@@ -16,24 +15,40 @@ const P: Palette = {
   chartAxis: 12, chartTitle: 14,
 }
 
-describe('沿棚均温曲线', () => {
-  it('横轴是棚位 y，纵轴是那一片的均温', () => {
+describe('垂直均温曲线', () => {
+  it.each([[-6.18,-5.92],[25.12,25.28],[-.1,.1],[0,0],[30,30]])('纵轴包含 %s 到 %s 的读数并保留可读刻度', (low,high) => {
+    const opt=buildLiveMeanCurveOption(makeVolumePayload({height_profile:[{z:0,mean:low},{z:1,mean:high}]}),P) as {
+      yAxis:{min:number;max:number;interval:number;axisLabel:{showMinLabel:boolean;showMaxLabel:boolean;formatter:(v:number)=>string}}
+    }
+    const axis=opt.yAxis
+    expect(axis.min).toBeLessThan(low)
+    expect(axis.max).toBeGreaterThan(high)
+    expect(axis.max-axis.min).toBeLessThanOrEqual(1)
+    expect(axis.interval).toBeGreaterThan(0)
+    expect(axis.axisLabel.showMinLabel&&axis.axisLabel.showMaxLabel).toBe(true)
+    expect(axis.axisLabel.formatter(-0)).toBe('0')
+  })
+  it('横轴是距地高度，纵轴是后端给出的同高度均温', () => {
     const payload = makeVolumePayload()
     const opt = buildLiveMeanCurveOption(payload, P) as {
       series: { data: [number, number | null][] }[]
+      xAxis: {min:number;max:number;name:string}
     }
-    expect(opt.series[0].data).toEqual(payload.planes.map((p) => [p.y, p.mean]))
+    expect(opt.series[0].data).toEqual(payload.height_profile!.map(p => [p.z, p.mean]))
+    expect(opt.xAxis.min).toBe(payload.z[0])
+    expect(opt.xAxis.max).toBe(payload.z_max)
+    expect(opt.xAxis.name).toBe('距地高度 (m)')
   })
 
   it('缺数的片原样传 null，不许折成 0', () => {
     // 折成 0 会画出一条贴着底的假线；删掉则两端被直接连起来、跨过一段
     // 本来「无定义」的棚位。两种都不报错，都只是让人看错。
     const payload = makeVolumePayload()
-    payload.planes[1].mean = null
+    payload.height_profile![1].mean = null
     const opt = buildLiveMeanCurveOption(payload, P) as {
       series: { data: [number, number | null][]; connectNulls: boolean }[]
     }
-    expect(opt.series[0].data[1]).toEqual([payload.planes[1].y, null])
+    expect(opt.series[0].data[1]).toEqual([payload.height_profile![1].z, null])
     expect(opt.series[0].connectNulls, '跨过 null 把两端连起来了').toBe(false)
   })
 
@@ -46,9 +61,14 @@ describe('沿棚均温曲线', () => {
     expect(opt.xAxis.axisLabel.fontSize).toBe(P.chartAxis)
     expect(opt.yAxis.axisLabel.color).toBe(P.inkMuted)
     expect(opt.visualMap.inRange.color.length).toBeGreaterThan(2)
-    const means = makeVolumePayload().planes.flatMap(plane => plane.mean == null ? [] : [plane.mean])
+    const means = makeVolumePayload().height_profile!.flatMap(point => point.mean == null ? [] : [point.mean])
     expect(opt.visualMap.min).toBe(Math.min(...means))
     expect(opt.visualMap.max).toBeGreaterThan(opt.visualMap.min)
+  })
+
+  it('旧载荷缺少高度数据时不把沿棚长数据画成高度', () => {
+    const opt=buildLiveMeanCurveOption(makeVolumePayload({height_profile:undefined}),P) as {series:{data:unknown[]}[]}
+    expect(opt.series[0].data).toEqual([])
   })
 
   it('线加粗、补一块面积底 —— 深底上细线读不出形状', () => {

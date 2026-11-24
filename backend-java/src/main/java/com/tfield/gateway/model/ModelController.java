@@ -7,6 +7,8 @@ import com.tfield.gateway.training.TrainingJob;
 import com.tfield.gateway.training.TrainingRepository;
 import com.tfield.gateway.training.TrainingService;
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -67,5 +69,32 @@ public class ModelController {
             number = Long.parseLong(id);
         } catch (NumberFormatException ex) { throw new DatasetApiException(422, "模型编号无效。"); }
         try (var ignored = coordinator.acquire()) { return models.select(number); }
+    }
+
+    @PostMapping("/api/models/{id}/rename")
+    public Map<String, Object> rename(@PathVariable long id, @RequestBody JsonNode body) {
+        if (id <= 0 || body == null || !body.path("name").isTextual())
+            throw new DatasetApiException(422, "请填写有效的模型编号和名称。");
+        String name = body.path("name").asText().strip();
+        if (name.isEmpty() || name.codePointCount(0, name.length()) > 120)
+            throw new DatasetApiException(422, "模型名称需为 1 至 120 个字。");
+        try (var ignored = coordinator.acquire()) { return models.rename(id, name); }
+    }
+
+    @PostMapping("/api/models/batch-delete")
+    public Map<String, Object> delete(@RequestBody JsonNode body) {
+        JsonNode values = body == null ? null : body.get("ids");
+        if (values == null || !values.isArray() || values.isEmpty() || values.size() > 100)
+            throw new DatasetApiException(422, "请选择 1 至 100 个模型。");
+        List<Long> ids = new ArrayList<>();
+        for (JsonNode value : values) {
+            if (!value.isIntegralNumber() || !value.canConvertToLong() || value.longValue() <= 0)
+                throw new DatasetApiException(422, "模型编号无效。");
+            if (!ids.contains(value.longValue())) ids.add(value.longValue());
+        }
+        try (var ignored = coordinator.acquire()) {
+            models.delete(ids);
+            return Map.of("deleted", ids);
+        }
     }
 }

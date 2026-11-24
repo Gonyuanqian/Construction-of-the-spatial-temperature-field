@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from tfield.data.loader import dataset_signature
 
-from .. import deps, jobs, uploads, managed_training
+from .. import deps, jobs, uploads, managed_training, weather_training
 from ..dataset_context import DatasetContextError, dataset_file, require_internal, verify_file
 
 router = APIRouter(prefix="/datasets", include_in_schema=False)
@@ -73,7 +73,7 @@ def activity(request: Request) -> dict:
     require_internal(request.headers)
     job = jobs.current()
     return {"training_running": (job is not None and job.state == jobs.RUNNING)
-            or managed_training.running() is not None}
+            or managed_training.running() is not None or weather_training.active()}
 
 
 @router.post("/adopt-current")

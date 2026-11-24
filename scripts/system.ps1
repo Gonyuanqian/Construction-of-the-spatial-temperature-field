@@ -55,6 +55,17 @@ function Owned-Process($Item) {
     return $process
 }
 function Api([string]$Url) { Invoke-RestMethod -Uri $Url -TimeoutSec 5 }
+function Internal-Headers {
+    $key=[Environment]::GetEnvironmentVariable('TFIELD_INTERNAL_TOKEN','Process')
+    if (-not $key) {
+        $keyFile=[Environment]::GetEnvironmentVariable('TFIELD_INTERNAL_TOKEN_FILE','Process')
+        if (-not $keyFile) { $keyFile=Join-Path $local 'service-token' }
+        if (-not (Test-Path -LiteralPath $keyFile)) { throw '内部服务凭据文件不存在。' }
+        $key=(Get-Content -LiteralPath $keyFile -Raw -Encoding UTF8).Trim()
+    }
+    if (-not $key) { throw '内部服务凭据为空。' }
+    return @{'X-TField-Internal-Key'=$key}
+}
 function Show-Status {
     $record=Read-Record
     if (-not $record) { Write-Output '没有由统一入口管理的服务。'; return }
@@ -72,12 +83,31 @@ function Stop-System {
     foreach ($item in $record.services) { $null=Owned-Process $item }
     if (-not $Force) {
         try {
-            $calibration=Api ($record.url+'/api/calibration')
-            if ($calibration.job.state -eq 'running') { throw '仍有训练任务，请先完成或取消训练。' }
-            $live=Api ($record.url+'/api/live/status')
+            if (([uri]$record.url).Host -notin @('127.0.0.1','localhost','::1')) { throw '本机停止入口仅接受回环地址。' }
+            $internal=$true
+            $headers=Internal-Headers
+            try {
+                $operations=Invoke-RestMethod -Uri ($record.url+'/internal/v1/operations/state') -Headers $headers -TimeoutSec 15
+                if ($operations.protocol_version -ne 1) { throw '停止检查协议不匹配。' }
+                if ($operations.training_running) { throw '仍有训练任务，请先完成或取消训练。' }
+                if ($operations.weather_constructing) { throw '气象温度场仍在构建，请等待构场结束后再停止服务。' }
+                $live=$operations.live
+            } catch {
+                $code=0
+                if ($_.Exception.Response) { $code=[int]$_.Exception.Response.StatusCode }
+                if ($code -notin @(404,405)) { throw }
+                # 仅旧版本不存在内部运维接口时，使用原来那套停止检查。
+                $internal=$false
+                $calibration=Api ($record.url+'/api/calibration')
+                if ($calibration.job.state -eq 'running') { throw '仍有训练任务，请先完成或取消训练。' }
+                $live=Api ($record.url+'/api/live/status')
+            }
             if ($live.pending_session_id -or $live.preparing) { throw '实时准备尚未完成，请先确认准备结果。' }
             if ($live.running) {
-                $null=Invoke-RestMethod -Uri ($record.url+'/api/live/pause') -Method Post -Headers @{'Idempotency-Key'=[guid]::NewGuid().ToString();'X-TField-Expected-Session'=$live.session_id} -TimeoutSec 30
+                $pauseHeaders=@{'Idempotency-Key'=[guid]::NewGuid().ToString();'X-TField-Expected-Session'=$live.session_id}
+                $pausePath='/api/live/pause'
+                if ($internal) { $pauseHeaders['X-TField-Internal-Key']=$headers['X-TField-Internal-Key']; $pausePath='/internal/v1/operations/live/pause' }
+                $null=Invoke-RestMethod -Uri ($record.url+$pausePath) -Method Post -Headers $pauseHeaders -TimeoutSec 30
             }
         } catch { throw ('停止前未能确认业务状态：'+$_.Exception.Message+' 若服务已失联，可显式使用 -Force 中断进程。') }
     }
@@ -148,6 +178,11 @@ try {
     Default-Env 'TFIELD_DATASET_STORAGE_ROOT' (Join-Path $project 'backend/configs/datasets')
     Default-Env 'TFIELD_TRAINING_ROOT' (Join-Path $project 'backend/configs/training-jobs')
     Default-Env 'TFIELD_LIVE_SESSION_ROOT' (Join-Path $project 'backend/configs/live-sessions')
+    Default-Env 'TFIELD_WEATHER_MODEL_ROOT' (Join-Path $project 'backend/configs/weather-models')
+    Default-Env 'TFIELD_WEATHER_TRAINING_ROOT' (Join-Path $project 'backend/configs/weather-training')
+    Default-Env 'TFIELD_WEATHER_RESULT_ROOT' (Join-Path $project 'backend/configs/weather-results')
+    Default-Env 'TFIELD_QWEATHER_CONFIG_FILE' (Join-Path $local 'qweather.local.json')
+    Default-Env 'TFIELD_ASSISTANT_STATE_ROOT' (Join-Path $local 'assistant')
     Default-Env 'TFIELD_LIVE_SOURCE_ROOT' (Join-Path $project 'backend/configs/live')
     Default-Env 'TFIELD_INTERNAL_TOKEN_FILE' (Join-Path $local 'service-token')
     $env:TFIELD_PYTHON_URL="http://127.0.0.1:$pythonPort"

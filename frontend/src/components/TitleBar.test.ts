@@ -1,10 +1,13 @@
+import { beforeEach as beforeAuthCase } from 'vitest'
+import { loginAs } from '../test/authFixture'
+beforeAuthCase(() => loginAs())
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory } from 'vue-router'
 
 import TitleBar from './TitleBar.vue'
 import { createAppRouter } from '../router'
-import { MODELS, SYSTEM_TITLE } from '../design/copy'
+import { SYSTEM_TITLE } from '../design/copy'
 
 // 名字从 copy.ts 取，不在这里抄一遍 —— `guards.test.ts` 有一条守卫扫全仓，
 // 标题字面量只允许出现在 copy.ts 与 index.html 两处。
@@ -79,18 +82,19 @@ describe('标题条', () => {
     expect(w.find('.backend').exists()).toBe(true)
   })
 
-  it('实时顶栏保留模型库快捷入口，训练顶栏使用导航入口', async () => {
+  it('管理员从右上角进入开发者后台，并从后台返回用户视图', async () => {
     stubHealth(true)
     const w = await mountAt('/live')
-    const link = w.get('a.to-models')
-    expect(link.attributes('href')).toBe('/models')
+    const link = w.get('a.workspace-entry')
+    expect(link.attributes('href')).toBe('/data')
     // ⚠️ 断言的是**可访问名**，不是渲染文本：图标对读屏是隐形的
     // （`aria-hidden="true"`），名字挂在链接的 `aria-label` 上 —— 而
     // `wrapper.text()` **读不到 `aria-label`**。写成
     // `expect(w.text()).toContain(MODELS.entry)` 是一条永远红的断言。
-    expect(link.attributes('aria-label')).toBe(MODELS.entry)
+    expect(link.text()).toBe('开发者后台')
     const train = await mountAt('/data')
-    expect(train.find('a.to-models').exists()).toBe(false)
+    expect(train.get('a.workspace-entry').attributes('href')).toBe('/live')
+    expect(train.get('a.workspace-entry').text()).toBe('返回用户视图')
   })
 
   it('图标画的是形状，用 currentColor 上色', async () => {
@@ -98,9 +102,16 @@ describe('标题条', () => {
     // 那条全仓守卫）。图标走 `currentColor` 就意味着页面上换主题它跟着换。
     stubHealth(true)
     const w = await mountAt('/live')
-    const svg = w.get('a.to-models svg')
+    const svg = w.get('a.workspace-entry svg')
     expect(svg.attributes('stroke')).toBe('currentColor')
     expect(svg.attributes('aria-hidden')).toBe('true')
+  })
+
+  it('普通用户不显示开发者后台入口', async () => {
+    loginAs('USER')
+    stubHealth(true)
+    const w = await mountAt('/live')
+    expect(w.find('a.workspace-entry').exists()).toBe(false)
   })
 })
 
@@ -130,7 +141,7 @@ describe('本机挂钟与状态点', () => {
 
     const w = await mountAt('/live')
     await flushPromises()
-    expect(w.text(), '实时那一屏没有本机时间').toContain('14:05')
+    expect(w.text(), '实时那一屏没有系统时间').toContain('14:05')
   })
 
   it('训练侧那四页上没有它', async () => {

@@ -4,6 +4,8 @@ import {
 } from 'vue-router'
 
 import { NAV_ITEMS } from '../design/copy'
+import { homeFor, useAuth } from '../composables/useAuth'
+import { allowed } from './access'
 import DataView from '../views/DataView.vue'
 import FieldView from '../views/FieldView.vue'
 import ModelsView from '../views/ModelsView.vue'
@@ -33,30 +35,50 @@ export function createAppRouter(history?: RouterHistory): Router {
     path: i.to,
     name: i.key,
     component: VIEWS[i.key],
+    meta: { roles: ['ADMIN'], workspace: 'developer' },
   }))
 
-  return createRouter({
+  const router = createRouter({
     history: history ?? createWebHistory(),
     routes: [
       ...routes,
-      // 实时模式**不进 `NAV_ITEMS`**：它的左栏是另一份清单（`LIVE_NAV_ITEMS`），
-      // 而 `NAV_ITEMS` 那一份被 `App.test.ts` 按「<a> 精确等于已开放项」钉着。
-      // 它也不像上面那几页那样从 `NAV_ITEMS` 生成 —— 所以必须显式写一条，
-      // 否则会被下面的兜底 `/:rest(.*)*` 吃掉，`/live` 直接落回页①。
+      // 所有角色共用用户视图，训练和开发工具通过独立管理员路由开放。
       {
         path: '/live',
         name: 'live',
         // 懒加载：实时模式那一屏（含三维）不该进首屏。
         component: () => import('../views/LiveView.vue'),
+        meta: { roles: ['ADMIN', 'USER'], workspace: 'user', theme: 'live' },
       },
       // 列表路由由训练导航生成；详情沿用同一个工作台组件。
-      { path: '/models/:id', name: 'model-detail', component: ModelsView },
-      // `/` 与认不出的路径都落回页①：演示时最怕的是白屏，
-      // 一个回到起点的跳转至少还看得见东西。
-      { path: '/', redirect: '/data' },
-      { path: '/:rest(.*)*', redirect: '/data' },
+      { path: '/models/:id', name: 'model-detail', component: ModelsView, meta: { roles: ['ADMIN'], workspace: 'developer' } },
+      { path: '/replay', redirect: '/live' },
+      { path: '/developer/live', redirect: '/live' },
+      { path: '/assistant', name: 'assistant', component: () => import('../views/AssistantView.vue'), meta: { roles: ['ADMIN', 'USER'], workspace: 'user', theme: 'live' } },
+      { path: '/greenhouse-design', name: 'greenhouse-design', component: () => import('../views/GreenhouseDesignView.vue'), meta: { roles: ['ADMIN', 'USER'], workspace: 'user', theme: 'live' } },
+      { path: '/greenhouse-control', name: 'greenhouse-control', component: () => import('../views/GreenhouseControlView.vue'), meta: { roles: ['ADMIN', 'USER'], workspace: 'user', theme: 'live' } },
+      { path: '/alert-log', name: 'alert-log', component: () => import('../views/AlertLogView.vue'), meta: { roles: ['ADMIN', 'USER'], workspace: 'user', theme: 'live' } },
+      { path: '/assistant/field/:snapshotId', name: 'assistant-field', component: () => import('../views/AssistantFieldView.vue'), meta: { roles: ['ADMIN', 'USER'], workspace: 'user', theme: 'live' } },
+      { path: '/login', name: 'login', component: () => import('../views/LoginView.vue'), meta: { public: true } },
+      { path: '/account', name: 'account', component: () => import('../views/AccountView.vue'), meta: { roles: ['ADMIN', 'USER'], workspace: 'user' } },
+      { path: '/admin/users', name: 'users', component: () => import('../views/UsersView.vue'), meta: { roles: ['ADMIN'], workspace: 'developer' } },
+      { path: '/admin/greenhouses', name: 'greenhouses', component: () => import('../views/GreenhousesView.vue'), meta: { roles: ['ADMIN'], workspace: 'developer' } },
+      { path: '/monitor', redirect: '/live' },
+      // 系统首页和未知地址统一回到用户视图。
+      { path: '/', redirect: '/live' },
+      { path: '/:rest(.*)*', redirect: '/live' },
     ],
   })
+  router.beforeEach(async to => {
+    const auth = useAuth()
+    if (!auth.user.value && auth.token.value && auth.phase.value !== 'error') await auth.restore()
+    if (to.meta.public) return auth.user.value ? homeFor(auth.user.value.role) : true
+    const account = auth.user.value
+    if (!account) return { path: '/login', query: { redirect: to.fullPath } }
+    if (!allowed(to, account.role)) return homeFor(account.role)
+    return true
+  })
+  return router
 }
 
 export default createAppRouter()

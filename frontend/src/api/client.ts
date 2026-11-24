@@ -4,6 +4,7 @@
  * 图表组件不许自己 fetch：取数集中在页面/store，图表只负责画。
  */
 import type { UploadResult } from './types'
+import { clearSession, session } from './session'
 
 export class ApiError extends Error {
   readonly status: number
@@ -21,6 +22,26 @@ export class ApiError extends Error {
 //: 扫四个视图的 template、`NoDataset.test.ts` 与 `routes.smoke.test.ts` 各扫
 //: 自己那一片），而这句话是在这个文件里拼好、由页面原样上屏的 —— 三块都不覆盖它。
 const OFFLINE = '连不上后端。确认服务已经启动'
+
+/** Shared by JSON, binary uploads and SSE. Never put credentials into URLs. */
+export async function authFetch(path: string, init?: RequestInit): Promise<Response> {
+  const captured = session.token.value
+  const revision = session.revision.value
+  const login = path.split('?')[0] === '/api/auth/login'
+  let request = init
+  if (captured && !login && path.startsWith('/api/')) {
+    const original = init?.headers
+    const headers: Record<string, string> = original instanceof Headers ? Object.fromEntries(original.entries())
+      : Array.isArray(original) ? Object.fromEntries(original) : { ...original }
+    for (const key of Object.keys(headers)) if (key.toLowerCase() === 'authorization') delete headers[key]
+    headers.Authorization = `Bearer ${captured}`
+    request = { ...init, headers }
+  }
+  const response = await fetch(path, request)
+  if (!login && captured && revision !== session.revision.value) throw new ApiError('登录身份已变更，请重新操作。', 401)
+  if (response.status === 401 && !login && captured === session.token.value && captured) clearSession('登录已失效，请重新登录。')
+  return response
+}
 
 /**
  * 后端的报错在 `detail` 里，原样透出来，别吞掉。
@@ -42,16 +63,24 @@ async function asError(res: Response): Promise<ApiError> {
   return new ApiError(detail, res.status, jobId)
 }
 
+async function readJson<T>(response: Response, revision: number): Promise<T> {
+  const value = await response.json() as T
+  if (revision !== session.revision.value) throw new ApiError('登录身份已变更，请重新操作。', 401)
+  return value
+}
+
 export async function getJson<T>(path: string): Promise<T> {
+  const revision = session.revision.value
   let res: Response
   try {
-    res = await fetch(path)
-  } catch {
+    res = await authFetch(path)
+  } catch (e) {
+    if (e instanceof ApiError) throw e
     // 浏览器原话是 "Failed to fetch"，对新用户毫无信息量。
     throw new ApiError(OFFLINE, 0)
   }
   if (!res.ok) throw await asError(res)
-  return (await res.json()) as T
+  return readJson<T>(res, revision)
 }
 
 /**
@@ -68,20 +97,22 @@ export async function getJson<T>(path: string): Promise<T> {
  */
 export async function postJson<T>(path: string, body?: unknown,
                                   headers?: Record<string, string>): Promise<T> {
+  const revision = session.revision.value
   let res: Response
   try {
-    res = await fetch(path, body === undefined
+    res = await authFetch(path, body === undefined
       ? { method: 'POST', ...(headers ? { headers } : {}) }
       : {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...headers },
         body: JSON.stringify(body),
       })
-  } catch {
+  } catch (e) {
+    if (e instanceof ApiError) throw e
     throw new ApiError(OFFLINE, 0)
   }
   if (!res.ok) throw await asError(res)
-  return (await res.json()) as T
+  return readJson<T>(res, revision)
 }
 
 /**
@@ -96,18 +127,20 @@ export async function postJson<T>(path: string, body?: unknown,
  * 而后端**一个都不看** —— 判据是文件名后缀，不是媒体类型。
  */
 export async function uploadDataset(file: File): Promise<UploadResult> {
+  const revision = session.revision.value
   let res: Response
   try {
-    res = await fetch(`/api/dataset/upload?name=${encodeURIComponent(file.name)}`, {
+    res = await authFetch(`/api/dataset/upload?name=${encodeURIComponent(file.name)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/octet-stream' },
       body: file,
     })
-  } catch {
+  } catch (e) {
+    if (e instanceof ApiError) throw e
     throw new ApiError(OFFLINE, 0)
   }
   if (!res.ok) throw await asError(res)
-  return (await res.json()) as UploadResult
+  return readJson<UploadResult>(res, revision)
 }
 
 /**
@@ -118,12 +151,29 @@ export async function uploadDataset(file: File): Promise<UploadResult> {
  * **没有请求体** —— 取消谁由路径上的 id 说了。
  */
 export async function deleteJson<T>(path: string): Promise<T> {
+  const revision = session.revision.value
   let res: Response
   try {
-    res = await fetch(path, { method: 'DELETE' })
-  } catch {
+    res = await authFetch(path, { method: 'DELETE' })
+  } catch (e) {
+    if (e instanceof ApiError) throw e
     throw new ApiError(OFFLINE, 0)
   }
   if (!res.ok) throw await asError(res)
-  return (await res.json()) as T
+  return readJson<T>(res, revision)
+}
+
+export async function writeJson<T>(method: 'PATCH' | 'PUT', path: string, body?: unknown): Promise<T> {
+  const revision = session.revision.value
+  let response: Response
+  try {
+    response = await authFetch(path, { method,
+      ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+    })
+  } catch (e) {
+    if (e instanceof ApiError) throw e
+    throw new ApiError(OFFLINE, 0)
+  }
+  if (!response.ok) throw await asError(response)
+  return readJson<T>(response, revision)
 }

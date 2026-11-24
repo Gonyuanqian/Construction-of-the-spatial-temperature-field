@@ -35,10 +35,14 @@ def main():
     (target/'python-environment.txt').write_text('\n'.join(packages)+'\n', encoding='utf-8')
     files = {p.relative_to(target).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
              for p in sorted(target.rglob('*')) if p.is_file()}
-    commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=project, text=True).strip()
+    commit = None
+    worktree_dirty = None
+    if (project/'.git').exists():
+        commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=project, text=True).strip()
+        worktree_dirty = bool(subprocess.check_output(
+            ['git', 'status', '--porcelain'], cwd=project, text=True).strip())
     manifest = {'version': version, 'built_at': datetime.now(timezone.utc).isoformat(),
-                'source_commit': commit, 'worktree_dirty': bool(subprocess.check_output(
-                    ['git', 'status', '--porcelain'], cwd=project, text=True).strip()), 'sha256': files}
+                'source_commit': commit, 'worktree_dirty': worktree_dirty, 'sha256': files}
     (target/'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
     print(f'部署包：{target}；版本 {version}；{len(files)} 个文件。')
 

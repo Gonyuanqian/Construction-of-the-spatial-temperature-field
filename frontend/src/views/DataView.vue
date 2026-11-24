@@ -280,7 +280,7 @@ const importedLine = computed(() => {
         </Card>
 
         <Card class="block preview-card">
-          <div class="panel-heading"><div class="preview-title"><h3>数据预览</h3><span v-if="previewData" class="row-chip">{{ fmtInt(previewData.n_rows) }} 行</span></div><span class="panel-meta">温度单位：℃</span></div>
+          <div class="panel-heading"><div class="preview-title"><h3>数据预览</h3><span v-if="previewData" class="row-chip">{{ fmtInt(previewData.n_rows) }} 行</span></div><span class="panel-meta">温度：℃，湿度：%，光照：源数据单位</span></div>
           <!-- `reading`：这一行是**读数**（数字为主），不是散文 —— 而且两个数
                都是后端给的。见 `previewLine`。 -->
           <p v-if="previewLine && previewData && previewData.n_rows < previewData.n_times" class="note reading preview-scope">{{ previewLine }}</p>
@@ -337,8 +337,8 @@ const importedLine = computed(() => {
         <p class="note">
           数据预览表给的是这份数据集的开头一段，不是全部，表上方那行写着到底给了
           多少行。表头用的是切面图上那套编号（p1·B3 就是图上那个点），所以并排看
-          图与表读的是同一套名字。湿度、光照与逐格插值标记不进这张表：本系统没有
-          一处读它们，摆进来只是把宽度翻一倍。
+          图与表读的是同一套名字。表头先展示背景温度、背景光照强度和背景湿度，
+          然后展示棚内温度测点。光照沿用源数据单位，棚内湿度与逐格插值标记不在本预览范围。
         </p>
       </details>
     </template>

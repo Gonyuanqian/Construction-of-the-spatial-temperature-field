@@ -32,6 +32,15 @@ spring:
     locations: classpath:db/migration
 
 tfield:
+  qweather:
+    config-file: ${TFIELD_QWEATHER_CONFIG_FILE:}
+    cache-ttl-seconds: ${TFIELD_QWEATHER_CACHE_TTL_SECONDS:900}
+    failure-ttl-seconds: ${TFIELD_QWEATHER_FAILURE_TTL_SECONDS:60}
+    requests-per-minute: ${TFIELD_QWEATHER_REQUESTS_PER_MINUTE:6}
+  weather:
+    default-greenhouse-id: ${TFIELD_AUTOMATIC_GREENHOUSE_ID:}
+    # Demonstration baseline for outdoor horizontal daylight; not a site calibration.
+    light-efficacy-lm-per-w: ${TFIELD_WEATHER_LIGHT_EFFICACY_LM_PER_W:110}
   python:
     base-url: ${TFIELD_PYTHON_URL:http://127.0.0.1:8503}
     connect-timeout: ${TFIELD_PYTHON_CONNECT_TIMEOUT:3s}

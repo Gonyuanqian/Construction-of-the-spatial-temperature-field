@@ -1,0 +1,5 @@
+# Optional local embedding service. Install in a dedicated environment if these are not present.
+-r requirements-api.txt
+torch>=2.5,<3
+transformers==5.5.4
+safetensors>=0.4.3

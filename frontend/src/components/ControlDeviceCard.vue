@@ -1,0 +1,32 @@
+<script setup lang="ts">
+import {computed,ref,watch} from 'vue'
+import Icon from './Icon.vue'
+import type {ControlDevice,ControlParameters,DeviceKind} from '../api/greenhouseControl'
+import {kindLabels,kindIcons,zoneLabel,duration} from '../greenhouse/control'
+const props=defineProps<{kind:DeviceKind;devices:ControlDevice[];blocked:boolean;busy:boolean;focused?:boolean;selectedId?:string|null}>()
+const emit=defineEmits<{start:[device:ControlDevice,parameters:ControlParameters];stop:[device:ControlDevice];settings:[device:ControlDevice|null];select:[device:ControlDevice]}>()
+const selected=ref(''),minutes=ref(10),brightness=ref(60),speed=ref<'low'|'medium'|'high'>('medium')
+const device=computed(()=>props.devices.find(d=>d.id===selected.value)??props.devices[0]??null)
+watch(()=>props.selectedId,id=>{if(id&&props.devices.some(d=>d.id===id))selected.value=id})
+watch(()=>device.value?.id,()=>{selected.value=device.value?.id??'';minutes.value=props.kind==='sprinkler'?5:props.kind==='lighting'?20:10;brightness.value=device.value?.state.brightness_percent??60;speed.value=device.value?.state.speed??'medium'},{immediate:true})
+const canStart=computed(()=>!!device.value?.enabled&&!device.value.state.running&&!props.blocked&&!props.busy&&Number.isFinite(minutes.value)&&minutes.value>0&&minutes.value*60<=device.value.capabilities.max_duration_seconds)
+function start(){if(!device.value||!canStart.value)return;emit('start',device.value,{duration_seconds:Math.round(minutes.value*60),...(props.kind==='lighting'?{brightness_percent:brightness.value}:{}),...(props.kind==='ventilation'?{speed:speed.value}:{})})}
+</script>
+<template>
+ <section class="device-card" :class="{focused,lighting:kind==='lighting'}" :aria-label="kindLabels[kind]">
+  <header><h3><Icon :name="kindIcons[kind]"/>{{kindLabels[kind]}}</h3><span class="device-status" :class="{on:device?.state.running}">{{!device?'未配置':!device.enabled?'已停用':device.state.running?'模拟运行':'已关闭'}}</span><button type="button" class="icon-button" :aria-label="`管理${kindLabels[kind]}`" :disabled="busy" @click="emit('settings',device)"><Icon name="gear"/></button></header>
+  <template v-if="device">
+   <label class="device-picker">控制单元<select v-model="selected" :disabled="busy" @change="device && emit('select',device)"><option v-for="d in devices" :key="d.id" :value="d.id">{{d.name}} · {{zoneLabel(d.zone_key)}}</option></select></label>
+   <label class="duration-input">运行时长<span><input v-model.number="minutes" :aria-label="`${kindLabels[kind]}运行分钟`" type="number" min=".1" :max="device.capabilities.max_duration_seconds/60" step=".1" :disabled="busy||device.state.running"><span>分钟</span></span></label>
+   <div v-if="kind==='ventilation'" class="device-option"><span>风速</span><div class="speed-buttons"><button v-for="(label,key) in {low:'低',medium:'中',high:'高'}" :key="key" :class="{chosen:speed===key}" :aria-pressed="speed===key" :disabled="busy||device.state.running" @click="speed=key">{{label}}</button></div></div>
+   <label v-if="kind==='lighting'" class="device-option">亮度<input v-model.number="brightness" aria-label="补光亮度" type="range" min="1" max="100" step="1" :disabled="busy||device.state.running"><output>{{brightness}}%</output></label>
+   <div class="device-actions"><button class="primary" :disabled="!canStart" @click="start"><Icon name="play"/>启动</button><button :disabled="busy||!device.state.running" @click="emit('stop',device)"><span class="stop-symbol"/>停止</button></div>
+   <footer>{{device.state.running?'本次运行 '+duration(device.running_seconds):'今日累计 '+duration(device.today_runtime_seconds)}}</footer>
+  </template>
+  <div v-else class="device-empty"><p>还没有此类控制单元</p><button :disabled="busy||blocked" @click="emit('settings',null)"><Icon name="plus"/>添加设备</button></div>
+ </section>
+</template>
+<style scoped>
+.device-card{padding:16px;min-width:0;display:flex;flex-direction:column;gap:13px;border:1px solid var(--edge-line);border-radius:7px;background:var(--card);transition:border-color .15s}.device-card.focused{border-color:var(--edge)}header{display:flex;align-items:center;gap:6px;margin-bottom:3px}h3{display:flex;align-items:center;gap:9px;margin:0;font-size:17px;white-space:nowrap;flex:1}h3 svg{width:25px;height:25px;color:var(--edge)}.lighting h3 svg{color:var(--control-amber)}.device-status{font-size:11px;color:var(--ink-muted);white-space:nowrap}.device-status:before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;margin-right:4px}.device-status.on{color:var(--edge)}.lighting .device-status.on{color:var(--control-amber)}.icon-button{padding:3px!important;border:0!important;background:none!important;color:var(--ink-muted)!important}.icon-button svg{width:16px;height:16px}.device-picker,.duration-input,.device-option{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px;color:var(--ink-muted)}select{min-width:0;width:65%;font-size:12px}.duration-input>span{display:flex;align-items:center;gap:7px}.duration-input input{width:76px;padding:5px 8px}.speed-buttons{display:flex}.speed-buttons button{padding:5px 12px;border-radius:0;font-size:13px}.speed-buttons button:first-child{border-radius:4px 0 0 4px}.speed-buttons button:last-child{border-radius:0 4px 4px 0}.speed-buttons .chosen{background:var(--nav-blue);color:var(--on-face);border-color:var(--nav-blue)}.device-option input[type=range]{width:45%;padding:0;accent-color:var(--edge)}.device-option output{min-width:34px;font-size:12px;color:var(--ink)}.device-actions{display:flex;gap:10px;margin-top:auto}.device-actions button{flex:1;display:flex;gap:7px;align-items:center;justify-content:center}.device-actions svg{width:15px;height:15px}.stop-symbol{width:10px;height:10px;display:inline-block;border:1px solid currentColor}footer{font-size:11px;color:var(--ink-muted);border-top:1px solid var(--edge-line);padding-top:9px}.device-empty{flex:1;display:grid;place-content:center;gap:8px;text-align:center}.device-empty p{color:var(--ink-muted);font-size:13px}
+button,select,input{font:inherit;color:var(--ink);background:var(--card-2);border:1px solid var(--steel);border-radius:5px;padding:7px 10px;box-sizing:border-box}button{cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.primary{background:var(--edge);color:var(--paper);border-color:var(--edge)}button svg{width:16px;height:16px}input:focus-visible,button:focus-visible,select:focus-visible{outline:2px solid var(--edge);outline-offset:2px}
+</style>

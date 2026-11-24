@@ -27,6 +27,9 @@ export interface HoverPick {
   planeIndex: number
   ix: number
   iz: number
+  /** 新连续选点保留真实坐标；旧切片下标仍兼容。 */
+  position?: [number, number, number]
+  method?: 'volume' | 'slice'
 }
 
 /**
@@ -79,5 +82,5 @@ export function solveHover(hits: HoverHit[], xs: number[], zs: number[]): HoverP
 export function markerPoint(
   payload: VolumePayload, pick: HoverPick,
 ): [number, number, number] {
-  return [payload.x[pick.ix], payload.planes[pick.planeIndex].y, payload.z[pick.iz]]
+  return pick.position ?? [payload.x[pick.ix], payload.planes[pick.planeIndex].y, payload.z[pick.iz]]
 }

@@ -147,6 +147,11 @@ vi.mock('three', () => {
     ExtrudeGeometry, EdgesGeometry, PlaneGeometry, SphereGeometry, DataTexture, Color,
     Vector2: Vec,
     Vector3: Vec,
+    // This fixture checks rebuilt shells and leaves camera framing to the fit tests.
+    Box3: class {
+      setFromObject() { return this }
+      isEmpty() { return true }
+    },
     PerspectiveCamera: class extends Node {
       aspect = 1
       updateProjectionMatrix() {}

@@ -1,0 +1,52 @@
+{
+  "checked_at": "2026-10-30",
+  "method": "Crossref official works API plus publisher/institution text review",
+  "limitation": "No update metadata is not proof of absence of retraction or correction",
+  "records": [
+    {
+      "doi": "10.3390/s19010060",
+      "http_status": 200,
+      "title": [
+        "Implementation of Virtual Sensors for Monitoring Temperature in Greenhouses Using CFD and Control"
+      ],
+      "update_to": null,
+      "relations": {}
+    },
+    {
+      "doi": "10.1016/j.solener.2019.08.042",
+      "http_status": 200,
+      "title": [
+        "Review on greenhouse microclimate and application: Design parameters, thermal modeling and simulation, climate controlling technologies"
+      ],
+      "update_to": null,
+      "relations": {}
+    },
+    {
+      "doi": "10.4081/jae.2026.1971",
+      "http_status": 200,
+      "title": [
+        "Analysis of temperature distribution in a naturally ventilated single-span greenhouse using computational fluid dynamics"
+      ],
+      "update_to": null,
+      "relations": {}
+    },
+    {
+      "doi": "10.3390/s25051388",
+      "http_status": 200,
+      "title": [
+        "A Review of Environmental Control Strategies and Models for Modern Agricultural Greenhouses"
+      ],
+      "update_to": null,
+      "relations": {}
+    },
+    {
+      "doi": "10.1155/2020/8874468",
+      "http_status": 200,
+      "title": [
+        "Computational Fluid Dynamics-Based Simulation of Crop Canopy Temperature and Humidity in Double-Film Solar Greenhouse"
+      ],
+      "update_to": null,
+      "relations": {}
+    }
+  ]
+}

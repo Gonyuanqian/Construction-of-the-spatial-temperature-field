@@ -18,6 +18,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
 
+/** Historical file replay only; public monitoring uses WeatherLiveService. */
 @Service
 public class LiveService {
     private static final Logger LOG = LoggerFactory.getLogger(LiveService.class);
@@ -231,12 +232,19 @@ public class LiveService {
         }
     }
     public JsonNode frame(int n, boolean volume, String query, String expected) {
+        return readFrame(n, volume ? "volume" : "frame", query, expected);
+    }
+    public JsonNode point(int n, String query, String expected) {
+        return readFrame(n, "point", query, expected);
+    }
+    private JsonNode readFrame(int n, String kind, String query, String expected) {
+        // 帧、体网格和连续点查询共用会话锁、绑定模型与游标检查。
         try (var ignored = coordinator.acquire()) {
             LiveSession session = sessions.current().orElseThrow(() -> new DatasetApiException(400, "实时源还没准备好，先准备实时源。"));
             expected(session, expected);
             session = refresh(session);
             if (!session.state().equals("ready")) { throw new DatasetApiException(409, "实时会话需要恢复，请先准备实时源。"); }
-            JsonNode payload = python.call("GET", "/api/live/" + (volume ? "volume/" : "frame/") + n
+            JsonNode payload = python.call("GET", "/api/live/" + kind + "/" + n
                     + (query == null ? "" : "?" + query), null, context(session), false, true,
                     Map.of("X-TField-Live-Session-Id", session.id()));
             ObjectNode snapshot = mapper.createObjectNode();
@@ -248,6 +256,18 @@ public class LiveService {
             sessions.observe(session.id(), snapshot, false);
             ((ObjectNode) payload.path("live")).put("session_id", session.id());
             return payload;
+        }
+    }
+    public JsonNode assistantSnapshot(Map<String, Object> body) {
+        try (var ignored = coordinator.acquire()) {
+            LiveSession session = sessions.current().orElseThrow(() ->
+                    new DatasetApiException(409, "请先在实时监测中准备数据。"));
+            session = refresh(session);
+            if (!session.state().equals("ready")) {
+                throw new DatasetApiException(409, "实时会话需要恢复，请先准备实时源。");
+            }
+            return python.call("POST", "/internal/v1/assistant/snapshots", body,
+                    context(session), false, true, Map.of("X-TField-Live-Session-Id", session.id()));
         }
     }
     private void reconcilePreparation() {

@@ -7,6 +7,7 @@ import com.tfield.gateway.config.PythonServiceProperties;
 import com.tfield.gateway.dataset.DatasetApiException;
 import com.tfield.gateway.dataset.DatasetStorage;
 import java.util.Map;
+import java.io.OutputStream;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpMethod;
@@ -33,9 +34,32 @@ public class PythonBusinessClient {
             ComputeContextProvider.Snapshot context, boolean dataset, boolean slow) {
         return call(method, path, body, context, dataset, slow, Map.of());
     }
+
+    /** Copy SSE incrementally; do not pass through the JSON response buffer. */
+    public void stream(String path, OutputStream output) {
+        stream(path,output,Map.of());
+    }
+    public void stream(String path,OutputStream output,Map<String,String> headers) {
+        var request=compute.get().uri(properties.baseUrl().resolve(path))
+                .header("X-TField-Internal-Key", storage.internalKey())
+                .header("Accept", "text/event-stream");
+        headers.forEach(request::header);
+        request.exchange((sent, response) -> {
+                    if (!response.getStatusCode().is2xxSuccessful()) {
+                        throw new DatasetApiException(502, "会话事件流暂时不可用，请重新连接。");
+                    }
+                    byte[] buffer = new byte[8192];
+                    int length;
+                    while ((length = response.getBody().read(buffer)) != -1) {
+                        output.write(buffer, 0, length);
+                        output.flush();
+                    }
+                    return null;
+                });
+    }
     public JsonNode call(String method, String path, Map<String, Object> body,
             ComputeContextProvider.Snapshot context, boolean dataset, boolean slow, Map<String, String> headers) {
-        RestClient selected = slow ? compute : path.startsWith("/internal/v1/") ? control : client;
+        RestClient selected = slow ? compute : path.equals("/internal/v1/assistant/control-plans") ? client : path.startsWith("/internal/v1/") ? control : client;
         RestClient.RequestBodySpec request = selected.method(HttpMethod.valueOf(method))
                 .uri(properties.baseUrl().resolve(path)).header("X-TField-Internal-Key", storage.internalKey());
         String trace = MDC.get("request_id");

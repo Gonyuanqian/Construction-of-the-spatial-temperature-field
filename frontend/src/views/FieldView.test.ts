@@ -1,3 +1,6 @@
+import { beforeEach as beforeAuthCase } from 'vitest'
+import { loginAs } from '../test/authFixture'
+beforeAuthCase(() => loginAs())
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory } from 'vue-router'

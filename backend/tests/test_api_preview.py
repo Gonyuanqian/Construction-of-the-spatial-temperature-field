@@ -83,7 +83,8 @@ def test_列是背景加二十四个测点(client):
     b = _preview(client)
     labels = [c["label"] for c in b["columns"]]
     assert labels[0] == "背景温度"
-    assert labels[1:] == [f"{s}·B{i}" for s in C.SHED_ORDER for i in range(1, 9)]
+    assert labels[:3] == ['背景温度', '背景光照强度', '背景湿度']
+    assert labels[3:] == [f"{s}·B{i}" for s in C.SHED_ORDER for i in range(1, 9)]
 
 
 def test_列标签与数据集的测点编号同源(client):
@@ -93,7 +94,7 @@ def test_列标签与数据集的测点编号同源(client):
     这件事的唯一保障。
     """
     codes = client.get("/api/dataset").json()["point_codes"]
-    for c in _preview(client)["columns"][1:]:
+    for c in _preview(client)["columns"][3:]:
         shed = c["key"].split("_", 1)[0]
         pos = c["key"][len(shed) + 1: -len(f"_{C.VAR_TEMP}")]
         assert c["label"] == f"{shed}·{codes[pos]}", c
@@ -109,14 +110,13 @@ def test_列名是宽表里的列名_不是另起一套(client, xlsx):
         assert c["key"] in xlsx.columns, c
 
 
-def test_湿度与光照不进表(client):
-    """本系统没有一处读湿度与光照。
-
-    摆进来是 25 列变 49 列 —— 宽度翻倍，读到的东西不变。
-    """
+def test_外部湿度与光照展示原始值和量纲_棚内湿度不扩展(client):
     keys = {c["key"] for c in _preview(client)["columns"]}
-    assert C.BG_LIGHT not in keys
-    assert not any(k.endswith(f"_{C.VAR_RH}") for k in keys)
+    assert C.BG_LIGHT in keys and C.BG_RH in keys
+    assert not any(k.startswith('p') and k.endswith(f"_{C.VAR_RH}") for k in keys)
+    columns = {c['key']:c for c in _preview(client)['columns']}
+    assert columns[C.BG_RH]['unit'] == '%'
+    assert columns[C.BG_LIGHT]['unit'] == '源数据单位'
 
 
 # ── 行数：截断与它的边界 ──

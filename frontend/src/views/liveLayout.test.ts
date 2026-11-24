@@ -23,16 +23,15 @@ const read = (rel: string): string => readFileSync(join(SRC, rel), 'utf8')
 
 describe('页⑤ 的版面钩子', () => {
   it('外壳在 /live 上开第三列，且落点由外壳自己渲染', () => {
-    const app = read('App.vue')
+    const app = read('components/AuthenticatedShell.vue')
     expect(app).toContain('id="shell-side"')
-    expect(app, '落点没有只在实时那一档上').toMatch(/v-if="isLive"\s+id="shell-side"/)
-    expect(app, '实时模式开关没有移到左侧导航区').toMatch(/class="live-nav-stack"[^>]*>[\s\S]*?<ModeSwitch v-model="mode"\s*\/>/)
+    expect(app, '实时监测保留右栏落点').toMatch(/v-if="isLive && !isAssistantChat"\s+id="shell-side"/)
     // 三列是栅格，不是 flex —— 后者的第三列会跟着内容漂。
     expect(app).toMatch(/\.body\.live\s*\{[^}]*display:\s*grid/)
   })
 
   it('三条断点都在，且窄屏是「落到下方」不是「挤在一起」', () => {
-    const app = read('App.vue')
+    const app = read('components/AuthenticatedShell.vue')
     expect(app, '缺 1200–1440 那一条').toMatch(/max-width:\s*1439px/)
     expect(app, '缺 < 1200 那一条').toMatch(/max-width:\s*1199px/)
     // 中列不许写成 `1fr`：格子的下限会变成内容宽度，画布把页宽撑破。
@@ -82,7 +81,7 @@ describe('页⑤ 的版面钩子', () => {
     // ⚠️ 这条守的是**挂钩点在不在**，不是效果。1280 / 1512 / 2560 下到底
     // 同不同屏、三维缩到多矮，一条都不在这里 —— 与文件头说的一样，
     // 那些必须人眼看。
-    const app = read('App.vue')
+    const app = read('components/AuthenticatedShell.vue')
     expect(app, '实时那一档的中栏没有摆成竖排的列')
       .toMatch(/\.body\.live\s*>\s*\.page\s*\{[^}]*display:\s*flex/)
     // ⚠️ 反面：滚动那条**不许跟着撤** —— 窗口不够高时它是唯一的退路。

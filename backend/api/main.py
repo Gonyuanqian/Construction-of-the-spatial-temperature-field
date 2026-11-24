@@ -25,9 +25,11 @@ from tfield.calibration import TOOL_VERSION
 from . import deps, paths, uploads
 from .errors import LIVE_SOURCE_MISSING_DETAIL, NO_DATASET_DETAIL, NoDatasetError
 from .request_logging import RequestLoggingMiddleware
+from .compute_boundary import ComputeBoundaryMiddleware
 from .dataset_context import DatasetContextError, DatasetContextMiddleware
 from .model_context import ModelContextMiddleware
 from . import managed_training
+from . import weather_training
 from . import managed_live
 from .managed_live import LiveContextMiddleware
 from .routes import calibration as calibration_routes
@@ -40,6 +42,8 @@ from .routes import models as models_routes
 from .routes import internal_datasets as internal_dataset_routes
 from .routes import internal_training as internal_training_routes
 from .routes import internal_live as internal_live_routes
+from .routes import internal_weather as internal_weather_routes
+from .routes import internal_weather_training as weather_training_routes
 
 VITE_DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
@@ -132,13 +136,15 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         managed_training.recover()
+        weather_training.recover()
         managed_live.recover()
         yield
 
-    app = FastAPI(title="棚式空间温度场重建系统 API", version=TOOL_VERSION, lifespan=lifespan)
+    app = FastAPI(title="设施棚式监测系统 API", version=TOOL_VERSION, lifespan=lifespan)
     app.add_middleware(DatasetContextMiddleware)
     app.add_middleware(LiveContextMiddleware)
     app.add_middleware(ModelContextMiddleware)
+    app.add_middleware(ComputeBoundaryMiddleware)
     # 日志包住上下文校验，让缺文件或凭据错误也带请求编号。
     app.add_middleware(RequestLoggingMiddleware)
     # 开发时前端在 5173，与 API 不同源。生产形态是同源（下面的静态托管），
@@ -195,9 +201,13 @@ def create_app() -> FastAPI:
     async def _dataset_context_error(_req: Request, exc: DatasetContextError) -> JSONResponse:
         return JSONResponse(status_code=exc.status, content={"detail": exc.detail})
 
+    from .routes import assistant as assistant_routes
+    app.include_router(assistant_routes.router, prefix="/internal/v1")
     app.include_router(internal_dataset_routes.router, prefix="/internal/v1")
     app.include_router(internal_training_routes.router, prefix="/internal/v1")
     app.include_router(internal_live_routes.router, prefix="/internal/v1")
+    app.include_router(internal_weather_routes.router, prefix="/internal/v1")
+    app.include_router(weather_training_routes.router, prefix="/internal/v1")
     app.include_router(dataset_routes.router, prefix="/api")
     app.include_router(field_routes.router, prefix="/api")
     app.include_router(features_routes.router, prefix="/api")

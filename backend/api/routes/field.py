@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from typing import Any
+import hashlib
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query
@@ -19,6 +20,7 @@ from tfield.field.arch import arch_height, arch_mask
 from tfield.field.build import available_sheds, field_at, section_field
 from tfield.field.constraints import MonotonicConfig, light_at
 from tfield.field.grid import GRID_PRESETS, GridSpec
+from tfield.field.sample import axis_weights, sample_grid
 
 from .. import deps
 
@@ -407,11 +409,76 @@ def get_compare(
 
 
 VOLUME_NOTE = (
-    "整卷按 y 切成一片片，每片都是一次独立的场重建。实测断面画成实心，"
-    "混合出来的逐层变透。"
+    "三维网格由断面场及沿棚长混合的重建场组成。立体态连续体绘制，切面态逐片展示；"
+    "坐标查询在同一份约束后网格中插值，不吸附。断面内与断面间的场值均含模型重建结果。"
     f"z 高于 {C.MAX_MEASURED_Z:.2f} m 是无测量带，带内有外推值，"
     "三维里不填色、也不报数。"
 )
+
+
+def _field_ref(pipe) -> str:
+    from ..dataset_context import current_context
+    from ..model_context import current_model_context
+    dataset, model = current_context(), current_model_context()
+    identity = (dataset.dataset_id if dataset else None,
+                getattr(getattr(pipe, "ds", None), "signature", None),
+                model.model_id if model else None, model.result_job_id if model else None,
+                repr(getattr(pipe, "cfg", None)))
+    return hashlib.sha256(repr(identity).encode()).hexdigest()[:24]
+
+
+def point_payload(pipe, *, x: float, y: float, z: float, t_index: int,
+                  preset: str = DEFAULT_PRESET, monotonic: bool = True,
+                  y_step: float = 0.5, y_min: float = 0.0, y_max: float = 18.0,
+                  expected_ref: str | None = None) -> dict[str, Any]:
+    reference = _field_ref(pipe)
+    if expected_ref is not None and expected_ref != reference:
+        raise HTTPException(409, "数据集或模型已变化，请重新构场后查询。")
+    grid = _check_preset(preset)
+    _check_y_range(y_min, y_max, y_step)
+    _check_volume_size(grid.nx, grid.nz, _y_plane_count(y_min, y_max, y_step))
+    xs, zs, ys = grid.x(), grid.z(), _y_planes(y_min, y_max, y_step)
+    try:
+        for axis, v in ((xs, x), (ys, y), (zs, z)):
+            axis_weights(axis, v)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    kind, value = "outside", None
+    if bool(arch_mask(np.array([[x]]), np.array([[z]]))[0, 0]):
+        if z > C.MAX_MEASURED_Z + 1e-9:
+            kind = "unmeasured"
+        else:
+            cfg = MonotonicConfig(enabled=True) if monotonic else None
+            # 最多重建两片，与 volume_payload 的 field_at、网格、投影次序一致。
+            value = sample_grid(xs, ys, zs, (x, y, z),
+                                lambda i: field_at(pipe, float(ys[i]), t_index, grid, monotonic=cfg).values,
+                                lambda ix, iz: zs[iz] > C.MAX_MEASURED_Z + 1e-9)
+            kind = "value" if value is not None else "unavailable"
+    measured, shed = _measured_at(y, available_sheds(pipe))
+    return {"x": x, "y": y, "z": z, "time": str(pipe.time_at(t_index)), "t_index": t_index, "field_ref": reference,
+            "kind": kind, "value": value, "method": "trilinear", "measured_plane": measured,
+            "shed": shed, "max_measured_z": float(C.MAX_MEASURED_Z),
+            "note": "在画布使用的约束后三维网格内插值，返回输入坐标处的重建值，不吸附。"}
+
+
+@router.get("/field/point")
+def get_point(x: float, y: float, z: float, t_index: int = 0,
+              preset: str = DEFAULT_PRESET, monotonic: bool = True,
+              y_step: float = 0.5, y_min: float = 0.0, y_max: float = 18.0,
+              expected_ref: str | None = None):
+    # 拒绝坏参数时不触发模型准备。
+    grid = _check_preset(preset)
+    _check_y_range(y_min, y_max, y_step)
+    _check_volume_size(grid.nx, grid.nz, _y_plane_count(y_min, y_max, y_step))
+    for axis, v in ((grid.x(), x), (_y_planes(y_min, y_max, y_step), y), (grid.z(), z)):
+        try:
+            axis_weights(axis, v)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    pipe = deps.get_pipeline()
+    return point_payload(pipe, x=x, y=y, z=z, t_index=_check_t_index(t_index, pipe.n_times),
+                         preset=preset, monotonic=monotonic, y_step=y_step, y_min=y_min, y_max=y_max,
+                         expected_ref=expected_ref)
 
 
 @router.get("/field/volume")
@@ -458,6 +525,7 @@ def volume_payload(pipe, *, t_index: int, preset: str, monotonic: bool,
 
     与 `sections_payload` 同一条分工：校验与取管线留在路由里，这里只装箱。
     """
+    from tfield.field.profile import height_temperature_profile
     grid = grid or _check_preset(preset)
     ys = _y_planes(y_min, y_max, y_step)
     n_times = pipe.n_times
@@ -525,6 +593,8 @@ def volume_payload(pipe, *, t_index: int, preset: str, monotonic: bool,
         "available_sheds": list(avail),
         "stripes": stripes,
         "planes": planes,
+        "height_profile": height_temperature_profile(fields[0].z, planes),
+        "field_ref": _field_ref(pipe),
         "elapsed_ms": elapsed_ms,
         "note": VOLUME_NOTE,
     }

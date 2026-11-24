@@ -1,10 +1,13 @@
+import { beforeEach as beforeAuthCase } from 'vitest'
+import { loginAs } from './test/authFixture'
+beforeAuthCase(() => loginAs())
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory } from 'vue-router'
 
 import App from './App.vue'
 import { createAppRouter } from './router'
-import { LIVE_NAV_ITEMS, NAV_ITEMS, SYSTEM_TITLE } from './design/copy'
+import { DEVELOPER_NAV_ITEMS, USER_NAV_ITEMS, NAV_ITEMS, SYSTEM_TITLE } from './design/copy'
 import { useDataset } from './composables/useDataset'
 import { matchPayload, PAGE_PAYLOADS } from './test/fixtures'
 
@@ -56,7 +59,7 @@ function stubFetch() {
 
 async function mountApp() {
   const router = createAppRouter(createMemoryHistory())
-  await router.push('/')
+  await router.push('/data')
   await router.isReady()
   return mount(App, { global: { plugins: [router] } })
 }
@@ -111,6 +114,23 @@ describe('应用外壳', () => {
     expect(w.get('header').text()).toContain(SYSTEM_TITLE)
   })
 
+  it('AgriSeek 复用实时深色标题与页面导航，聊天页占用独立内容面板', async () => {
+    const w=await mountAt('/assistant')
+    await flushPromises()
+    expect(w.get('.titlebar').text()).toContain(SYSTEM_TITLE)
+    expect(w.get('.titlebar').classes()).toContain('live')
+    expect(w.find('.titlebar .deco').exists()).toBe(true)
+    expect(w.find('.titlebar .header-energy').exists()).toBe(true)
+    expect(w.find('.titlebar .live-leaf').exists()).toBe(true)
+    expect(w.get('.titlebar .clock').text()).toContain('本机时间')
+    expect(w.find('.titlebar .status').exists()).toBe(true)
+    expect(document.documentElement.classList.contains('theme-live')).toBe(true)
+    expect(w.get('nav[aria-label="页面"]').classes()).toContain('live')
+    expect(w.get('nav[aria-label="页面"] a[aria-current="page"]').text()).toContain('AgriSeek')
+    expect(w.find('.assistant-chat-shell > .page').exists()).toBe(true)
+    expect(w.find('#shell-side').exists()).toBe(false)
+  })
+
   it('导航四项齐全，次序就是流水线的次序', async () => {
     stubFetch()
     const w = await mountApp()
@@ -125,7 +145,7 @@ describe('应用外壳', () => {
     const links = rail.findAll('a').map((a) => a.text())
     // 按 NAV_ITEMS 推导，不写死清单：写死的清单会在**页面开放的当天过期**，
     // 而"打开一个页面"恰恰就是本任务在做的事。同一个文件第 71 行就是这么写的。
-    expect(links).toEqual(NAV_ITEMS.filter((i) => i.enabled).map((i) => i.label))
+    expect(links).toEqual(DEVELOPER_NAV_ITEMS.filter((i) => i.enabled).map((i) => i.label))
     // ⚠️ `/models` 不在 `NAV_ITEMS` 里，所以它不参与上面这条对账，
     // 到了那一页左栏也不高亮任何一项 —— 那是**有意的**（规格书 D8）。
     for (const item of NAV_ITEMS.filter((i) => !i.enabled)) {
@@ -140,27 +160,9 @@ describe('应用外壳', () => {
     expect(w.text()).toContain('0.1.0')
   })
 
-  it('实时模式开关点得动，切过去到 /live，左栏换成演示屏那一列', async () => {
-    stubFetch()
-    const w = await mountApp()
-    const modes = w.get('nav[aria-label="模式"]')
-    const live = modes.findAll('button').find((b) => b.text().includes('实时模式'))
-    expect(live).toBeTruthy()
-    expect(live!.attributes('disabled')).toBeUndefined()
-
-    await live!.trigger('click')
-    // **不能用 `flushPromises()` 等这一跳**：`/live` 是懒加载的（`router/index.ts`），
-    // 那一块 chunk 在**宏任务**边界才解析完 —— 实测点完两次 `flushPromises()` 之后
-    // `currentRoute` 还是 `/data`，`setTimeout(20)` 之后才是 `/live`。
-    // 轮询等待，断言的东西没变：点完就切过去了。超时上限是 `vi.waitFor` 的默认 1s。
-    await vi.waitFor(() => {
-      expect((w.vm as unknown as { $route: { path: string } }).$route.path).toBe('/live')
-    })
-
-    // `mountApp()` 把 router 包在 `global.plugins` 里、**没有把它交出来**
-    // （同文件好几条用例都用着这个 helper，不动它的签名），所以上面那句从组件
-    // 实例上读它挂着的那个 `$route`。
-    //
+  it('实时页面仍按路由展示对应导航', async () => {
+    const w = await mountAt('/live')
+    await flushPromises()
     // ⚠️ 2026-10-09 用户裁定：左栏**不再收起**，换成三条演示占位项
     // （`LIVE_NAV_ITEMS`）。原先这一行断的是 `exists()` 为 false。
     // `find` 而不是 `get`：`get()` 在找不到时当场抛，返回值那个包装器上
@@ -170,21 +172,16 @@ describe('应用外壳', () => {
     expect(rail.exists(), '左栏没了').toBe(true)
     // ⚠️ 2026-10-16 精修：「首页」与「实时监测」合并成一项，而这一项**是开着的**
     // （指向本屏），所以这里由「一个 <a> 都没有」改成「恰好一个，且指向 /live」。
-    // 后三项仍是占位，一个都不许变成链接。
+    // 助手入口已开放；历史与设置仍保留为占位。
     expect(rail.findAll('a').map((a) => a.attributes('href')), '占位项不该是链接')
-      .toEqual(['/live'])
-    for (const item of LIVE_NAV_ITEMS) {
+      .toEqual(USER_NAV_ITEMS.filter(i => i.enabled).map(i => i.to))
+    for (const item of USER_NAV_ITEMS) {
       expect(rail.text(), `${item.label} 不在`).toContain(item.label)
     }
     // 理由只有**未开放**的项才有（已开放项的 `why` 按 `NAV_ITEMS` 的老规矩是空串）。
-    for (const item of LIVE_NAV_ITEMS.filter((i) => !i.enabled)) {
-      expect(rail.text(), `${item.label} 的理由看不见`).toContain(item.why)
-    }
     // 反面：训练模式那四项**一项都不该出现在这一列**。少了这一条，
     // 一个「两份清单拼在一起」的实现照样绿。
-    for (const item of NAV_ITEMS) {
-      expect(rail.text(), `训练模式的「${item.label}」漏进来了`).not.toContain(item.label)
-    }
+    for (const item of NAV_ITEMS) expect(rail.text()).not.toContain(item.label)
   })
 
   it('深色只跟着实时模式走，而且挂在 documentElement 上', async () => {
@@ -198,22 +195,18 @@ describe('应用外壳', () => {
     const router = createAppRouter(createMemoryHistory())
     await router.push('/data')
     await router.isReady()
-    const w = mount(App, { attachTo: document.body, global: { plugins: [router] } })
+    mount(App, { attachTo: document.body, global: { plugins: [router] } })
     await flushPromises()
     expect(document.documentElement.classList.contains('theme-live'), '页① 也变暗了').toBe(false)
 
-    const live = w.get('nav[aria-label="模式"]').findAll('button')
-      .find((b) => b.text().includes('实时模式'))!
-    await live.trigger('click')
+    await router.push('/live')
     await flushPromises()
     await vi.waitFor(() => {
       expect(document.documentElement.classList.contains('theme-live'), '页⑤ 没变暗').toBe(true)
     })
 
     // 切回来要摘掉 —— 只加不减的话，去过一次实时模式，训练模式那四页就再也回不来。
-    const train = w.get('nav[aria-label="模式"]').findAll('button')
-      .find((b) => b.text().includes('训练模式'))!
-    await train.trigger('click')
+    await router.push('/data')
     await flushPromises()
     await vi.waitFor(() => {
       expect(document.documentElement.classList.contains('theme-live')).toBe(false)
@@ -232,6 +225,59 @@ describe('应用外壳', () => {
     expect(aside.classes()).toContain('shell-side')
   })
 
+  it('离开实时监测再返回时保留三维场，不重复请求同一帧', async () => {
+    const w = await mountAt('/live')
+    await vi.waitFor(() => expect(w.find('.scene-wrap').exists()).toBe(true))
+    await vi.waitFor(() => expect(w.get('#shell-side').text()).toContain('三维信息查询'))
+    const liveUid = w.getComponent({ name: 'LiveView' }).vm.$.uid
+    const volumeUid = w.getComponent({ name: 'VolumeView' }).vm.$.uid
+    const queryPanel = w.get('#shell-side .vol-ask').element
+    const values = ['1.025', '3.2', '0.7']
+    const inputs = w.findAll('#shell-side input[type="number"]')
+    for (let i = 0; i < values.length; i++) await inputs[i]!.setValue(values[i])
+    const scene = w.getComponent({ name: 'VolumeScene' })
+    scene.vm.$emit('pick', { planeIndex: 0, ix: 0, iz: 0 })
+    scene.vm.$emit('ready', true)
+    await flushPromises()
+    await w.findAll('#shell-side .mode-tile').find(button => button.text() === '平移')!.trigger('click')
+    const reading = w.get('#shell-side .pick-readout').text()
+    const expectSidebarKept = () => {
+      expect(w.get('#shell-side .vol-ask').element).toBe(queryPanel)
+      expect(w.findAll('#shell-side input[type="number"]').map(input => (input.element as HTMLInputElement).value)).toEqual(values)
+      expect(w.get('#shell-side .pick-readout').text()).toBe(reading)
+      expect(w.get('#shell-side .mode-tile.selected').text()).toBe('平移')
+    }
+    const requests = () => (vi.mocked(fetch).mock.calls as [string][])
+      .filter(([url]) => String(url).includes('/api/live/volume/')).length
+    const before = requests()
+    expect(before).toBeGreaterThan(0)
+
+    const router = (w.vm as unknown as { $router: ReturnType<typeof createAppRouter> }).$router
+    for (const path of ['/assistant', '/data']) {
+      await router.push(path)
+      await flushPromises()
+      await router.push('/live')
+      await flushPromises()
+      await vi.waitFor(() => expect(w.find('.scene-wrap').exists()).toBe(true))
+
+      expect(w.getComponent({ name: 'LiveView' }).vm.$.uid).toBe(liveUid)
+      expectSidebarKept()
+      expect(requests()).toBe(before)
+    }
+
+    await w.get('[data-view="section"]').trigger('click')
+    await flushPromises()
+    expect(w.find('.scene-wrap').exists()).toBe(false)
+    expect(w.get('#shell-side').text()).not.toContain('三维信息查询')
+    await w.get('[data-view="volume"]').trigger('click')
+    await flushPromises()
+    await vi.waitFor(() => expect(w.find('.scene-wrap').exists()).toBe(true))
+    expect(w.getComponent({ name: 'VolumeView' }).vm.$.uid).toBe(volumeUid)
+    expect(w.get('#shell-side').text()).toContain('三维信息查询')
+    expectSidebarKept()
+    expect(requests()).toBe(before)
+  })
+
   it('训练侧没有右栏那一列', async () => {
     // 反面：只在 /live 上加一列是本轮的全部要求；页①②③④ 的 DOM 逐字不变。
     const w = await mountAt('/data')
@@ -240,19 +286,37 @@ describe('应用外壳', () => {
     expect(w.find('.body').classes(), '训练侧的外壳被改成三栏了').not.toContain('live')
   })
 
-  it('实时模式开关位于导航上方，训练模式开关并入标题栏', async () => {
+  it('各页面移除模式切换和用户模式侧栏入口', async () => {
+    for (const path of ['/data', '/models', '/live', '/replay']) {
+      const w = await mountAt(path)
+      await flushPromises()
+      expect(w.find('nav[aria-label="模式"]').exists()).toBe(false)
+      expect(w.find('nav[aria-label="页面"] a[href="/monitor"]').exists()).toBe(false)
+      expect(w.get('nav[aria-label="页面"]').text()).not.toContain('气象构场')
+      w.unmount()
+    }
+  })
+
+  it('管理员默认看到用户视图，从右上角进入后台并可返回', async () => {
     const w = await mountAt('/live')
     await flushPromises()
-    expect(w.find('.live-nav-stack nav[aria-label="模式"]').exists(),
-      '实时模式开关没有放到左侧导航上方').toBe(true)
-    expect(w.find('.page nav[aria-label="模式"]').exists(),
-      '实时模式开关仍占着中央画布的高度').toBe(false)
-    const train = await mountAt('/data')
+    const userViewUid = w.getComponent({ name: 'LiveView' }).vm.$.uid
+    expect(w.get('nav[aria-label="页面"]').findAll('a').map(a => a.attributes('href'))).toEqual(['/live','/assistant'])
+    expect(w.get('a.workspace-entry').text()).toBe('开发者后台')
+    await w.get('a.workspace-entry').trigger('click')
     await flushPromises()
-    expect(train.find('.titlebar').find('nav[aria-label="模式"]').exists(),
-      '训练侧模式开关没有并入标题栏').toBe(true)
-    expect(train.find('.page nav[aria-label="模式"]').exists(),
-      '训练侧的模式开关也被挪进去了').toBe(false)
+    const router = (w.vm as unknown as { $router: ReturnType<typeof createAppRouter> }).$router
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/data'))
+    expect(w.get('nav[aria-label="页面"]').text()).toContain('模型训练')
+    expect(w.get('a.workspace-entry').text()).toBe('返回用户视图')
+    useDataset().onImported({ signature: 'new-data', file: 'training.xlsx', n_times: 10, n_columns: 24,
+      time_start: '2026-07-23T11:00:00', time_end: '2026-07-23T11:45:00' })
+    await flushPromises()
+    await w.get('a.workspace-entry').trigger('click')
+    await flushPromises()
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/live'))
+    expect(w.get('nav[aria-label="页面"]').findAll('a').map(a => a.attributes('href'))).toEqual(['/live','/assistant'])
+    expect(w.getComponent({ name: 'LiveView' }).vm.$.uid).toBe(userViewUid)
   })
 })
 

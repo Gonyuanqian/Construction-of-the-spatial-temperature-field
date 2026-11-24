@@ -120,8 +120,8 @@ function isActive(path: string): boolean {
 .rail:not(.live) .item .label { min-width: 0; flex: 1 1 auto; }
 .rail:not(.live) .item.router-link-active {
   position: relative;
-  background: var(--leaf-soft);
-  color: var(--leaf);
+  background: var(--management-tint);
+  color: var(--management-primary);
   border-color: var(--steel);
   font-weight: var(--w-strong);
 }
@@ -131,9 +131,9 @@ function isActive(path: string): boolean {
   inset: 8px auto 8px -1px;
   width: 3px;
   border-radius: 0 3px 3px 0;
-  background: var(--leaf);
+  background: var(--management-primary);
 }
-.rail:not(.live) .item.router-link-active .ico { opacity: 1; }
+.rail:not(.live) .item.router-link-active .ico { opacity: 1; color:var(--management-primary); }
 .rail:not(.live) .item:not(.off):hover { background: var(--leaf-soft); color: var(--leaf); }
 .rail:not(.live) .item:focus-visible { outline: 2px solid var(--interact); outline-offset: 2px; }
 .rail:not(.live) .item.off { color: var(--ink-muted); cursor: default; }
@@ -171,15 +171,6 @@ function isActive(path: string): boolean {
   overflow-y: auto;
 }
 /* 训练侧使用清爽的浅色菜单行；实时侧保留另一套深色仪表盘导航。 */
-.rail:not(.live) .item {
-  display: block;
-  padding: var(--gap-s) 10px;
-  background: transparent;
-  border-radius: var(--radius);
-  box-shadow: none;
-  color: var(--ink);
-  text-decoration: none;
-}
 /* 深色实时侧栏的激活态；训练侧在上方单独覆盖为浅绿选中态。 */
 .item.router-link-active {
   background: var(--nav-blue);

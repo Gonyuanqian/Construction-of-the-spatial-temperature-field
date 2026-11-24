@@ -1,16 +1,4 @@
-/**
- * 沿棚长方向的均温剖面：横轴是棚位 y，纵轴是**那一整片**的拱内均温。
- *
- * 它回答的是「这一棚从头到尾哪儿热」—— 断面图回答的是「这一片里哪儿热」，
- * 三维回答的是「整个棚体长什么样」。三个问题，不是同一张图的三种画法。
- *
- * ⚠️ 每个点都是 `VolumePlane.mean`，**后端算的**（口径见
- * `backend/api/routes/field.py::_mean_in_arch`）。这里一个温度都不重算。
- *
- * ⚠️ 缺数的片留 `null`：折成 0 会画出一条贴着底的假线，删掉则两端被直接
- * 连起来、跨过一段本来「无定义」的棚位。两种都不报错，都只是让人看错
- * （与 `pointCurve.ts` 同一条规矩）。
- */
+/** 高度—均温剖面。温度由后端按当前网格汇总，缺数高度留 null。 */
 import type { EChartsOption } from 'echarts'
 
 import type { VolumePayload } from '../../api/types'
@@ -22,15 +10,22 @@ export const MEAN_CURVE_TITLE = '温度分布概览'
 export function buildLiveMeanCurveOption(
   payload: VolumePayload, p: Palette,
 ): EChartsOption {
-  const means = payload.planes.flatMap(plane => plane.mean == null ? [] : [plane.mean])
+  const profile = payload.height_profile ?? []
+  const means = profile.flatMap(point => point.mean == null ? [] : [point.mean])
   const low = means.length ? Math.min(...means) : payload.vmin
   const high = means.length ? Math.max(...means) : payload.vmax
+  // 小图保持约 3 个主刻度；按实际温差留白，避免整度取整把曲线压平。
+  const span = Math.max(high - low, 0.2)
+  const unit = 10 ** Math.floor(Math.log10(span / 2))
+  const interval = ([1, 2, 2.5, 5, 10].find(step => step * unit >= span / 2) ?? 10) * unit
+  const axisMin = Number((Math.floor((low - span * 0.1) / interval) * interval).toFixed(8))
+  const axisMax = Number((Math.ceil((high + span * 0.1) / interval) * interval).toFixed(8))
   const colors = tempStops()
   return {
     backgroundColor: 'transparent',
     animation: false,
     /* 标题由外层卡片承担，绘图区不要再重复画一遍；把腾出的高度还给曲线。 */
-    grid: { left: 44, right: 18, top: 30, bottom: 25 },
+    grid: { left: 48, right: 18, top: 22, bottom: 36 },
     visualMap: {
       show: false, type: 'continuous', dimension: 1,
       min: low, max: high > low ? high : low + 1,
@@ -38,13 +33,14 @@ export function buildLiveMeanCurveOption(
     },
     xAxis: {
       type: 'value',
-      min: payload.y_min, max: payload.y_max, splitNumber: 3,
-      interval: (payload.y_max - payload.y_min) / 3 || 1,
+      min: payload.z[0] ?? 0, max: payload.z_max, splitNumber: 4,
+      name: '距地高度 (m)', nameLocation: 'middle', nameGap: 23,
+      nameTextStyle: { color: p.inkMuted, fontSize: p.chartAxis },
       axisLine: { lineStyle: { color: p.steel } },
       axisTick: { show: false },
       axisLabel: {
         color: p.inkMuted, fontSize: p.chartAxis, hideOverlap: true,
-        formatter: '{value} m',
+        formatter: (value: number) => String(Number(value.toFixed(2))),
       },
       splitLine: { show: true, lineStyle: { color: p.layerMid, type: 'solid', opacity: 0.5 } },
       minorTick: { show: false, splitNumber: 6 },
@@ -52,28 +48,33 @@ export function buildLiveMeanCurveOption(
     },
     yAxis: {
       type: 'value',
+      inverse: true,
       // 不强制从 0 起：这一卷的均温可能只横跨两度，从 0 起就压平了。
       scale: true,
-      name: '温度 (°C)', nameLocation: 'end',
+      name: '均温 (°C，向下升温)', nameLocation: 'start', nameGap: 6,
       nameTextStyle: { color: p.inkMuted, fontSize: p.chartAxis, align: 'left', padding: [0, 0, 0, -35] },
-      min: (extent: { min: number }) => Math.floor(extent.min),
-      max: (extent: { max: number }) => Math.ceil(extent.max) + (Number.isInteger(extent.max) ? 1 : 0),
-      splitNumber: 3,
+      min: axisMin, max: axisMax, interval,
       axisLine: { lineStyle: { color: p.steel } },
       axisLabel: {
         color: p.inkMuted, fontSize: p.chartAxis, hideOverlap: true,
-        formatter: '{value}',
+        showMinLabel: true, showMaxLabel: true,
+        formatter: (value: number) => String(Number(value.toFixed(2))),
       },
       splitLine: { lineStyle: { color: p.layerMid, type: 'solid', opacity: 0.5 } },
       minorTick: { show: false, splitNumber: 2 },
       minorSplitLine: { show: true, lineStyle: { color: p.layerMid, type: 'dashed', opacity: 0.22 } },
     },
-    tooltip: { trigger: 'axis', valueFormatter: (value: unknown) => value == null ? '无数据' : `${Number(value).toFixed(3)} °C` },
+    tooltip: { trigger: 'axis', formatter: (params: unknown) => {
+      const point = (Array.isArray(params) ? params[0] : params) as {value?: [number, number | null]} | undefined
+      if (!point?.value) return ''
+      const [height, mean] = point.value
+      return `距地高度：${Number(height).toFixed(2)} m<br/>均温：${mean == null ? '无数据' : `${Number(mean).toFixed(3)} °C`}`
+    } },
     series: [{
       type: 'line',
       name: MEAN_CURVE_TITLE,
-      // `[y, mean]` 成对给：`null` 原样传下去，ECharts 会把线断开。
-      data: payload.planes.map((pl) => [pl.y, pl.mean]),
+      // `[高度, 均温]`；不回退到沿棚长均温，避免把旧数据画到错误坐标上。
+      data: profile.map(point => [point.z, point.mean]),
       showSymbol: false,
       smooth: 0.25,
       smoothMonotone: 'x',
@@ -86,7 +87,8 @@ export function buildLiveMeanCurveOption(
       itemStyle: { borderColor: p.paper, borderWidth: 1 },
       // 面积底用**同一个颜色**、靠透明度分层 —— 不用第二个色号，
       // 免得「这条线是什么颜色」在屏上出现两种答案。
-      areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+      // 反向温度轴的数值上界位于画面下方，面积始终向画面下边界填充。
+      areaStyle: { origin: 'end', color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
         colorStops: [{ offset: 0, color: colors[5] }, { offset: 0.4, color: colors[2] }, { offset: 0.85, color: colors[1] }, { offset: 1, color: 'transparent' }] }, opacity: 0.55 },
       // 线之外不加阴影、不加发光：阴影全站只有一档且只给卡片
       // （`guards.test.ts` 钉着），图表这一层也不破例。

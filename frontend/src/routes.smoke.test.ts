@@ -1,3 +1,6 @@
+import { beforeEach as beforeAuthCase } from 'vitest'
+import { loginAs } from './test/authFixture'
+beforeAuthCase(() => loginAs())
 /**
  * 每个已注册的路由都点得进去，且不抛异常。
  *
@@ -132,7 +135,7 @@ describe('路由冒烟', () => {
     // （`/api/live/frame/{n}` 的 `note`、`/api/live/volume/{n}` 的 `note`）
     // 的**真实**文案不经过这里 —— 与上面逐页循环同一个缺口。
     const router = createAppRouter(createMemoryHistory())
-    await router.push('/live')
+    await router.push('/developer/live')
     await router.isReady()
     const w = mount(App, { attachTo: document.body, global: { plugins: [router] } })
     installTokens()

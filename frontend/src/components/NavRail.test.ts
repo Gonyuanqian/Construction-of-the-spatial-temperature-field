@@ -1,3 +1,6 @@
+import { beforeEach as beforeAuthCase } from 'vitest'
+import { loginAs } from '../test/authFixture'
+beforeAuthCase(() => loginAs())
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createMemoryHistory } from 'vue-router'
@@ -51,7 +54,7 @@ describe('侧栏给页面留的落点', () => {
 
   it('导航项仍然全在', async () => {
     const w = await mountRail()
-    for (const label of ['数据导入与检查', '模型训练', '空间温度场的构建', '影响分析']) {
+    for (const label of ['数据导入与检查', '模型训练', '模型库', '空间温度场的构建']) {
       expect(w.text()).toContain(label)
     }
   })
@@ -90,7 +93,7 @@ describe('实时那一屏的左栏（精修）', () => {
   it('只有本屏那一项是链接，而且它带着选中态', async () => {
     const w = await mountLiveRail()
     const links = w.findAll('a.item')
-    expect(links, '实时那一屏上应当恰好有一项可选').toHaveLength(1)
+    expect(links.map(a => a.attributes('href'))).toEqual(LIVE_NAV_ITEMS.filter(i => i.enabled).map(i => i.to))
     expect(links[0]!.attributes('href')).toBe('/live')
     expect(links[0]!.classes(), '本屏那一项没带上选中态').toContain('router-link-active')
   })
@@ -107,6 +110,6 @@ describe('实时那一屏的左栏（精修）', () => {
 
   it('训练侧每个导航项都有对应图标', async () => {
     const w = await mountRail()
-    expect(w.findAll('.item .ico')).toHaveLength(5)
+    expect(w.findAll('.item .ico')).toHaveLength(4)
   })
 })

@@ -4,6 +4,11 @@
   "routes": [
     {
       "method": "GET",
+      "path": "/api/field/point",
+      "compute": true
+    },
+    {
+      "method": "GET",
       "path": "/api/calibration",
       "compute": false
     },
@@ -86,41 +91,6 @@
       "method": "GET",
       "path": "/api/health",
       "compute": false
-    },
-    {
-      "method": "GET",
-      "path": "/api/live/frame/{n}",
-      "compute": true
-    },
-    {
-      "method": "POST",
-      "path": "/api/live/next",
-      "compute": false
-    },
-    {
-      "method": "POST",
-      "path": "/api/live/pause",
-      "compute": false
-    },
-    {
-      "method": "POST",
-      "path": "/api/live/prepare",
-      "compute": true
-    },
-    {
-      "method": "POST",
-      "path": "/api/live/start",
-      "compute": false
-    },
-    {
-      "method": "GET",
-      "path": "/api/live/status",
-      "compute": false
-    },
-    {
-      "method": "GET",
-      "path": "/api/live/volume/{n}",
-      "compute": true
     },
     {
       "method": "GET",

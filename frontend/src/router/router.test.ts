@@ -1,3 +1,6 @@
+import { beforeEach as beforeAuthCase } from 'vitest'
+import { loginAs } from '../test/authFixture'
+beforeAuthCase(() => loginAs())
 import { describe, expect, it } from 'vitest'
 import { createMemoryHistory } from 'vue-router'
 import { createAppRouter } from './index'
@@ -15,18 +18,18 @@ describe('路由', () => {
     }
   })
 
-  it('/ 落到页①', async () => {
+  it('/ 默认进入用户视图', async () => {
     const router = createAppRouter(createMemoryHistory())
     await router.push('/')
     await router.isReady()
-    expect(router.currentRoute.value.path).toBe('/data')
+    expect(router.currentRoute.value.path).toBe('/live')
   })
 
-  it('不认识的路径也回到页①，不是白屏', async () => {
+  it('不认识的路径回到用户视图', async () => {
     const router = createAppRouter(createMemoryHistory())
     await router.push('/并没有这个页面')
     await router.isReady()
-    expect(router.currentRoute.value.path).toBe('/data')
+    expect(router.currentRoute.value.path).toBe('/live')
   })
 
   it('实时模式的路由在，且不从 NAV_ITEMS 生成', () => {

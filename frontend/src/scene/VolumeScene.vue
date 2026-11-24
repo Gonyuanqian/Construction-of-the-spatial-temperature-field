@@ -14,22 +14,23 @@
  * 这也与上面那句一致：一个**带状态的用户控件**住在这儿本来就不对。这一层现在
  * 只收一个 `cutY`、把它写进裁剪面，画完把结果用 `ready` 报回页级。
  */
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 
 import type { VolumePayload } from '../api/types'
-import { tempStops, valueToColor } from '../charts/scale'
-import { solidSurface } from './solidSurface'
+import { tempStops } from '../charts/scale'
+import { applySliceLayers, createTemperatureLayerUniforms, createVolumeMesh } from './volumeMaterial'
+import { packVolume, traceVolume } from './volumeGrid'
 import ViewControls from '../components/ViewControls.vue'
 import { readPalette } from '../design/palette'
 import { FIT_FOV_DEG, boxOf, fitCamera, type WorldBox } from './fit'
-import { markerPoint, solveHover, type HoverHit, type HoverPick } from './hover'
+import { markerPoint, solveHover, snapIndex, type HoverHit, type HoverPick } from './hover'
 import { PAN_FRAC, YAW_STEP_DEG, ZOOM_STEP, panBy, yawAround, zoomBy,
          type Vec3 } from './orbit'
 import { rasterPlane, stripeIndexSet } from './raster'
 import type { ViewCmd } from './viewCmd'
-import type { VolumeSpec } from './volumeView'
+import { isVisibleTemperatureHeight, type TemperatureLayers, type VolumeSpec } from './volumeView'
 
 const props = defineProps<{
   spec: VolumeSpec
@@ -50,34 +51,25 @@ const props = defineProps<{
   showViewControls?: boolean
   decorations?: boolean
   fieldMode?: 'solid' | 'slices'
+  temperatureLayers?: TemperatureLayers
 }>()
 const axesOverlay = ref<SVGSVGElement | null>(null)
-let solidMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial> | null = null
+let volumeRender: ReturnType<typeof createVolumeMesh> | null = null
+let packedVolume: Float32Array | null = null
+const layerUniforms = createTemperatureLayerUniforms()
+
 function clearSolid(): void {
-  if (!solidMesh) return
-  scene?.remove(solidMesh)
-  solidMesh.geometry.dispose()
-  solidMesh.material.dispose()
-  solidMesh = null
+  if (!volumeRender) return
+  scene?.remove(volumeRender.mesh)
+  volumeRender.dispose()
+  volumeRender = null
 }
 function buildSolid(): void {
   clearSolid()
-  if (!scene || props.fieldMode !== 'solid') return
-  const { positions, temperatures } = solidSurface(props.payload, stripeIndexSet(props.spec.cavity, props.payload.x.length))
-  const stops = tempStops()
-  const colors = temperatures.flatMap(value => {
-    const [r,g,b] = valueToColor(value, props.spec.vmin, props.spec.vmax, stops)
-    const color = new THREE.Color().setRGB(r/255,g/255,b/255,THREE.SRGBColorSpace)
-    return [color.r,color.g,color.b]
-  })
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions,3))
-  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors,3))
-  solidMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
-    vertexColors: true, side: THREE.DoubleSide, transparent: true, opacity: 0.88,
-    depthWrite: true, clippingPlanes: clipPlane ? [clipPlane] : [],
-  }))
-  scene.add(solidMesh)
+  packedVolume = packVolume(props.payload)
+  if (!scene || props.fieldMode !== 'solid' || props.payload.planes.length < 2) return
+  volumeRender = createVolumeMesh(props.payload, packedVolume, props.cutY, layerUniforms)
+  scene.add(volumeRender.mesh)
 }
 
 const emit = defineEmits<{
@@ -164,6 +156,8 @@ let shellGroup: THREE.Group | null = null
 let marker: THREE.Mesh | null = null
 /** 挂载时装起来的收尾工作。`onBeforeUnmount` 只调它，不自己攒状态 —— 收尾的东西和建立的东西写在一起，才不会被漏掉。 */
 let teardown: (() => void) | null = null
+let animationTick: (() => void) | null = null
+let suspended = false
 /** 最近一次悬停解出的格点。点击钉住的就是它 —— 与面板上正显示的那个同源。 */
 let lastHover: HoverPick | null = null
 /** 用户自己转过镜头没有。转过之后取景就不再自动重摆（见 `autoframe`）。 */
@@ -278,10 +272,9 @@ function buildShells(): void {
   }
 }
 
-function buildPlanes(): void {
-  if (!scene) return
+function clearPlanes(): void {
   if (planeGroup) {
-    scene.remove(planeGroup)
+    scene?.remove(planeGroup)
     planeGroup.traverse((o) => {
       const m = o as THREE.Mesh
       if (m.geometry) m.geometry.dispose()
@@ -292,9 +285,16 @@ function buildPlanes(): void {
       }
     })
   }
+  planeGroup = null
+}
+function buildPlanes(): void {
+  if (!scene) return
+  clearPlanes()
   const group = new THREE.Group()
   planeGroup = group
+  group.visible = props.fieldMode !== 'solid' || props.payload.planes.length < 2
   scene.add(group)
+  if (!group.visible) return
 
   const stops = tempStops()
   const { vmin, vmax, planes } = props.spec
@@ -329,6 +329,7 @@ function buildPlanes(): void {
       clippingPlanes: clipPlane ? [clipPlane] : [],
       clipShadows: false,
     })
+    applySliceLayers(mat, layerUniforms)
     const mesh = new THREE.Mesh(geo, mat)
     mesh.position.set(midX, midZ, pl.y)
     mesh.renderOrder = pl.planeIndex
@@ -369,6 +370,7 @@ function syncMarker(): void {
     return
   }
   const [x, y, z] = markerPoint(props.payload, k)
+  if (y > props.cutY + 1e-8 || !isVisibleTemperatureHeight(z, props.temperatureLayers)) { marker.visible = false; return }
   marker.position.set(...toWorld(x, y, z))
   marker.visible = true
 }
@@ -422,16 +424,19 @@ function autoframe(): void {
 
 function resize(): void {
   const el = host.value
-  if (!el || !renderer || !camera) return
+  if (!el || !renderer || !camera || suspended || !el.isConnected) return
   const w = el.clientWidth || 640
   const h = el.clientHeight || 420
+  // 体绘制每像素沿射线多次采样，限制绘图分辨率，避免高 DPI 成倍放大负担。
+  renderer.setPixelRatio(props.fieldMode === 'solid' ? Math.min(1, 1200 / w)
+    : Math.min(2, window.devicePixelRatio || 1))
   renderer.setSize(w, h, false)
   camera.aspect = w / h
   camera.updateProjectionMatrix()
   // 宽高比刚变，取景可能就不成立了（见 `autoframe`）。放在这一行之后 ——
   // `fitCamera` 解距离要用的是**新的** `aspect`。
-  // 尺寸变化时重新居中，保留用户旋转后的观察方向。
-  placeCamera(orbited)
+  // 用户调整过镜头后保留位置、缩放和观察目标，返回缓存页只更新画布尺寸。
+  autoframe()
 }
 
 function onPointerMove(e: PointerEvent): void {
@@ -447,6 +452,18 @@ function onPointerMove(e: PointerEvent): void {
     -((e.clientY - r.top) / r.height) * 2 + 1,
   )
   raycaster.setFromCamera(ndc, camera)
+  if (props.fieldMode === 'solid' && props.payload.planes.length > 1) {
+    const o = raycaster.ray.origin, d = raycaster.ray.direction
+    const p = traceVolume(props.payload, [o.x, o.z, o.y], [d.x, d.z, d.y], props.cutY,
+                          packedVolume ?? undefined, props.temperatureLayers)
+    lastHover = p ? {
+      position: p, method: 'volume',
+      planeIndex: snapIndex(props.payload.planes.map(pl => pl.y), p[1]) ?? 0,
+      ix: snapIndex(props.payload.x, p[0]) ?? 0, iz: snapIndex(props.payload.z, p[2]) ?? 0,
+    } : null
+    emit('hover', lastHover)
+    return
+  }
   // `intersectObjects` 返回的次序就是**由近到远** —— `solveHover` 要的正是它。
   const hits: HoverHit[] = raycaster
     .intersectObjects(planeGroup.children, false)
@@ -458,9 +475,14 @@ function onPointerMove(e: PointerEvent): void {
       // ⚠️ `Raycaster` **不认** `clippingPlanes`：交点里会带着已经切掉、
       // 屏幕上根本看不见的那一片。这一行是这一版最容易漏掉的一行 ——
       // 漏了它，用户对着空处悬停会得到一个温度，而且不报任何错。
-      clipped: clip.distanceToPoint(h.point) < 0,
+      clipped: clip.distanceToPoint(h.point) < 0 || !isVisibleTemperatureHeight(h.point.y, props.temperatureLayers),
     }))
   lastHover = solveHover(hits, props.payload.x, props.payload.z)
+  const front = hits.find(h => !h.clipped)
+  if (lastHover && front) {
+    lastHover.position = [front.x, props.payload.planes[front.planeIndex].y, front.z]
+    lastHover.method = 'slice'
+  }
   emit('hover', lastHover)
 }
 
@@ -573,8 +595,9 @@ onMounted(() => {
 
   const ro = new ResizeObserver(resize)
   ro.observe(el)
-  renderer.setAnimationLoop(() => {
+  animationTick = () => {
     controls?.update()
+    if (volumeRender && camera) volumeRender.mesh.material.uniforms.uProjection!.value = camera.projectionMatrix
     if (camera && axesOverlay.value) {
       const inverse = camera.quaternion.clone().invert()
       const directions = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 1, 0)]
@@ -589,13 +612,17 @@ onMounted(() => {
       })
     }
     if (scene && camera) renderer?.render(scene, camera)
-  })
+  }
+  renderer.setAnimationLoop(animationTick)
   teardown = () => {
     clearSolid()
+    clearPlanes()
+    packedVolume = null
     ground?.geometry.dispose()
     if (ground) (ground.material as THREE.Material).dispose()
     ro.disconnect()
     renderer?.setAnimationLoop(null)
+    animationTick = null
     controls?.dispose()
     // `owned` 里是这一块自己建的几何与材质。Three 不管垃圾回收，
     // 不 dispose 的话每次换时刻都会漏一批 GPU 缓冲 —— 拖几下就卡死。
@@ -608,6 +635,18 @@ onMounted(() => {
   // 场景真的建起来了 —— 到这一步才敢让页级挂剖切刀。
   sceneReady.value = true
   emit('ready', true)
+})
+
+onDeactivated(() => {
+  if (!renderer) return
+  suspended = true
+  renderer.setAnimationLoop(null)
+})
+onActivated(() => {
+  if (!suspended || !renderer || !animationTick) return
+  suspended = false
+  resize()
+  renderer.setAnimationLoop(animationTick)
 })
 
 /**
@@ -625,7 +664,9 @@ watch(() => props.payload, () => {
   syncMarker()
   autoframe()
 })
-watch(() => props.fieldMode, () => { if (scene) { buildPlanes(); buildSolid() } })
+watch(() => props.fieldMode, () => {
+  if (scene) { buildPlanes(); buildSolid(); resize(); lastHover = null; emit('hover', null) }
+})
 
 /**
  * 拱壳跟着它自己的两个输入走：**壳长是滑块给的，拱形与棚位是载荷给的**。
@@ -642,8 +683,23 @@ watch(() => [props.payload, props.spec.shellLength], () => {
 
 watch(() => props.picked, syncMarker, { deep: true })
 
+watch(() => [props.temperatureLayers, props.payload.shed_height] as const, ([layers, height], previous) => {
+  layerUniforms.uTemperatureLayers.value = layers && height > 0
+    ? [...layers.cuts, Math.min(height * 0.018, 0.07), height] : [0, 0, 0, 0]
+  layerUniforms.uTemperatureLayerVisibility.value = layers ? layers.visible.map(Number) : [1, 1, 1]
+  if (previous && (layers || previous[0])) {
+    syncMarker()
+    lastHover = null
+    emit('hover', null)
+  }
+}, { immediate: true })
+
 watch(() => props.cutY, (v) => {
   if (clipPlane) clipPlane.constant = v
+  if (volumeRender) volumeRender.mesh.material.uniforms.uCut!.value = v
+  syncMarker()
+  lastHover = null
+  emit('hover', null)
 })
 
 /**

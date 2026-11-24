@@ -35,7 +35,7 @@ defineProps<{
       <thead>
         <tr>
           <th class="t">时刻</th>
-          <th v-for="c in columns" :key="c.key" class="num">{{ c.label }}</th>
+          <th v-for="c in columns" :key="c.key" class="num">{{ c.label }}<small v-if="c.unit" class="column-unit">{{ c.unit }}</small></th>
         </tr>
       </thead>
       <tbody>
@@ -105,4 +105,5 @@ thead th.t {
 .nil {
   color: var(--ink-muted);
 }
+.column-unit { display: block; font-size: var(--size-note); color: var(--ink-muted); font-weight: normal; }
 </style>

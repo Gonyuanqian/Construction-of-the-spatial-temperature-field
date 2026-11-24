@@ -29,26 +29,43 @@
  * —— 页③ 那一整块搬过来，只把取数口换成实时那条（`:source="'live'"`）。
  * 判定、文案、吸附、坐标查询因此仍然只有一处。
  */
-import { computed, defineAsyncComponent, h, onMounted, onUnmounted, ref } from 'vue'
+import { computed, defineAsyncComponent, h, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
+import {useRoute,useRouter} from 'vue-router'
+import {requestedDesign,requireMonitoringConfig} from '../live/designSelection'
 
-import type { LiveFramePayload, LiveStatus, PrepareResult, VolumePayload } from '../api/types'
-import { ApiError, getJson, postJson } from '../api/client'
-import { fetchModels, usableModels } from '../api/models'
+defineOptions({ name: 'LiveView' })
+
+import type { LiveFramePayload, LiveStatus, VolumePayload } from '../api/types'
+import { getJson } from '../api/client'
+import { weatherApi } from '../api/weather'
+import { session } from '../api/session'
+import { designsApi, type DesignRecord } from '../api/greenhouseDesigns'
 import EChart from '../charts/EChart.vue'
 import { buildLiveMeanCurveOption, MEAN_CURVE_TITLE } from '../charts/options/liveMeanCurve'
 import { buildSectionFieldOption, shedOfSeries } from '../charts/options/sectionField'
 import { interpretPick, pickText } from '../charts/pick'
-import { tempStops, valueToColor } from '../charts/scale'
 import Card from '../components/Card.vue'
-import GaugeDial from '../components/GaugeDial.vue'
-import Icon from '../components/Icon.vue'
-import OverviewStrip from '../components/OverviewStrip.vue'
+import LiveWeatherOverview from '../components/LiveWeatherOverview.vue'
+import LiveEnvironmentAlerts from '../components/LiveEnvironmentAlerts.vue'
+import LiveGreenhouseDialog from '../components/LiveGreenhouseDialog.vue'
+import MonitoringLocationDialog from '../components/MonitoringLocationDialog.vue'
+import { useMonitoringLocation } from '../composables/useMonitoringLocation'
+import { useHouseDimensions } from '../composables/useHouseDimensions'
+import {sameDimensions,validDimensions} from '../live/houseDimensions'
+import { useSingleWeatherQuery } from '../composables/useSingleWeatherQuery'
+import { useAutomaticField } from '../composables/useAutomaticField'
+import { useTimedMonitoring } from '../composables/useTimedMonitoring'
+import { fieldMatchesQuery, savedSingleMatchesLocation, savedSingleQuery, savedSingleLocation } from '../live/weatherQuery'
+import { sameRegion, type MonitoringLocation } from '../live/monitoringLocation'
 import SectionAsk from '../components/SectionAsk.vue'
+import LiveFieldPlaceholder from '../components/LiveFieldPlaceholder.vue'
+import AgronomyAdvice from '../components/AgronomyAdvice.vue'
 import { useAsync } from '../composables/useAsync'
-import { calibratedLabel, FIELD_MODEL, FIELD_VIEWS } from '../design/copy'
-import { fmtTime } from '../design/format'
+import { useRetainedTeleport } from '../composables/useRetainedTeleport'
+import { calibratedLabel } from '../design/copy'
 import { readPalette } from '../design/palette'
 import { snapIndex } from '../scene/hover'
+import { ALL_TEMPERATURE_LAYERS, type TemperatureLayerCuts, type TemperatureLayerVisibility } from '../scene/volumeView'
 
 // 三维整块懒加载，`FieldView` 同款写法。占位用 `h()` 不用字符串模板：
 // 打包出来的 `vue` 是 runtime-only 的，`template:` 字符串在真跑时会抛，
@@ -63,86 +80,128 @@ const VolumeView = defineAsyncComponent({
 })
 
 const palette = readPalette()
+const { target: sidebarTarget, disabled: sidebarSuspended } = useRetainedTeleport('#shell-side')
+const { target: navTarget, disabled: navSuspended } = useRetainedTeleport('#rail-extra')
 
-/* ── 模型库：这一屏能不能算，由它定 ─────────────────────── */
-
-const models = useAsync(fetchModels)
-
-/**
- * 有没有一条能用的模型。**与页③ 读同一个出口**（`api/models.ts` 的
- * `usableModels`）—— 各判一次不会报错，只会漂成「页③ 有场、页⑤ 说没模型」，
- * 而两页看的是同一个训练段、同一份库。
- *
- * ⚠️ 名字**不能**叫 `ready` —— 下面已经有一个
- * `const ready = computed(() => status.value?.state === 'ready')`（实时源准备好没）。
- * 一个说的是「源备好了」，一个说的是「有模型可算」，两件事两个名字。
- */
-const hasModel = computed(() => usableModels(models.data.value).length > 0)
-
-/** 取数**回来了**。用它把「还不知道」与「知道没有」分开 —— 见模板那一支。 */
-const modelsLoaded = computed(() => models.data.value !== null)
+/* 用户视图只读取公开棚体档案和本账号气象结果，不访问开发者模型库。 */
+const catalog = useAsync(weatherApi.houses)
+const prototypeInfo=useAsync(weatherApi.prototype)
+const hasModel = computed(() => status.value?.state === 'ready' || !!prototypeInfo.data.value?.ready || !!catalog.data.value?.some(h => h.ready))
+const catalogLoaded = computed(() => catalog.data.value !== null)
 
 /* ── 状态与三个控件 ─────────────────────────────────────── */
 
 const status = ref<LiveStatus | null>(null)
-const busy = ref(false)
-const error = ref('')
+const layerCuts = ref<TemperatureLayerCuts>([0.5, 1.5])
+const layerVisibility = ref<TemperatureLayerVisibility>(ALL_TEMPERATURE_LAYERS)
+const designRoute=useRoute(),designRouter=useRouter()
+const weatherOpen = ref(false)
+const greenhouseOpen=ref(false),designApplying=ref(false),designError=ref(''),designLinkError=ref('')
+const { selected: monitoringLocation, save: saveMonitoringLocation } = useMonitoringLocation()
+const {selected:houseDimensions,customized:dimensionsCustomized,save:saveDimensions}=useHouseDimensions()
+const weatherQueryActive = ref(!designRoute?.query.applyDesign)
+const automaticWeather = useSingleWeatherQuery(monitoringLocation, weatherQueryActive)
+const constructionAllowed=ref(true),shotRequested=ref(false),restoredSession=ref<string|null>(null)
+const automaticField = useAutomaticField(automaticWeather.data, constructionAllowed,houseDimensions)
+const preferredSession = computed(() => automaticField.data.value?.live.session_id ?? restoredSession.value)
+const statusError = ref('')
+const refreshing = ref(false)
+const updateBusy=computed(()=>designApplying.value || refreshing.value || automaticWeather.loading.value || automaticField.loading.value)
+const timedMonitoring=useTimedMonitoring({
+  run:async()=>{const failure=await refreshDashboard();if(failure)throw new Error(failure)},
+  busy:updateBusy,active:weatherQueryActive,location:computed(()=>monitoringLocation.value?{...monitoringLocation.value,dimensions:houseDimensions.value}:null),
+  userId:computed(()=>session.user.value?.id??null),
+})
+const monitoringState=computed(()=>({enabled:timedMonitoring.enabled.value,intervalMinutes:timedMonitoring.intervalMinutes.value,
+  nextAt:timedMonitoring.nextAt.value,paused:timedMonitoring.paused.value,error:timedMonitoring.error.value}))
 let alive = true
+let active = true
 let statusSeq = 0
-let pendingAction: { scope: string; key: string } | null = null
 
 async function refreshStatus() {
   const mine = ++statusSeq
+  const expected=preferredSession.value
   try {
-    const fresh = await getJson<LiveStatus>('/api/live/status')
-    if (!alive || mine !== statusSeq) return
+    const fresh = await getJson<LiveStatus>(`/api/live/status${expected ? `?session_id=${encodeURIComponent(expected)}` : ''}`)
+    if (!alive || !active || mine !== statusSeq || expected!==preferredSession.value) return
     if (fresh.session_id !== status.value?.session_id || fresh.state !== 'ready') {
       frame.data.value = null
       summary.data.value = null
     }
     status.value = fresh
+    if(!dimensionsCustomized.value && fresh.prototype && validDimensions(fresh.dimensions) && !sameDimensions(fresh.dimensions,houseDimensions.value))saveDimensions(fresh.dimensions)
+    const savedPoint=!monitoringLocation.value?savedSingleLocation(fresh):null
+    if(savedPoint)saveMonitoringLocation(savedPoint)
+    if(!shotRequested.value&&monitoringLocation.value&&savedSingleMatchesLocation(fresh,monitoringLocation.value))restoredSession.value=fresh.session_id??null
+    statusError.value = ''
   } catch (e) {
-    if (!alive || mine !== statusSeq) return
-    error.value = (e as Error).message
+    if (!alive || !active || mine !== statusSeq) return
+    statusError.value = (e as Error).message
   }
 }
 
-async function act(name: 'prepare' | 'start' | 'pause' | 'next' | 'new') {
-  if (busy.value) return
-  busy.value = true
-  const expected = status.value?.session_id ?? 'none'
-  const scope = `${expected}:${name}`
-  if (pendingAction?.scope !== scope) pendingAction = { scope, key: globalThis.crypto.randomUUID() }
+async function refreshDashboard() {
+  if (updateBusy.value) return
+  refreshing.value = true
+  shotRequested.value=true;restoredSession.value=null
   try {
-    // ⚠️ 回执**不拿来当状态用**。`prepare` 回的是 `{state, seconds}`（规格书 §五），
-    // 不是一份 `LiveStatus` —— 把回执赋给 `status` 会让状态条渲染出空的帧号，
-    // 还会让下面 `frame` 拼出 `/frame/undefined`（真后端 422），而这是实时模式
-    // 唯一的入口动作。所以四个动作一律**问完再重新问一次状态**：
-    // 再查询服务端确认的状态；状态查询不构建管线，依赖不可用时显示恢复提示。
-    await postJson<LiveStatus | PrepareResult>(`/api/live/${name === 'new' ? 'sessions' : name}`, undefined,
-      { 'Idempotency-Key': pendingAction.key, 'X-TField-Expected-Session': expected })
-    pendingAction = null
-    if (!alive) return
-    error.value = ''
-    await refreshStatus()
-    if (ready.value) refetch()
-  } catch (e) {
-    if (e instanceof ApiError && e.status >= 400 && e.status < 500) pendingAction = null
-    if (!alive) return
-    error.value = (e as Error).message
-    await refreshStatus()
-  } finally {
-    busy.value = false
+    await Promise.all([catalog.run(), prototypeInfo.run(), refreshStatus(), automaticWeather.refresh()])
+    await automaticField.settled()
+    if (alive && active && ready.value) refetch()
+    return automaticWeather.error.value || automaticField.error.value || automaticField.blocked.value
+  } finally { refreshing.value = false }
+}
+
+function locationConfirmed(location: MonitoringLocation) {
+  statusSeq++
+  designLinkError.value=''
+  saveMonitoringLocation(location)
+  shotRequested.value=true;restoredSession.value=null
+  weatherOpen.value = false
+  frame.data.value = null
+  summary.data.value = null
+  return automaticWeather.refresh()
+}
+function applyMonitoringConfig(config:ReturnType<typeof requireMonitoringConfig>){
+  saveDimensions(config.dimensions)
+  return locationConfirmed(config.location)
+}
+function openGreenhousePicker(){
+  designError.value=''
+  greenhouseOpen.value=true
+}
+async function applyDesign(plan:DesignRecord){
+  if(updateBusy.value||!weatherQueryActive.value)return
+  const mine=activationSeq,owner=session.user.value?.id
+  const current=()=>alive&&active&&mine===activationSeq&&owner===session.user.value?.id
+  designApplying.value=true;designError.value=''
+  try{
+    const selected=await designsApi.activate(plan.id,plan.revision)
+    if(!current())return
+    const config=requireMonitoringConfig(selected.spec)
+    greenhouseOpen.value=false
+    await applyMonitoringConfig(config)
+  }catch(e){
+    if(current())designError.value=e instanceof Error?e.message:'温室方案暂时无法应用。'
+  }finally{
+    if(current())designApplying.value=false
   }
 }
 
 /* ── 当前这一帧 ─────────────────────────────────────────── */
 
-const ready = computed(() => status.value?.state === 'ready')
-const preparing = computed(() => busy.value || !!status.value?.preparing)
-const prepareText = computed(() => status.value?.pending_session_id ? '继续准备'
-  : status.value?.recovery_required ? '恢复实时源' : '准备实时源')
-
+const ready = computed(() => {
+  const saved=status.value
+  if(saved?.state!=='ready')return false
+  if((saved.prototype || dimensionsCustomized.value) && !sameDimensions(saved.dimensions,houseDimensions.value))return false
+  if(saved.weather_source?.data_kind==='forecast')return false
+  if(!monitoringLocation.value)return true
+  if(!sameRegion(monitoringLocation.value,saved.location))return false
+  // A newly queried forecast must not relabel an old temperature field as current.
+  if(automaticWeather.data.value)return fieldMatchesQuery(saved,automaticWeather.data.value)
+  return !shotRequested.value&&savedSingleMatchesLocation(saved,monitoringLocation.value)
+})
+const displayWeatherQuery=computed(()=>automaticWeather.data.value??(ready.value?savedSingleQuery(status.value):null))
 function sessionQuery(separator = '?'): string {
   const id = status.value?.session_id
   return id ? `${separator}session_id=${encodeURIComponent(id)}` : ''
@@ -182,6 +241,15 @@ function refetch(): void {
   void frame.run()
   void summary.run()
 }
+watch(automaticField.data,saved=>{
+  if(!saved || !alive || !active || !fieldMatchesQuery(saved.live,automaticWeather.data.value))return
+  statusSeq++
+  const changed=status.value?.session_id!==saved.live.session_id
+  status.value=saved.live;statusError.value=''
+  shotRequested.value=false
+  if(changed){frame.data.value=null;summary.data.value=null}
+  if(ready.value)refetch()
+})
 
 /**
  * 轮询对表。**帧号变了才重取** —— 同一帧重取一次，图上什么都没变，
@@ -192,20 +260,37 @@ function refetch(): void {
 const POLL_MS = 5000
 let timer: ReturnType<typeof setInterval> | undefined
 let pollingStatus = false
+let activationSeq = 0
 
-onMounted(async () => {
-  // 次序：先问库里有不有能用的模型（`hasModel` 由它算出来），
-  // 再决定要不要去碰实时源 —— 没有模型的实时源开不了，问了也是白问。
-  await models.run()
-  if (hasModel.value) await refreshStatus()
-  if (!alive) return
-  if (ready.value) refetch()
+async function activate(initial: boolean): Promise<void> {
+  const mine = ++activationSeq
+  if(designRoute?.query.applyDesign){
+    let selected:Awaited<ReturnType<typeof requestedDesign>>|undefined
+    try{
+      selected=await requestedDesign(designRoute.query.applyDesign,designRoute.query.designRevision)
+    }catch(e){
+      if(alive&&active&&mine===activationSeq)designLinkError.value=e instanceof Error?e.message:'无法应用温室方案。'
+    }
+    if(!alive||!active||mine!==activationSeq)return
+    const query={...designRoute.query};delete query.applyDesign;delete query.designRevision
+    await designRouter.replace({path:'/live',query})
+    if(!alive||!active||mine!==activationSeq)return
+    weatherQueryActive.value=true
+    if(selected)await applyMonitoringConfig(selected)
+    if(!alive||!active||mine!==activationSeq)return
+  }
+  const before = status.value
+  // 档案用于空态说明；状态始终读取，档案失效也不挡住个人已有保存结果。
+  await Promise.all([catalog.run(),prototypeInfo.run()])
+  if (!alive || !active || mine !== activationSeq) return
+  await refreshStatus()
+  if (!alive || !active || mine !== activationSeq) return
+  if (ready.value && (initial || status.value?.cursor !== before?.cursor
+      || status.value?.session_id !== before?.session_id || before?.state !== 'ready')) refetch()
+  if (timer) clearInterval(timer)
   timer = setInterval(async () => {
-    // ⚠️ 这一句**不靠**下面那句顺带挡住（没跑过 `refreshStatus()` 时
-    // `status` 是 null）。写成显式的一句是为了把意图放在脸上：
-    // 以后谁把 `refreshStatus()` 挪到前面，这一屏就会每 5 秒问一次
-    // 一个没法算的服务端。
-    if (!hasModel.value || busy.value || pollingStatus) return
+    // idle 状态也轮询：后台配置完成并产生新结果后，无需重载整个页面。
+    if (!active || pollingStatus) return
     // 暂停时也轻量核对会话，及时发现服务重启；同一会话同一帧不重新构场。
     pollingStatus = true
     const before = status.value
@@ -215,8 +300,35 @@ onMounted(async () => {
           || status.value?.session_id !== before?.session_id || before?.state !== 'ready')) refetch()
     } finally { pollingStatus = false }
   }, POLL_MS)
+}
+
+onMounted(() => { void activate(true) })
+// KeepAlive 保留三维画布；离页不再轮询，回来只在会话或帧号变化时取新场。
+onDeactivated(() => {
+  weatherQueryActive.value = false
+  weatherOpen.value = false
+  greenhouseOpen.value=false
+  designApplying.value=false
+  active = false
+  activationSeq += 1
+  statusSeq += 1
+  if (timer) clearInterval(timer)
+  timer = undefined
 })
-onUnmounted(() => { alive = false; statusSeq += 1; if (timer) clearInterval(timer) })
+onActivated(() => {
+  if (active) return // 首次挂载已由 onMounted 启动
+  active = true
+  weatherQueryActive.value = !designRoute?.query.applyDesign
+  void activate(false)
+})
+onUnmounted(() => {
+  constructionAllowed.value=false
+  alive = false
+  active = false
+  activationSeq += 1
+  statusSeq += 1
+  if (timer) clearInterval(timer)
+})
 
 /* ── 文案 ───────────────────────────────────────────────── */
 
@@ -226,34 +338,37 @@ const show = (v: number | null): string => (v === null ? '不报数' : v.toFixed
 /* ── 指标行与底栏的文案 ─────────────────────────────────── */
 
 /** 棚内均温。`null` 是后端说的「这一卷一个可用格子都没有」—— 不翻成 0。 */
-const meanText = computed(() => {
-  const m = summary.data.value?.mean
-  return m === null || m === undefined ? '不报数' : `${m.toFixed(1)} °C`
+const alertField = computed(() => {
+  const volume = summary.data.value
+  const current = status.value
+  return ready.value && current && volume?.live?.session_id === current.session_id
+    && volume?.frame?.n === current.cursor ? volume : null
 })
 
-/**
- * 三维那一块现在是什么状态。**三句都要，次序也不能换。**
- *
- * ⚠️ 这是这一屏最容易说错的一句话，两个坑各踩一次：
- *   1. **先把 `data` 判在前面。** `useAsync` 出错时**不清 `data`**（见那个文件），
- *      所以按下「暂停」之后手里还是上一帧的载荷 —— 那时候屏上确实有场，
- *      「已生成」是实话。把 `error` 判在前面，屏上明明画着场，卡上却写
- *      「取数失败」。
- *   2. **`error` 里那句「实时源还没准备好」不是故障。** 它来自 `frame`/`summary`
- *      自己那个守卫（`if (!s || s.state !== 'ready') throw`），意思是「还没开始」。
- *      不判 `ready` 的话，一台正常的机器刚进这一屏就报「取数失败」——
- *      那是把「等下」说成「坏了」，反过来同样错。
- */
-const sceneText = computed(() => {
-  if (summary.data.value) return '已生成'
-  if (!ready.value) return '未开始'
-  return summary.error.value ? '取数失败' : '正在构'
+// 接入信息必须属于当前帧；新观测加载中不沿用上一观测或状态响应的读数。
+const displayedFrame = computed(() => {
+  const current = frame.data.value
+  return ready.value && current?.live.session_id === status.value?.session_id
+    && current?.frame.n === status.value?.cursor ? current : null
 })
+const weatherObservation = computed(() =>
+  displayWeatherQuery.value?.weather ?? (monitoringLocation.value ? null : displayedFrame.value?.live.weather)
+)
+const alertHumidity = computed(() => displayWeatherQuery.value?.data_kind === 'forecast' ? null : weatherObservation.value?.bg_rh ?? null)
 
-/** 本帧时刻。还没取到时说「正在取」，不印一个空的占位。 */
-const frameTimeText = computed(() => (
-  frame.data.value ? fmtTime(frame.data.value.frame.time) : '正在取'
-))
+const emptyMessage = computed(() => {
+  if (automaticField.blocked.value) return automaticField.blocked.value
+  if (automaticField.error.value) return `自动构场失败：${automaticField.error.value} 点击上方刷新重试。`
+  if (automaticField.loading.value) return '气象已接入，正在自动构建三维温度场…'
+  if (statusError.value || catalog.error.value) return '暂时无法读取构场状态，请检查连接后重试。'
+  if (!catalogLoaded.value || !status.value) return '正在检查构场状态…'
+  if (!hasModel.value) return '尚未配置可用的棚体结构与气象模型，请联系管理员完成配置。'
+  if (monitoringLocation.value && automaticWeather.loading.value) return '正在查询监测地点的气象数据…'
+  if (monitoringLocation.value && automaticWeather.error.value) return '气象查询失败，请点击上方刷新重试。'
+  if (monitoringLocation.value && automaticWeather.data.value && !ready.value) return '正在读取该地点的温度场…'
+  if (monitoringLocation.value && status.value.state === 'ready' && !ready.value) return '已切换监测地点，等待该地点的气象构场结果。'
+  return '尚无已保存的气象构场；请选择监测地点，接入该地点的气象后显示温度场。'
+})
 
 /**
  * 均温那句口径里要报的那个高度上限（米）。
@@ -275,51 +390,7 @@ const zLimitText = computed(() => (
 
 /** 底栏那条曲线。摘要还没到时是 null，模板那一支会说明在等什么。 */
 const vCurve = computed(() => (
-  summary.data.value ? buildLiveMeanCurveOption(summary.data.value, palette) : null
-))
-
-/* ── 环境参数：均温的环 + 两格真几何（2026-10-12 规格书 §三 D6） ─────── */
-
-/**
- * 圆环那一条弧的比例。
- *
- * ⚠️ 这里算的是一个**显示比例**（哪一段弧填上），**不是温度** ——
- *    全站「前端不做任何数值计算」那条约束管的是温度：读数一个都不是这里算的。
- *    规格书 §三 D6 自己写着「弧长与颜色都来自载荷的 `vmin` / `vmax` 与 `mean`」，
- *    所以它是被许可的那一处。
- */
-const meanFrac = computed(() => {
-  const p = summary.data.value
-  const m = p?.mean
-  if (!p || m === null || m === undefined) return 0
-  const span = p.vmax - p.vmin
-  if (!(span > 0)) return 0
-  return Math.min(1, Math.max(0, (m - p.vmin) / span))
-})
-
-/**
- * 弧的颜色。**与色标用的是同一个函数、同一组 stops** ——
- * 规格书 §三 D6 的原话是「**环就是一条弯过来的色标**」。
- * 取不到数时给空串，环那一层会兜一个主色。
- */
-const meanColor = computed(() => {
-  const p = summary.data.value
-  const m = p?.mean
-  if (!p || m === null || m === undefined) return ''
-  const [r, g, b] = valueToColor(m, p.vmin, p.vmax, tempStops())
-  return `rgb(${r}, ${g}, ${b})`
-})
-
-/**
- * 两格几何。**后端算好的**（`shed_width` / `shed_height`）——
- * 前端不做任何数值计算，所以两个端点即使都在手上也不许在这里相减。
- * ⚠️ 名字是**拱跨宽**与**拱顶高**，不是「棚体长度」：那是沿棚长（y）的跨度。
- */
-const widthText = computed(() => (
-  summary.data.value ? `${summary.data.value.shed_width.toFixed(2)} m` : '正在取'
-))
-const heightText = computed(() => (
-  summary.data.value ? `${summary.data.value.shed_height.toFixed(2)} m` : '正在取'
+  ready.value && summary.data.value ? buildLiveMeanCurveOption(summary.data.value, palette) : null
 ))
 
 /* ── 断面 + 点选 ────────────────────────────────────────── */
@@ -353,39 +424,6 @@ const readout = computed(() => {
     text: pickText(interpretPick(f, p.shed, p.ix, p.iz), f.max_measured_z),
   }
 })
-
-/* ── 概览那一条（2026-10-12） ─────────────────────────────────────── */
-
-/**
- * 三格。**值全部是已经格式化好的字符串**，语气也在这里定 ——
- * `OverviewStrip` 不认识页⑤，只按 `tone` 上一个类名。
- *
- * ⚠️ 2026-10-16 用户裁定：每格那第三行副文案（「拱形以内、z 不高于 1.10 m」
- * 等三句）**整块删掉**，`OverviewStrip` 那边连 `.sub` 那个元素一起撤了。
- * 理由是这一屏的版面：三维 / 环境参数 / 沿栅均温三块要**同屏不滚动**，
- * 每格省下一行就是几十像素。三句真话的去处分别是 —— 均温那一句搬进了页脚的
- * 「口径与出处」；「这一帧的体网格」在三维那一块的卡片里本来就写着；
- * 「实时数据，动态更新」说了等于没说（它旁边就是「更新时间」那一格）。
- *
- * ⚠️ 参考图那个「（切割 y = 18.00）」仍然**不印**（规格书 §三 D10，没被推翻）：
- * 这一屏演的是三维全场，后端没有「当前剖切位置」这个数，也不该为它编一个。
- */
-type Cell = {
-  key: string; label: string; value: string; sub?: string; tone: 'plain' | 'ok' | 'warn'
-}
-
-const overview = computed<readonly Cell[]>(() => [
-  {
-    key: 'mean', label: '棚内平均温度', value: meanText.value, sub: '当前帧棚内均温', tone: 'plain',
-  },
-  {
-    key: 'scene', label: '棚体三维温度场', value: sceneText.value, sub: '三维温度分布模型',
-    tone: sceneText.value === '取数失败' ? 'warn' : (sceneText.value === '已生成' ? 'ok' : 'plain'),
-  },
-  {
-    key: 'time', label: '更新时间', value: frameTimeText.value, sub: '当前展示帧的数据时间', tone: 'plain',
-  },
-])
 
 /* ── 右栏：断面那一档的问数（2026-10-12 规格书 §三 D8） ─────────────── */
 
@@ -439,129 +477,29 @@ function runAsk(q: { x: number; y: number; z: number }): void {
        于是那条守卫会以「一个 p.note 都没有」报红 —— 而它其实是被饿着了。
        这一条已经踩过一次（2026-10-16）。 -->
   <section class="live">
-    <h2>实时模式</h2>
-
-    <p v-if="error" role="alert" class="alert">{{ error }}</p>
-
-    <!-- ⚠️ 整屏都在 `hasModel` 里：没有能用的模型时连状态条、指标卡、
-         那几个控件都不给 —— 它们一个都起不了作用，摆着只会让人以为
-         再点一下就会有一帧出来。
-         ⚠️ 三支空态的**次序不能反**：取数失败时 `data` 也是 `null`，
-         「连不上」与「还没回来」两条都成立，先撞上谁由次序定。
-         把「连不上」说成「还没有可用的模型」是本仓最忌讳的错法
-         （规格书 §七）—— 空库是用户能解决的状态（去训一个），
-         连不上不是；说成空库，他会去训一个，然后保存时再撞一次同样的 500。 -->
-    <Card v-if="models.error.value">
-      <p class="err" role="alert">{{ models.error.value }}</p>
+    <MonitoringLocationDialog :open="weatherOpen" :model-value="monitoringLocation ?? displayedFrame?.live.location" @close="weatherOpen = false" @confirm="locationConfirmed" />
+    <LiveGreenhouseDialog v-if="greenhouseOpen" :location="monitoringLocation" :dimensions="houseDimensions"
+      :busy="updateBusy||!weatherQueryActive" :applying="designApplying" :error="designError"
+      @close="greenhouseOpen=false" @apply="applyDesign" @clear-error="designError=''" />
+    <p v-if="designLinkError" role="alert" class="alert">{{ designLinkError }}</p>
+    <p v-if="statusError" role="alert" class="alert">{{ statusError }}</p>
+    <p v-if="ready && automaticField.error.value" role="alert" class="alert">自动更新温度场失败：{{ automaticField.error.value }} 当前保留已保存结果。</p>
+    <Card v-if="catalog.error.value" class="catalog-error">
+      <p class="err" role="alert">{{ catalog.error.value }}</p>
     </Card>
-
-    <Card v-else-if="!modelsLoaded"><!-- 取数还没回来：什么断言都不下 --></Card>
-
-    <Card v-else-if="!hasModel">
-      <h3>{{ FIELD_MODEL.none }}</h3>
-      <p class="note state">{{ FIELD_MODEL.noneWhy }}</p>
-      <p>
-        <RouterLink to="/models">{{ FIELD_MODEL.toLibrary }}</RouterLink>
-        　
-        <RouterLink to="/train">{{ FIELD_MODEL.toTrain }}</RouterLink>
-      </p>
-    </Card>
-
-    <template v-else>
-    <!-- ⚠️ 2026-10-09 用户裁定：这一屏**只留温度场**。这里原先有两条东西，
-         整块删掉了 ——
-           · 一条状态句：「实时源已就绪：第 N 帧，共 M 帧，5 分钟一帧。」
-           · 一排四张指标卡（帧 / 共 / 一帧 / 本帧时刻）
-         用户的原话：「实时模式主要就是为了展示构建的温度场，温度场才是重点，
-         要让用户一眼就能观察到全貌，不需要向下滚动就能看到全貌，所以把一些
-         不重要东西都删掉……第几帧，一共多少帧这几个就没必要展示出来，后端
-         系统知道就行」。
-         那两条说的都是帧数，而它们在温度场**上面**占了将近一屏的三分之一。
-         唯一留下的是「本帧时刻」—— 它挪到了三维影像自己的角上（见下面
-         `<VolumeView show-clock>`）。状态句里那句真话（帧历史在内存里）
-         也留着，收进了页脚那个「口径与出处」。
-         同日还在撤：三维画面上方那两行口径说明（「这一段话也没必要展示了」）
-         —— 那是 `VolumeView` 给的，页⑤ 传 `:show-notes="false"` 关掉，页③ 不动；
-         以及「看哪一块」那行控件标签，和常驻在屏上的那一句**分级**
-         （它折进了页脚，见下面 `<details class="why">` 里那段注释 —— 那是
-         有意推翻规格书的一条，不是普通排版）。
-         `LiveView.test.ts` 里几条用例钉着这件事：不报帧数、没有指标卡、
-         那句真话还在 DOM 里、那两行不在而滑块还在、分级句在折叠里且只有一处、
-         以及「看哪一块」没了而分段控件还在。 -->
-
-    <div class="row">
-      <button
-        v-if="!ready || !!status?.pending_session_id" type="button" data-act="prepare" :disabled="preparing"
-        @click="act('prepare')"
-      >{{ prepareText }}</button>
-      <template v-if="ready">
-        <button type="button" data-act="start" :disabled="preparing || !!status?.running || !!status?.pending_session_id"
-                @click="act('start')">开始</button>
-        <button type="button" data-act="pause" :disabled="preparing || !status?.running || !!status?.pending_session_id"
-                @click="act('pause')">暂停</button>
-        <button type="button" data-act="next" :disabled="preparing || !!status?.pending_session_id"
-                @click="act('next')">下一帧</button>
-      </template>
-      <button v-if="status?.session_id && !status?.pending_session_id" type="button" data-act="new"
-              :disabled="preparing || !!status?.running" @click="act('new')">重新准备</button>
-      <span v-if="status?.model_name" class="note live-model" :title="`本次实时会话使用的模型：${status.model_name}`">
-        模型：{{ status.model_name }}
-      </span>
-      <span v-if="busy" class="note">正在处理…</span>
-      <span v-else-if="status?.detail" class="note">{{ status.detail }}</span>
-    </div>
-
-    <p v-if="!ready" class="note state">
-      准备要建一次管线，第一次要等几十秒。这之后每一帧是秒级的。
-    </p>
-
-    <template v-else>
-      <p v-if="frame.error.value" role="alert" class="alert">{{ frame.error.value }}</p>
-
-      <!-- 视图切换（2026-10-09 用户裁定）。控件摆在内容**上面** ——
-           它管的就是下面这一块是谁。
-           ⚠️ 用户同日把上面那行 `<legend>看哪一块</legend>` 也圈掉删了 ——
-           底下两个按钮本来就写着「断面」「三维」。撤的是那行标签，不是这个
-           `fieldset`：`fieldset.rail-box .seg` 是两页共用的那条钩子。 -->
-      <fieldset class="rail-box rail-switch">
-        <!-- 与页③ 同一条分段控件（spec §九）—— 两页共用一种控件，
-             样式各写一份但规则一致，`guards.test.ts` 有一条守卫同时扫这两处。 -->
-        <div class="seg">
-          <button
-            v-for="v in FIELD_VIEWS" :key="v.key"
-            type="button" :data-view="v.key" :class="{ on: view === v.key }"
-            @click="view = v.key"
-          >{{ v.label }}</button>
-        </div>
-      </fieldset>
-
-      <!-- ⚠️ 两块**互斥**、共用一个位子（2026-10-09 用户裁定）：原先断面那张卡
-           没有 `v-if` 拦着，切到三维就成了「断面卡 + 三维块」上下两条 ——
-           用户得往下翻才看得全，这一屏的版面因此没法按「一屏」来设计。
-           页③ 一直是 `v-if` / `v-else`，只有实时这一屏漏了。
-           `LiveView.test.ts` 里那条「切过去是换掉，不是接在下面」两侧都钉着。 -->
-      <!-- ⚠️ 2026-10-09 第二轮（参考图）：概览三格回来了。用户原话
-           「本帧时刻挪到指标卡」—— 第一轮把它印到三维影像的角上，
-           第二轮挪回这一行：它落在这一行里，断面与三维**两档都看得见**，
-           而角上那份只有三维那一档有。
-           ⚠️ 2026-10-12 起它是一条**长条**（`OverviewStrip`），不再是
-           「一排等宽卡片」（`StatRow` + `StatCard` 那一对是页① 的版面，
-           见规格书 §六）。三格的名字也跟着规格书那一张表定稿：
-           棚内平均温度 / 棚体三维温度场 / 更新时间。
-           ⚠️ 三格里一格都不报帧数：「第几帧、一共多少帧没必要展示」那条
-           裁定没被推翻（`LiveView.test.ts` 两侧都钉着）。
-           一律不带 `prov` 图章：三格上的数都是这次请求现算的，印三个
-           一模一样的「算」是重复（与页① 同一年的同一条裁定）。 -->
-      <OverviewStrip :cells="overview">
-        <template #icon-mean><Icon name="thermometer" /></template>
-        <template #icon-scene><Icon name="cube" /></template>
-        <template #icon-time><Icon name="clock" /></template>
-      </OverviewStrip>
+    <p v-if="frame.error.value" role="alert" class="alert">{{ frame.error.value }}</p>
+    <LiveWeatherOverview
+      :greenhouse-open="greenhouseOpen" @select-greenhouse="openGreenhousePicker"
+      :observation="weatherObservation" :location="monitoringLocation ?? displayedFrame?.live.location"
+      :query="displayWeatherQuery" :querying="automaticWeather.loading.value" :query-error="automaticWeather.error.value"
+      :refreshing="updateBusy" :monitoring="monitoringState" @select-region="weatherOpen = true" @refresh="refreshDashboard"
+      @monitor-start="timedMonitoring.start" @monitor-stop="timedMonitoring.stop" @monitor-interval="timedMonitoring.setIntervalMinutes"
+    />
 
       <!-- ⚠️ 两块**互斥**、共用一个位子（2026-10-09 第一轮用户裁定）：
            原先断面那张卡没有 `v-if` 拦着，切到三维就成了上下两条。
            页③ 一直是 `v-if` / `v-else`，只有实时这一屏漏了。 -->
-      <template v-if="view === 'section'">
+      <template v-if="ready && view === 'section'">
         <Card v-if="frame.data.value" class="block section-stage">
           <div class="row head">
             <!-- ⚠️ 头不再是「第 N 帧」（2026-10-09 第二轮）：帧号是不报的那几个
@@ -572,8 +510,8 @@ function runAsk(q: { x: number; y: number; z: number }): void {
             </span>
           </div>
           <p class="note reading">
-            这一帧的 24 路实测读数（次序：p1 的 8 个位置，然后 p2、p3）：
-            <span class="num">{{ frame.data.value.frame.sensor_temps.map(show).join('、') }}</span>
+            这一帧的 24 个预测点温度（次序：p1 的 8 个位置，然后 p2、p3）：
+            <span class="num">{{ (frame.data.value.frame.predicted_sensor_temps ?? []).map(show).join('、') || '暂无' }}</span>
           </p>
 
           <EChart v-if="v5" :option="v5" height="100%" class="section-chart" @pick="onPick" />
@@ -600,31 +538,29 @@ function runAsk(q: { x: number; y: number; z: number }): void {
            ⚠️ 传的是 `stretch` 而不是一个高度：高度由窗口算，不由这里编一个
            常数 —— 编出来的那个数在有人往这一屏加一块时会**悄悄**过期，
            而屏上只表现为「三维矮了」，不报错。 -->
-      <div v-else class="stage">
-        <VolumeView
-          :key="status?.session_id ?? 'legacy'"
-          :session-id="status?.session_id ?? undefined"
-          source="live" :t-index="status?.cursor ?? 0"
-          panels="shell" :show-notes="false" stretch
-          :clock-time="frame.data.value?.frame.time ?? ''"
-        />
+      <div v-show="!ready || view === 'volume'" class="stage">
+        <KeepAlive :max="1">
+          <VolumeView
+            v-if="ready && view === 'volume'"
+            :key="status?.session_id ?? 'legacy'"
+            :session-id="status?.session_id ?? undefined"
+            source="live" :t-index="status?.cursor ?? 0"
+            panels="shell" :show-notes="false" stretch
+            :clock-time="displayedFrame?.frame.time ?? ''"
+            v-model:layer-cuts="layerCuts"
+            v-model:layer-visibility="layerVisibility"
+          />
+        </KeepAlive>
+        <LiveFieldPlaceholder v-if="!ready" :message="emptyMessage" />
       </div>
 
-      <!-- 底栏两块（2026-10-09 第二轮，照参考图下方那两块）；
-           ⚠️ 2026-10-12 左块照参考图换成了「环境参数（棚体与周边）」
-           （规格书 §三 D7，用户裁定「照参考图换掉」）。**那是一次内容的净损失**：
-           棚顶那一组气象读数仍在 `/api/live/frame/{n}` 的返回体里，
-           只是这一屏不再印。要恢复，在右栏再加一张卡就行。
-           ⚠️ 两块都挂在**帧**这一级，与「看哪一块」无关。 -->
-
-
       <!-- 右栏（2026-10-12 规格书 §三 D8）。**三档都在的只有三维那一支**：
-           `VolumeView` 自己把三张卡投进 `#shell-side`；断面这一档它根本没挂载，
+           `VolumeView` 自己把三张卡投进 `#shell-side`；断面这一档缓存三维组件并收回其右栏，
            所以那一段由这里补上 —— 只有一张问数卡（几何与剖切、视图控制
            服务的是三维，断面档上没有它们的事）。
            ⚠️ **落点不在文档里时 Vue 静默不挂**：这一块会整块消失而不报错。
            `LiveView.test.ts` 自己造落点，正是防这一手。 -->
-      <Teleport v-if="view === 'section'" to="#shell-side">
+      <Teleport v-if="ready && view === 'section'" :to="sidebarTarget" :disabled="sidebarSuspended">
         <Card class="side-card">
           <fieldset class="rail-box">
             <legend>问数</legend>
@@ -646,56 +582,31 @@ function runAsk(q: { x: number; y: number; z: number }): void {
           </fieldset>
         </Card>
       </Teleport>
-      <Teleport to="#shell-side" :disabled="view !== 'section'">
-      <div class="foot" :class="{ 'section-foot': view === 'section' }">
-        <Card class="env-card">
-          <div class="env-head">
-            <Icon name="thermometer" />
-            <h3>环境参数</h3>
-            <span class="note">（棚体与周边）</span>
-          </div>
-          <div class="env">
-            <GaugeDial
-              :frac="meanFrac" :value-text="meanText" :arc-color="meanColor"
-              label="棚内平均温度" :size="96" technical
-            />
-            <div class="geom-card">
-              <div class="geom-head"><Icon name="ruler" /><span class="g-label">拱跨宽</span></div>
-              <span class="num g-value">{{ widthText }}</span>
-            </div>
-            <div class="geom-card">
-              <div class="geom-head"><Icon name="cube" /><span class="g-label">拱顶高</span></div>
-              <span class="num g-value">{{ heightText }}</span>
-            </div>
-          </div>
-          <!-- ⚠️ 这两格是**后端算好的真几何**（本数据集里是 2.10 m 与 1.30 m），
-               不是参考图上那个更大的跨度 —— 那一个是沿棚长方向的走廊跨度。
-               见 `routes/field.py::volume_payload`。
-               ⚠️ 2026-10-16 第二回：原先压在这两格底下有一句口径说明，撤进
-               页脚的「口径与出处」了 —— 与均温那一句同一条处置。 -->
-        </Card>
+      <Teleport :to="sidebarTarget" :disabled="!ready || view !== 'section' || sidebarSuspended">
+      <div class="foot" :class="{ 'section-foot': ready && view === 'section' }">
+        <LiveEnvironmentAlerts :field="alertField" :humidity="alertHumidity" />
 
         <Card class="temperature-overview">
-          <div class="temperature-overview-heading"><h3><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="currentColor"><path d="M3 13h4v8H3zM10 7h4v14h-4zM17 2h4v19h-4z" /></svg>{{ MEAN_CURVE_TITLE }}</h3><span class="note" title="颜色表示本帧沿棚均温的相对高低，不与三维全场色标共用范围">本帧均温：蓝低 · 橙高</span></div>
-          <!-- ⚠️ 高度 2026-10-16 从 240px 收到 150px：这一屏要三块同屏不滚动，
-               而这条曲线的形状在 150px 上照样读得出（它说的是「从头到尾哪儿热」
-               的趋势，不是要读刻度）。 -->
-          <EChart v-if="vCurve" :option="vCurve" :height="view === 'section' ? '100%' : 'min(120px, 13vh)'" class="overview-chart" />
+          <div class="temperature-overview-heading"><h3><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="currentColor"><path d="M3 13h4v8H3zM10 7h4v14h-4zM17 2h4v19h-4z" /></svg>{{ MEAN_CURVE_TITLE }}</h3><span class="note" title="曲线表示各高度的有效网格均温，颜色表示均温相对高低">垂直均温：蓝低，橙高</span></div>
+          <!-- 与底栏卡片同高，断面视图随侧栏伸展。 -->
+          <EChart v-if="vCurve" :option="vCurve" height="100%" class="overview-chart" />
           <!-- ⚠️ 这一格**不印后端的原话**：它是底栏的次要一块，把一条接口错误
                原样摊在这里会盖过温度场。而 `routes.smoke.test.ts` 那条禁字形
                扫描是逐页扫整页文本的，一句来路不明的错误文案正是最容易带进
                禁字形的地方。 -->
-          <p v-else class="note state">正在取这一帧的沿棚均温…</p>
+          <p v-else class="note state curve-placeholder">{{ ready ? summary.error.value ? '垂直温度分布暂时无法读取，请刷新重试。' : '正在取这一帧的垂直温度分布…' : '构场后显示垂直温度分布' }}</p>
           <!-- ⚠️ 这一格原来压着一句口径说明，2026-10-16 第二回连同左块那一句
                一起撤进页脚的「口径与出处」了：这一屏要三块同屏不滚动，
                而底栏是全屏最高的那一块，两句话就是将近五十像素。 -->
         </Card>
       </div>
       </Teleport>
-    </template>
 
     <!-- 口径与出处：一页最多一处（spec §八）。收起来，但内容始终在 DOM 里。 -->
-    <Teleport to="#rail-extra">
+    <Teleport :to="sidebarTarget" :disabled="sidebarSuspended">
+      <AgronomyAdvice :session-id="ready ? status?.session_id ?? null : null" :active="weatherQueryActive" />
+    </Teleport>
+    <Teleport v-if="ready" :to="navTarget" :disabled="navSuspended">
     <details class="why">
       <summary>口径与出处</summary>
       <!-- ⚠️ 分级句**原先常驻在屏上**（`data-grading`），2026-10-09 用户裁定
@@ -709,7 +620,7 @@ function runAsk(q: { x: number; y: number; z: number }): void {
            `data-grading` 留着当路标 —— 它是这一句的身份，也让
            `LiveView.test.ts` 钉得住「它在折叠里、且全屏只有一处」。 -->
       <p class="note" data-grading>
-        图上一个格子只有三种回答：拱外无定义、无测量带里不报数、以及一个带出处的实测值。
+        图上一个格子只有三种回答：拱外无定义、无测量带里不报数、以及一个带出处的模型推算值。
       </p>
       <!-- ⚠️ 均温那一句**原先常驻在概览条底下**，2026-10-16 用户裁定撤下来。
            与原先把分级句折进这里是同一条处置：**降级不是删除** —— 话一个字
@@ -721,25 +632,18 @@ function runAsk(q: { x: number; y: number; z: number }): void {
         均温只算拱形以内、z 不高于 {{ zLimitText }} m 的那些格子。拱外没有定义，
         再往上那一条是按外推补出来的，都不进平均。
       </p>
-      <!-- ⚠️ 下面两句 2026-10-16 第二回从底栏那两张卡上撤下来的。**同一个处置**
-           （降级不是删除）：底栏是全屏最高的一块，两句话压在卡片底下就是将近
-           五十像素，而这一屏的账压在「三块同屏」上。`LiveView.test.ts` 里
-           断这两句的那两条**照样绿** —— 内容在 DOM 里。 -->
       <p class="note">
-        拱跨宽与拱顶高由后端给，是棚体的几何常量。腔内的平均温度见左边那个环。
+        温度分布概览的横坐标为距地高度，纵坐标为该高度沿棚宽、棚长的有效网格均温。
+        统计使用当前帧的网格，沿棚长每 3 m 采一片，包含上部已有的模型预测温度；拱外与缺失值不计入，缺数高度留空。
       </p>
       <p class="note">
-        沿棚位每 3 m 采一片，每一片取拱形以内、实测带以内的平均。
-        它说的是「这一棚从头到尾哪儿热」，与断面图说的「这一片里哪儿热」不是一回事。
-      </p>
-      <p class="note">
-        数据集末 144 帧留了出（2026-07-27 12:00 起），模型只在其余 1164 帧上标定过一次。
-        这里一帧一帧把它们接进时间轴。
+        显示当前账号最近一次保存的气象构场。G 预测棚内点位，冻结 F 构建空间温度场，
+        棚内点位不是现场传感器实测。
       </p>
       <!-- 原先挂在顶部那条状态句上。整句说的都是帧数，跟着指标卡一起撤了，
            但这一句不是帧数、是**用户该知道的口径**：重启服务这一屏就从头演。 -->
       <p class="note">
-        数据源、模型和确认位置随会话保留。计算服务重启后，可恢复到上次确认帧，恢复后保持暂停。
+        气象输入与模型配置快照随结果保存。提交新的外部气象后更新当前画布，服务重启后仍可读取已保存结果。
       </p>
       <!-- 正在用的那一份包不是为当前这份数据标的时的那句话。**逐字来自后端**
            （`deps._BORROWED_NOTE` → 载荷的 `mismatch_note`），前端不另写一句
@@ -763,11 +667,12 @@ function runAsk(q: { x: number; y: number; z: number }): void {
       </p>
     </details>
     </Teleport>
-    </template>
   </section>
 </template>
 
 <style scoped>
+.live-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.live-heading h2 { margin: 0; }
 .section-stage { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .live .section-stage { margin-bottom: 0; margin-top: var(--gap-m); }
 .section-stage .section-chart { flex: 1 1 auto; min-height: 260px; }
@@ -808,6 +713,11 @@ function runAsk(q: { x: number; y: number; z: number }): void {
    在这里再写一个数，两个数迟早对不上，而屏上只是「三维的高度看着不对」。 */
 .live { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; }
 .stage { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.empty-status { gap: 10px; margin-bottom: var(--gap-s); }
+.empty-status > .note { flex: 1 1 280px; }
+.empty-status a { color: var(--edge); white-space: nowrap; }
+.empty-status button { padding: 3px 10px; font-size: var(--size-note); }
+.curve-placeholder { min-height: min(120px, 13vh); display: flex; align-items: center; justify-content: center; margin: 0; }
 
 .block { margin-bottom: var(--gap-xl); }
 .row { display: flex; flex-wrap: wrap; gap: var(--gap-s); align-items: center; }
@@ -825,12 +735,17 @@ function runAsk(q: { x: number; y: number; z: number }): void {
    只是这一支不再有 legend。 */
 .rail-switch { border: 0; padding: 0; margin: 0 0 var(--gap-m); }
 /* 底栏两块。左边窄、右边宽 —— 气象是三个数，曲线要的是横向地方。 */
-.foot > .env-card, .foot > .temperature-overview { padding: 10px 12px; }
+.foot > .temperature-overview { padding: 10px 12px; }
 .foot {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
   gap: var(--gap-m);
   margin-top: var(--gap-m);
+}
+.foot:not(.section-foot) > .temperature-overview { display: flex; flex-direction: column; }
+.foot:not(.section-foot) .overview-chart { flex: 1 1 0; min-height: 140px; }
+@media (min-width: 1200px) {
+  .foot:not(.section-foot) { min-height: 260px; flex: 0 0 auto; }
 }
 /* 窄屏上摞起来：两条轨并排时每块只剩三百来像素，曲线读不出形状。 */
 @media (max-width: 1100px) { .foot { grid-template-columns: minmax(0, 1fr); } }
@@ -866,35 +781,6 @@ function runAsk(q: { x: number; y: number; z: number }): void {
 .why { margin-top: var(--gap-s); padding: 0 var(--gap-m) var(--gap-m); overflow-wrap: anywhere; }
 .why summary { font-size: var(--size-label); color: var(--ink-muted); cursor: pointer; }
 .why > p { margin-top: var(--gap-s); }
-/* 环境参数：温度环与两张几何卡片始终在同一排，收紧占用高度。 */
-.env-card { container-type: inline-size; position: relative; border: 1px solid var(--interact); }
-.env-card::before, .env-card::after { content: ''; position: absolute; width: 13px; height: 13px; pointer-events: none; }
-.env-card::before { top: -1px; left: -1px; border-top: 2px solid var(--edge); border-left: 2px solid var(--edge); }
-.env-card::after { bottom: -1px; right: -1px; border-bottom: 2px solid var(--edge); border-right: 2px solid var(--edge); }
-.env-head { display: flex; align-items: center; gap: var(--gap-s); margin-bottom: 6px; padding-bottom: 6px; border-bottom: var(--rule); position: relative; }
-.env-head::after { content: ''; position: absolute; bottom: -1px; right: 0; width: 7px; height: 2px; background: var(--interact); }
-.env-head :deep(.icon) { --icon-size: 22px; color: var(--edge); }
-.env-head .note { margin-left: -4px; }
-.env { display: grid; grid-template-columns: 96px repeat(2, minmax(0, 1fr)); align-items: center; gap: 8px; padding: 0; }
-.geom-card {
-  min-width: 0; min-height: 82px; padding: 8px 10px;
-  display: flex; flex-direction: column; justify-content: center; gap: var(--gap-s);
-  border: 1px solid var(--interact); border-radius: var(--radius); background: var(--card-2);
-}
-.geom-head { display: flex; align-items: center; gap: 4px; min-width: 0; }
-.geom-head :deep(.icon) { --icon-size: 24px; flex: none; color: var(--edge); }
-.g-label { font-size: var(--size-label); color: var(--ink-muted); }
-.g-value { font-size: 23px; font-family: var(--font-latin); color: var(--edge); font-weight: var(--w-strong); white-space: nowrap; }
-@container (max-width: 420px) {
-  .env { grid-template-columns: 96px repeat(2, minmax(0, 1fr)); gap: 6px; }
-  .env :deep(.dial) { --dial-size: 96px !important; }
-  .env :deep(.dial svg) { width: 96px; height: 96px; }
-  .geom-card { padding: var(--gap-s) 4px; }
-  .geom-head { gap: 2px; }
-  .geom-head :deep(.icon) { --icon-size: 16px; }
-  .g-label { font-size: var(--size-note); }
-  .g-value { font-size: 20px; }
-}
 /* 右栏那张卡：它是 `<Teleport>` 投出去的那个落点里的一块，落点的 `gap`
    管卡片间距，这里只管卡片内部两组之间的间距。 */
 .side-card { display: flex; flex-direction: column; }

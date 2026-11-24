@@ -91,11 +91,13 @@ const TH = {
 const PREVIEW = {
   n_times: 1308, limit: 3, n_rows: 3,
   columns: [
-    { key: 'bg_temp_C', label: '背景温度' },
+    { key: 'bg_temp_C', label: '背景温度', unit: '℃' },
+    { key: 'bg_light', label: '背景光照强度', unit: '源数据单位' },
+    { key: 'bg_rh_pct', label: '背景湿度', unit: '%' },
     { key: 'p1_x0.15_z0.4_temp_C', label: 'p1·B6' },
   ],
   time: ['2026-07-23T11:00:00', '2026-07-23T11:05:00', '2026-07-23T11:10:00'],
-  values: [[31.4, 40.1], [31.5, null], [31.6, 40.3]],
+  values: [[31.4, 800, 65, 40.1], [31.5, 820, 66, null], [31.6, 840, 64, 40.3]],
 }
 
 function stub(routes: Record<string, unknown>) {
@@ -217,7 +219,7 @@ describe('页① 数据导入与检查', () => {
     expect(split.findAll('table').length, '表不在分栏里').toBe(1)
     expect(split.find('thead th').text(), '首列不是时刻').toBe('时刻')
     expect(split.findAll('thead th').map((h) => h.text()))
-      .toEqual(['时刻', '背景温度', 'p1·B6'])
+      .toEqual(['时刻', '背景温度℃', '背景光照强度源数据单位', '背景湿度%', 'p1·B6'])
   })
 
   it('屏上写明表里装了多少：前 N 行，共 M 行', async () => {
@@ -233,7 +235,7 @@ describe('页① 数据导入与检查', () => {
   it('数据预览每页十行，可翻页且显示真实预览范围', async () => {
     const time = Array.from({ length: 23 }, (_, i) =>
       `2026-07-23T11:${String(i).padStart(2, '0')}:00`)
-    const values = time.map((_, i) => [30 + i, 40 + i])
+    const values = time.map((_, i) => [30 + i, 800 + i, 65, 40 + i])
     stub({ '/api/dataset': DATASET, '/api/field/arch': ARCH,
       '/api/dataset/preview': { ...PREVIEW, n_rows: 23, n_times: 1308, time, values } })
     const w = mountView()

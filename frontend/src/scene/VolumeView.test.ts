@@ -12,7 +12,7 @@ vi.mock('./VolumeScene.vue', () => ({
     // 透传属性（fallthrough attr），于是 `findComponent(...).props('x')`
     // 读出 `undefined` —— 而生产代码是对的。新加一个属性就要来这里加一个名字，
     // 否则那条测试会以「功能没接上」的样子红着，指错方向。
-    props: ['spec', 'payload', 'picked', 'cutY', 'showViewControls'],
+    props: ['spec', 'payload', 'picked', 'cutY', 'showViewControls', 'fieldMode', 'temperatureLayers'],
     emits: ['hover', 'pick', 'ready'],
     template: '<div class="scene-stub" />',
   },
@@ -22,11 +22,30 @@ import VolumeView from './VolumeView.vue'
 
 const VOLUME = makeVolumePayload()
 
+describe('助手固定快照三维入口', () => {
+  it('画布与初始点查询都读取同一快照接口',async () => {
+    const urls=stub()
+    const w=await mountView(12,VOLUME.time,{frozenSnapshotId:'snapshot-test',initialPosition:{x:VOLUME.x[0]!,y:VOLUME.planes[0]!.y,z:VOLUME.z[0]!}})
+    await flushPromises()
+    expect(urls).toContain('/api/assistant/snapshots/snapshot-test/volume')
+    expect(urls.some(u=>u.startsWith('/api/assistant/snapshots/snapshot-test/point?'))).toBe(true)
+    expect(urls.some(u=>u.startsWith('/api/live/') || u.startsWith('/api/field/'))).toBe(false)
+    w.unmount()
+  })
+})
+
 function stub(body: unknown = VOLUME) {
   const urls: string[] = []
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     urls.push(String(url))
-    return new Response(JSON.stringify(body), {
+    let reply = body
+    if (String(url).includes('/point')) {
+      const params = new URL(String(url), 'http://localhost').searchParams
+      reply = { x: Number(params.get('x')), y: Number(params.get('y')), z: Number(params.get('z')),
+        time: VOLUME.time, t_index: VOLUME.t_index, value: 2, kind: 'value', method: 'trilinear',
+        measured_plane: false, shed: null, max_measured_z: 1.1, note: '' }
+    }
+    return new Response(JSON.stringify(reply), {
       status: 200, headers: { 'Content-Type': 'application/json' },
     })
   }))
@@ -44,6 +63,52 @@ async function mountView(
   return w
 }
 
+it('实时分层可调节上下分界，短棚按实际棚高截断且调整无需重新取数', async () => {
+  const urls = stub(makeVolumePayload({ shed_height: 1.3017 }))
+  const w = await mountView(0, VOLUME.time, { source: 'live', layerCuts: [0.5, 1.5] })
+  const scene = w.findComponent({ name: 'VolumeScene' })
+  scene.vm.$emit('ready', true)
+  await flushPromises()
+  expect(scene.props('temperatureLayers').cuts).toEqual([0.5, 1.3017])
+  expect(w.get('.layer-controls').text()).toContain('上层无空间')
+  await w.get('input[aria-label="上分界高度"]').setValue('1.1')
+  expect(w.emitted('update:layerCuts')).toEqual([[[0.5, 1.1]]])
+  await w.setProps({ layerCuts: [0.5, 1.1] })
+  expect(scene.props('temperatureLayers').cuts).toEqual([0.5, 1.1])
+  expect(w.get('.layer-controls').text()).toContain('上层1.10–1.30 m')
+  await w.get('input[aria-label="下分界高度"]').setValue('0.35')
+  expect(w.emitted('update:layerCuts')?.at(-1)).toEqual([[0.35, 1.1]])
+  expect(urls).toEqual(['/api/live/volume/0'])
+  w.unmount()
+})
+
+it('画布左上角分层按钮支持两层、单层和恢复三层', async () => {
+  stub(makeVolumePayload({ shed_height: 2.4 }))
+  const w = await mountView(0, VOLUME.time, { source: 'live', panels: 'shell', layerCuts: [0.5, 1.5] })
+  const scene = w.findComponent({ name: 'VolumeScene' })
+  scene.vm.$emit('ready', true)
+  await flushPromises()
+  const buttons = () => w.get('.stage-overlay-head .layer-visibility').findAll('button')
+  const pressed = () => buttons().map(button => button.attributes('aria-pressed'))
+  expect(pressed()).toEqual(['true', 'true', 'true'])
+
+  await buttons()[1]!.trigger('click')
+  expect(w.emitted('update:layerVisibility')?.at(-1)).toEqual([[true, false, true]])
+  await w.setProps({ layerVisibility: [true, false, true] })
+  await buttons()[0]!.trigger('click')
+  expect(w.emitted('update:layerVisibility')?.at(-1)).toEqual([[false, false, true]])
+  await w.setProps({ layerVisibility: [false, false, true] })
+  expect(pressed()).toEqual(['false', 'false', 'true'])
+  expect(buttons()[2]!.attributes('disabled')).toBeDefined()
+  expect(scene.props('temperatureLayers').visible).toEqual([false, false, true])
+
+  await buttons()[0]!.trigger('click')
+  await w.setProps({ layerVisibility: [true, false, true] })
+  await buttons()[1]!.trigger('click')
+  expect(w.emitted('update:layerVisibility')?.at(-1)).toEqual([[true, true, true]])
+  w.unmount()
+})
+
 /** 把三个输入框填上。`inputs` 是 [x, y, z]。 */
 async function typeQuery(w: ReturnType<typeof mount>, values: [string, string, string]) {
   const inputs = w.findAll('input[type="number"]')
@@ -60,6 +125,73 @@ async function submitQuery(w: ReturnType<typeof mount>) {
 
 describe('页③ 三维面板', () => {
   beforeEach(() => { vi.restoreAllMocks() })
+
+  it('立体态与切面态都可用，切换后保留剖切位置', async () => {
+    stub()
+    const w = await mountView()
+    const scene = w.findComponent({ name: 'VolumeScene' })
+    scene.vm.$emit('ready', true)
+    await flushPromises()
+    await w.get('input[aria-label="剖切刀"]').setValue('3.27')
+    expect(scene.props('fieldMode')).toBe('solid')
+    await w.findAll('button').find(b => b.text() === '切面态')!.trigger('click')
+    expect(scene.props('fieldMode')).toBe('slices')
+    expect(scene.props('cutY')).toBe(3.27)
+    await w.findAll('button').find(b => b.text() === '立体态')!.trigger('click')
+    expect(scene.props('cutY')).toBe(3.27)
+    w.unmount()
+  })
+
+  it('实时坐标查询带原帧号、会话和网格引用', async () => {
+    const urls = stub(makeVolumePayload({ frame: { n: 3, time: VOLUME.time } }))
+    const w = await mountView(3, VOLUME.time, { source: 'live', sessionId: 'session-a' })
+    await typeQuery(w, ['1.025', '3.2', '0.7'])
+    await submitQuery(w)
+    const request = urls.find(url => url.includes('/point'))!
+    expect(request).toContain('/api/live/point/3?')
+    expect(new URL(request, 'http://localhost').searchParams.get('session_id')).toBe('session-a')
+    expect(w.get('table[aria-label="坐标查询结果"]').text()).toContain('(1.025, 3.20, 0.70)')
+    w.unmount()
+  })
+
+  it('换帧后丢弃上一帧尚未返回的查询', async () => {
+    let finish!: (r: Response) => void
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('/point')) return new Promise<Response>(resolve => { finish = resolve })
+      return new Response(JSON.stringify(VOLUME), { status: 200 })
+    }))
+    const w = await mountView()
+    await typeQuery(w, ['1', '3.2', '0.7'])
+    await submitQuery(w)
+    await w.setProps({ tIndex: 13 })
+    finish(new Response(JSON.stringify({ x: 1, y: 3.2, z: .7, time: VOLUME.time,
+      t_index: 12, value: 99, kind: 'value', method: 'trilinear' })))
+    await flushPromises()
+    expect(w.get('table[aria-label="坐标查询结果"]').text()).toContain('待查询')
+    expect(w.get('table[aria-label="坐标查询结果"]').text()).not.toContain('99')
+    w.unmount()
+  })
+
+  it('连续鼠标选点按原始位置查询并能钉住', async () => {
+    vi.useFakeTimers()
+    try {
+      const urls = stub()
+      const w = await mountView()
+      const scene = w.findComponent({ name: 'VolumeScene' })
+      const pick = { planeIndex: 0, ix: 1, iz: 1, position: [1.025, 3.2, .7], method: 'volume' }
+      scene.vm.$emit('hover', pick)
+      await vi.advanceTimersByTimeAsync(200)
+      await flushPromises()
+      expect(w.get('table[aria-label="画布选点读数"]').text()).toContain('(1.025, 3.20, 0.70)')
+      expect(w.get('table[aria-label="画布选点读数"]').text()).toContain('空间重建')
+      expect(urls.some(url => url.includes('y=3.2'))).toBe(true)
+      scene.vm.$emit('pick', pick)
+      scene.vm.$emit('hover', null)
+      await flushPromises()
+      expect(w.find('button[aria-label="取消钉住"]').exists()).toBe(true)
+      w.unmount()
+    } finally { vi.useRealTimers() }
+  })
 
   it('未选点或未查询时保留完整结果字段，清除选点后恢复占位', async () => {
     stub()
@@ -285,7 +417,7 @@ describe('页③ 三维面板', () => {
     // 数值那句两处逐字相同 —— 判定与文案都只有一处。
     const value = byMouse.match(/现场重算：[\d.]+ °C/)
     expect(value, '悬停读数里没有那句数值').toBeTruthy()
-    expect(byQuery).toContain(value![0])
+    expect(byQuery).toContain('空间重建（网格插值）：2.00 °C')
   })
 
   it('读数表里的时刻走 `fmtTime`，不把 ISO 的 T 印给人看（终审 I-3）', async () => {
@@ -302,16 +434,19 @@ describe('页③ 三维面板', () => {
     expect(w.find('table').text()).toMatch(/2026-07-23 12:00/)
   })
 
-  it('**坐标查询要写出吸附之后的坐标，不插值**', async () => {
-    // 用户输的是 5.4、拿到的是 5.5 的值，不写出来就是撒谎。
-    stub()
+  it('切片之间的坐标原样发送后端并显示，不再吸附', async () => {
+    const urls = stub()
     const w = await mountView()
     // 先填充画布读数，确认它与下面的坐标查询结果各自保留自己的位置。
     w.findComponent({ name: 'VolumeScene' }).vm.$emit('hover', { planeIndex: 0, ix: 1, iz: 1 })
     await flushPromises()
     await typeQuery(w, ['1.23', '3.4', '0.66'])
     await submitQuery(w)
-    expect(w.findAll('table')[1].text()).toContain('(1.40, 3.50, 0.70)')
+    expect(w.findAll('table')[1].text()).toContain('(1.23, 3.40, 0.66)')
+    expect(w.findAll('table')[1].text()).toContain('网格插值')
+    const request = new URL(urls.find(url => url.includes('/point'))!, 'http://localhost')
+    expect(request.searchParams.get('y')).toBe('3.4')
+    expect(request.searchParams.get('x')).toBe('1.23')
   })
 
   it('**坐标超出这一卷的范围时报错，不给数**（Review Focus 2）', async () => {
@@ -481,7 +616,7 @@ describe('剖切刀：住在页级，且只在场景画得出来时才挂', () =
     // 「有个数就行」：范围推错了（比如按 sheds 的 3/9/15 算）照样「有个数」。
     expect(input.attributes('min')).toBe('3')
     expect(input.attributes('max')).toBe('3.5')
-    expect(input.attributes('step')).toBe('0.5')
+    expect(input.attributes('step')).toBe('0.01')
     expect(w.find('.vol-grid').text()).toContain('切到 y = 3.50 m 为止')
   })
 

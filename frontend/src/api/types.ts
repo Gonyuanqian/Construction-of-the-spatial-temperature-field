@@ -75,6 +75,7 @@ export interface PreviewColumn {
   key: string
   /** 屏上印的名字（`p1·B1`、`背景温度`）。后端拼好送来的 —— 前端不拼显示字符串。 */
   label: string
+  unit?: string
 }
 
 /**
@@ -468,6 +469,8 @@ export interface ComparePayload {
 
 /** 一整卷里的一片。`values` 同样是行主序 `values[iz][ix]`。 */
 export interface VolumePlane {
+  /** Weather inference sources are predicted, never observed measurements. */
+  virtual_source?: boolean
   y: number
   /**
    * 这一片是不是**实测断面**。**由后端判定，不由前端猜。**
@@ -503,7 +506,24 @@ export interface VolumePlane {
  * （状态条上空的帧号、`frame/undefined` 422），而替身恰好也回错了形状，
  * 一路绿到终审。
  */
+export interface ExternalWeatherObservation {
+  bg_temp: number | null
+  bg_rh: number | null
+  bg_light: number | null
+}
+
 export interface LiveStatus {
+  prototype?: boolean
+  dimensions?: import('../live/houseDimensions').HouseDimensions
+  weather_source?: { provider: string; source_fingerprint: string; data_kind?: string; monitoring_mode?: string;
+    field_time?:string; observed_at?:string; light_time?:string; fetched_at?:string; light_fetched_at?:string; light_lead_seconds?:number;
+    attributions?:string[];
+    requested_coordinates?:{latitude:number;longitude:number;coordinate_system:'GCJ-02'};
+    query_coordinates?:{latitude:number;longitude:number;coordinate_system:'GCJ-02'} } | null
+  light_conversion?: import('./weather').WeatherQueryResult['light_conversion']
+  warnings?:string[]
+  /** Saved field's weather valid time, distinct from the latest provider fetch time. */
+  time?: string
   state: 'idle' | 'ready'
   running: boolean
   /** 现在停在第几帧（留出段的下标，0..total-1）。 */
@@ -513,12 +533,15 @@ export interface LiveStatus {
   /** 多久一帧。**由后端给**：时钟在服务端，前端不自己定这个数。 */
   interval_s: number
   session_id?: string | null
-  model_id?: number
+  model_id?: number | null
   model_name?: string
   recovery_required?: boolean
   preparing?: boolean
   pending_session_id?: string
   detail?: string | null
+  /** 与该气象帧一起保存的外部输入；未接入湿度时为 null。 */
+  weather?: ExternalWeatherObservation
+  location?: import('./regions').RegionInfo | null
 }
 
 /**
@@ -545,6 +568,8 @@ export interface LiveFrameBlock {
   bg_light: number | null
   /** 次序：p1 的 8 个位置，然后 p2、p3。 */
   sensor_temps: (number | null)[]
+  /** 气象驱动构场的虚拟点温度，不是传感器实测。 */
+  predicted_sensor_temps?: number[]
 }
 
 /**
@@ -560,6 +585,12 @@ export interface LiveFramePayload extends SectionsPayload {
 }
 
 export interface VolumePayload {
+  /** 后端按高度汇总的有效网格均温；缺失高度保留 null。 */
+  height_profile?: {z: number; mean: number | null}[]
+  transfer?: {requested_dimensions: import('../live/houseDimensions').HouseDimensions;accuracy_validated:boolean;longitudinal_policy:string}
+  live?: { session_id?: string }
+  field_ref?: string
+  frame?: { n: number; time: string }
   t_index: number
   /** 时刻字符串，**后端给**，前端不自己算。每一条读数都要带上它。 */
   time: string
@@ -617,6 +648,18 @@ export interface VolumePayload {
   stripes: [number, number][]
   planes: VolumePlane[]
   elapsed_ms: number
+  note: string
+}
+
+export interface VolumePointPayload {
+  field_ref?: string
+  x: number; y: number; z: number; time: string; t_index: number
+  kind: 'value' | 'outside' | 'unmeasured' | 'unavailable'
+  value: number | null
+  method: 'trilinear'
+  measured_plane: boolean
+  shed: string | null
+  max_measured_z: number
   note: string
 }
 

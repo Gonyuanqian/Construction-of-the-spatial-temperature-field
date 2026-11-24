@@ -16,6 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.stereotype.Repository;
@@ -149,6 +150,38 @@ public class ModelRepository {
     private void retireLatest() {
         jdbc.update("UPDATE training_job j JOIN workspace_context w ON w.latest_job_id=j.id "
                 + "SET j.result_retired=1 WHERE w.id='default'");
+    }
+
+    @Transactional
+    public Map<String, Object> rename(long id, String name) {
+        lockWorkspace();
+        find(id);
+        jdbc.update("UPDATE model SET name=? WHERE id=?", name, id);
+        return find(id);
+    }
+
+    @Transactional
+    public void delete(List<Long> ids) {
+        lockWorkspace();
+        // 所有记录先校验再写入，批量删除中有一个仍被使用就保留整批。
+        for (long id : ids) {
+            Map<String, Object> row = find(id);
+            Integer workspace = jdbc.queryForObject("SELECT COUNT(*) FROM workspace_context WHERE model_id=?", Integer.class, id);
+            Integer sessions = jdbc.queryForObject("SELECT COUNT(*) FROM live_session WHERE model_id=?", Integer.class, id);
+            Integer weather = jdbc.queryForObject("SELECT COUNT(*) FROM weather_model WHERE model_id=?", Integer.class, id);
+            if (Boolean.TRUE.equals(row.get("is_current")) || workspace > 0)
+                throw new DatasetApiException(409, "「" + row.get("name") + "」是当前工作区模型，请先选用其他模型。");
+            if (sessions > 0 || weather > 0)
+                throw new DatasetApiException(409, "「" + row.get("name") + "」已被实时会话或气象构场引用，不能删除。");
+        }
+        try {
+            for (long id : ids) {
+                jdbc.update("UPDATE training_job SET saved_model_id=NULL WHERE saved_model_id=?", id);
+                jdbc.update("DELETE FROM model WHERE id=?", id);
+            }
+        } catch (DataIntegrityViolationException ex) {
+            throw new DatasetApiException(409, "模型仍被其他记录引用，本次删除未完成。");
+        }
     }
 
     private void lockWorkspace() {

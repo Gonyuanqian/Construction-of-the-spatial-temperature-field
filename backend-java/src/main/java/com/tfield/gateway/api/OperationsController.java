@@ -62,6 +62,12 @@ public class OperationsController {
             boolean liveReady = live != null && live.path("protocol_version").asInt() == 1;
             result.put("live_protocol", liveReady ? "ok" : "unavailable");
             healthy &= liveReady;
+            JsonNode weather = healthClient.get().uri(properties.baseUrl().resolve("/internal/v1/weather/info"))
+                    .header("X-TField-Internal-Key", storage.internalKey()).retrieve().body(JsonNode.class);
+            boolean weatherReady = weather != null && weather.path("protocol_version").asInt() == 1
+                    && weather.path("views_version").asInt() == 1;
+            result.put("weather_protocol", weatherReady ? "ok" : "unavailable");
+            healthy &= weatherReady;
         } catch (RestClientException ex) {
             result.put("python", "unavailable");
             healthy = false;
@@ -73,7 +79,7 @@ public class OperationsController {
     @GetMapping("/ops/info")
     public Map<String, Object> info() {
         return Map.of("service", "tfield-business", "stage", "unified-deployment",
-                "business_version", "0.5.0",
+                "business_version", "0.6.0",
                 "deployment_id", System.getenv().getOrDefault("TFIELD_DEPLOYMENT_ID", "manual"),
                 "acceptance_mode", "true".equals(System.getenv("TFIELD_ACCEPTANCE_MODE")),
                 "spring_boot_version", SpringBootVersion.getVersion(),

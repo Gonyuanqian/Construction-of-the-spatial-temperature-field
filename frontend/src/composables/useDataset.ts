@@ -19,12 +19,16 @@ export type DatasetState = 'probing' | 'ok' | 'missing' | 'error'
 const state = ref<DatasetState>('probing')
 const version = ref(0)
 const lastImport = ref<UploadResult | null>(null)
+let sequence = 0
 
 async function probe(): Promise<void> {
+  const request = ++sequence
   try {
     await getJson<DatasetPayload>('/api/dataset')
+    if (request !== sequence) return
     state.value = 'ok'
   } catch (e) {
+    if (request !== sequence) return
     // ⚠️ **只有 409 是空态。** 其它一切（500、连不上）都是「出错了」——
     // 把后者说成「你还没开始」，会让用户去导一份数据集来解决一个
     // 后端没起来的问题。这两种错必须分得开（规格书 §二.1）。
@@ -51,6 +55,7 @@ async function probe(): Promise<void> {
  * 看不见这件事：它挂着的那个实例根本不会被卸掉。
  */
 function onImported(result: UploadResult): void {
+  sequence++
   lastImport.value = result
   state.value = 'ok'
   version.value += 1
@@ -58,6 +63,7 @@ function onImported(result: UploadResult): void {
 
 /** 只给测试用：把单例打回起点。生产代码不许调它。 */
 function reset(): void {
+  sequence++
   state.value = 'probing'
   version.value = 0
   lastImport.value = null

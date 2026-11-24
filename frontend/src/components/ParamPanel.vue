@@ -5,7 +5,7 @@
  * 十二个可调参数分两组（XGBoost 八个、IDW 四个），每行三件东西：
  * 中文名（后端给的 `label`）、键、控件。控件只有两种 —— 滑块与下拉，
  * 正是参考图上的那两种。
- * 默认两组并排；训练页的窄配置栏通过 layout="tabs" 切换组别，参数值不变。
+ * 默认两组并排；支持 tabs 切换或 stacked 上下展开，参数值不变。
  *
  * ⚠️ **这一页一个数都不算**：滑块的档位是**下标**，`raw[index]` 是后端早就
  * 给好的那个值。这里不插值、不取整、不做单位换算（硬约束 1）。
@@ -34,8 +34,8 @@ const props = defineProps<{
   panel: CalibrationPanel
   /** 当前值。键是 `PanelRow.key`，值是**原始类型**（数字 / 布尔 / 字符串）。 */
   values: Record<string, ParamValue>
-  /** 窄配置栏按模型类型切换；默认仍保留并排展示。 */
-  layout?: 'columns' | 'tabs'
+  /** 默认并排；tabs 按模型切换，stacked 将空间修正放在趋势参数下方。 */
+  layout?: 'columns' | 'tabs' | 'stacked'
 }>()
 
 const emit = defineEmits<{ pick: [key: string, value: ParamValue] }>()
@@ -56,7 +56,7 @@ const groups = computed(() => [
 const activeGroup = ref('XGBoost')
 
 function sections(group: typeof groups.value[number]) {
-  if (props.layout !== 'tabs') return [{ title: '', rows: group.rows }]
+  if (props.layout !== 'tabs' && props.layout !== 'stacked') return [{ title: '', rows: group.rows }]
   const definitions = group.title === 'XGBoost'
     ? [
         { title: '树结构与学习', keys: ['trend.max_depth', 'trend.learning_rate', 'trend.n_estimators', 'trend.min_child_weight'] },
@@ -112,10 +112,10 @@ function onSelect(row: PanelRow, e: Event): void {
 </script>
 
 <template>
-  <div class="panel" :class="{ tabbed: layout === 'tabs' }">
-    <div v-if="layout === 'tabs'" class="parameter-toolbar">
+  <div class="panel" :class="{ tabbed: layout === 'tabs' || layout === 'stacked', stacked: layout === 'stacked' }">
+    <div v-if="layout === 'tabs' || layout === 'stacked'" class="parameter-toolbar">
       <slot name="title" />
-      <div class="parameter-tabs" role="group" aria-label="参数类型">
+      <div v-if="layout === 'tabs'" class="parameter-tabs" role="group" aria-label="参数类型">
       <button v-for="g in groups" :key="g.title" type="button"
               :class="{ active: activeGroup === g.title }" :aria-pressed="activeGroup === g.title"
               @click="activeGroup = g.title">
@@ -125,7 +125,7 @@ function onSelect(row: PanelRow, e: Event): void {
     </div>
     <section v-for="g in groups" v-show="layout !== 'tabs' || activeGroup === g.title"
              :key="g.title" class="group" :aria-label="g.title">
-      <h4 v-if="layout !== 'tabs'">{{ g.title }}</h4>
+      <h4 v-if="layout !== 'tabs'">{{ layout === 'stacked' ? (g.title === 'XGBoost' ? '趋势模型 XGBoost' : '空间修正 IDW') : g.title }}</h4>
 
       <div v-for="section in sections(g)" :key="section.title" class="parameter-section">
       <h5 v-if="section.title" class="parameter-section-title">{{ section.title }}</h5>
@@ -135,7 +135,7 @@ function onSelect(row: PanelRow, e: Event): void {
         <label class="name" :for="domId(row)">
           {{ row.label }}<span class="key num">{{ row.key }}</span>
         </label>
-        <output v-if="layout === 'tabs' && !DROPDOWN.has(row.key) && indexOf(row) >= 0" class="current-value num" :for="domId(row)">{{ row.values[indexOf(row)] }}</output>
+        <output v-if="(layout === 'tabs' || layout === 'stacked') && !DROPDOWN.has(row.key) && indexOf(row) >= 0" class="current-value num" :for="domId(row)">{{ row.values[indexOf(row)] }}</output>
 
         <template v-if="DROPDOWN.has(row.key)">
           <select :id="domId(row)" :value="indexOf(row)"
@@ -186,32 +186,36 @@ function onSelect(row: PanelRow, e: Event): void {
       <p v-for="f in g.fixed" :key="f.key" class="note state">
         {{ f.label }}<span class="key num">&nbsp;{{ f.key }}</span>：{{ f.value }}，{{ f.note }}
       </p>
+      <slot v-if="g.title === 'XGBoost'" name="after-trend" />
     </section>
   </div>
 </template>
 
 <style scoped>
-.parameter-section-title { margin: 0 0 5px; padding: 4px 10px; border-left: 3px solid var(--leaf); border-radius: 3px; background: var(--leaf-soft); color: var(--leaf); font-size: 12px; line-height: 1.5; font-weight: var(--w-strong); }
-.tabbed .parameter-section + .parameter-section { margin-top: 8px; }
-.tabbed .parameter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 8px; }
-.tabbed .row { position: relative; min-height: 66px; padding: 6px 9px; border: var(--rule); border-radius: 4px; background: var(--card); }
+.parameter-section-title { margin: 0 0 8px; padding: 7px 12px; border-left: 3px solid var(--leaf); border-radius: 3px; background: var(--leaf-soft); color: var(--leaf); font-size: 14px; line-height: 1.5; font-weight: var(--w-strong); }
+.tabbed .parameter-section + .parameter-section { margin-top: 12px; }
+.tabbed .parameter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.tabbed .row { position: relative; min-height: 84px; padding: 10px 12px; border: var(--rule); border-radius: 4px; background: var(--card); }
 .tabbed .name { padding-right: 58px; }
 .tabbed .row .key { display: none; }
-.current-value { position: absolute; right: 9px; top: 5px; min-width: 40px; padding: 0 5px; border-radius: 3px; text-align: center; color: var(--leaf); background: var(--leaf-soft); font-size: 12px; font-weight: var(--w-strong); }
-.tabbed .ticks { grid-column: 1 / -1; font-size: 10px; }
-.tabbed .name { font-size: 12px; line-height: 1.5; }
-.tabbed select { grid-column: 1 / -1; width: 100%; padding: 3px 6px; border: var(--rule); border-radius: 3px; background: var(--paper); font-size: 11px; }
+.current-value { position: absolute; right: 12px; top: 9px; min-width: 44px; padding: 1px 6px; border-radius: 3px; text-align: center; color: var(--leaf); background: var(--leaf-soft); font-size: 14px; font-weight: var(--w-strong); }
+.tabbed .ticks { grid-column: 1 / -1; font-size: 12px; }
+.tabbed .name { font-size: 14px; line-height: 1.5; }
+.tabbed select { grid-column: 1 / -1; width: 100%; padding: 7px 9px; border: var(--rule); border-radius: 3px; background: var(--paper); font-size: 14px; }
 .parameter-toolbar { display: flex; align-items: center; flex-wrap: wrap; flex: none; gap: 8px 14px; margin-bottom: 10px; }
 .tabbed .parameter-tabs { flex-wrap: nowrap; gap: 3px; margin: 0; }
-.tabbed .parameter-tabs button { padding: 5px 10px; background: var(--card); font-size: 12px; white-space: nowrap; }
+.tabbed .parameter-tabs button { padding: 8px 14px; background: var(--card); font-size: 14px; white-space: nowrap; }
 .tabbed .parameter-tabs button.active { color: var(--on-face); background: var(--leaf); border-color: var(--leaf); }
 /* 两个区块并排，中间一道竖线。**不做卡片**（见脚本里的说明）。 */
 .panel { display: flex; gap: var(--gap-l); }
 .group { flex: 1 1 0; min-width: 0; }
 .group + .group { border-left: var(--rule); padding-left: var(--gap-l); }
-.panel.tabbed { display: flex; flex-direction: column; gap: 0; min-height: 0; }
-.panel.tabbed .group { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.panel.tabbed { display: flex; flex-direction: column; gap: 0; }
+.panel.tabbed .group { flex: 1 1 auto; }
 .panel.tabbed .group + .group { border-left: 0; padding-left: 0; }
+.panel.stacked .group { flex: none; }
+.panel.stacked .group + .group { margin-top: 18px; padding-top: 16px; border-top: var(--rule); }
+.panel.stacked .group > h4 { margin: 0 0 10px; color: var(--ink); font-size: 15px; }
 .parameter-tabs { display: flex; flex-wrap: wrap; gap: var(--gap-s); margin-bottom: var(--gap-m); }
 .parameter-tabs button { font-size: var(--size-label); }
 .parameter-tabs button.active { color: var(--leaf); background: var(--leaf-soft); border-color: var(--leaf); }
@@ -264,12 +268,8 @@ select { font: inherit; color: inherit; }
    scoped 块只打在本组件自己的 `<input>` 上（编译成 `data-v-` 属性选择器），
    别处不受影响。 */
 input[type='range'] { accent-color: var(--leaf); }
-@media (max-height: 800px) {
-  .tabbed .row { min-height: 58px; padding: 4px 8px; }
-  .tabbed .name { font-size: 11px; }
-  .tabbed .ticks { font-size: 9px; }
-  .panel.tabbed input[type='range'] { height: 12px; }
-  .parameter-section-title { padding-top: 3px; padding-bottom: 3px; }
-  .parameter-toolbar { margin-bottom: 7px; }
+@media (max-width: 600px) {
+  .tabbed .parameter-grid { grid-template-columns: minmax(0, 1fr); }
+  .tabbed .parameter-tabs { flex-wrap: wrap; }
 }
 </style>

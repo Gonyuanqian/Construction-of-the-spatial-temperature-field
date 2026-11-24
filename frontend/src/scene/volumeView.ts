@@ -8,6 +8,22 @@
  */
 import type { VolumePayload } from '../api/types'
 
+/** 两条共用分界，按距地高度（米）从低到高排列。 */
+export type TemperatureLayerCuts = readonly [lower: number, upper: number]
+export type TemperatureLayerVisibility = readonly [boolean, boolean, boolean]
+export const ALL_TEMPERATURE_LAYERS: TemperatureLayerVisibility = [true, true, true]
+
+export interface TemperatureLayers {
+  cuts: TemperatureLayerCuts
+  visible: TemperatureLayerVisibility
+}
+
+export function isVisibleTemperatureHeight(height: number, layers?: TemperatureLayers): boolean {
+  if (!layers) return true
+  const [lower, upper] = layers.cuts
+  return layers.visible[height < lower ? 0 : height < upper ? 1 : 2]
+}
+
 /** 拱壳沿 y 的示意长度 / m。数据集没给棚的实际长度，这个数只影响几何。 */
 export const SHELL_LENGTH_DEFAULT = 4.0
 export const SHELL_LENGTH_MIN = 1.0
@@ -45,7 +61,6 @@ function ribsOf(shellYs: number[], shellLength: number): number[] {
   }
   return out
 }
-
 /** 每远离实测断面一米，混合片多透这么多。 */
 const OPACITY_DROP = 0.22
 /**
@@ -95,7 +110,7 @@ export interface VolumeSpec {
 }
 
 export function buildVolumeSpec(payload: VolumePayload, shellLength: number): VolumeSpec {
-  const measuredYs = payload.planes.filter((p) => p.measured).map((p) => p.y)
+  const measuredYs = payload.planes.filter((p) => p.measured || p.virtual_source).map((p) => p.y)
 
   /**
    * 到最近实测片的距离。

@@ -112,7 +112,7 @@ describe('实时那一档的令牌', () => {
     const cls = /:root\.(theme-[a-z-]+)\s*\{/.exec(
       readFileSync(join(SRC, 'design', 'tokens.css'), 'utf8'))?.[1]
     expect(cls, 'tokens.css 里找不到 theme-* 那个类').toBeTruthy()
-    const app = readFileSync(join(SRC, 'App.vue'), 'utf8')
+    const app = readFileSync(join(SRC, 'components', 'AuthenticatedShell.vue'), 'utf8')
     expect(app, `App.vue 没有切 ${cls}`).toContain(`classList.toggle('${cls}'`)
   })
 

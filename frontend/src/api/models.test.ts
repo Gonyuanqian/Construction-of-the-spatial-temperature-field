@@ -4,9 +4,9 @@
  * 页③ 与页⑤ 都要用它，两页各写一遍 `filter(r => r.compatible)` 不会报错，
  * 只会慢慢漂 —— 漂开之后一页画场、另一页说没模型，而两页读的是同一份数据。
  */
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { usableModels } from './models'
+import { deleteModels, renameModel, usableModels } from './models'
 import type { ModelsPayload, ModelRowPayload } from './types'
 
 function row(over: Partial<ModelRowPayload> = {}): ModelRowPayload {
@@ -22,6 +22,18 @@ function row(over: Partial<ModelRowPayload> = {}): ModelRowPayload {
 function payload(rows: ModelRowPayload[]): ModelsPayload {
   return { rows, current_id: 1, dataset_file: 'f.xlsx', dataset_sig: 'a' }
 }
+
+afterEach(() => vi.unstubAllGlobals())
+describe('模型管理请求', () => {
+  it('改名仅提交名称，删除提交明确的模型编号集合', async () => {
+    const fetch = vi.fn(async () => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetch)
+    await renameModel(2, '更新名称')
+    await deleteModels([2, 3])
+    expect(fetch.mock.calls[0]).toEqual(['/api/models/2/rename', expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: '更新名称' }) })])
+    expect(fetch.mock.calls[1]).toEqual(['/api/models/batch-delete', expect.objectContaining({ method: 'POST', body: JSON.stringify({ ids: [2, 3] }) })])
+  })
+})
 
 describe('可用的模型', () => {
   it('只留 compatible 的那些', () => {

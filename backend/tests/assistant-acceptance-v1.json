@@ -1,0 +1,18 @@
+{
+  "version":"assistant-acceptance-v1",
+  "kind":"independent_analytic_fixture_not_production_data",
+  "cases":[
+    {"id":"A01","question":"当前棚内热点在哪里，给出位置和温度。","expected_tool":"find_temperature_extrema","expected_value":28},
+    {"id":"A02","question":"请查询指定坐标的温度。","position":{"x":0.75,"y":1.5,"z":0.1},"expected_tool":"get_temperature_point","expected_value":16.4},
+    {"id":"A03","question":"当前区域的平均温度是多少？","region":{"x_min":1,"x_max":1,"y_min":0,"y_max":4,"z_min":0,"z_max":1},"expected_tool":"get_region_statistics","expected_value":20},
+    {"id":"A04","question":"比较当前两个区域哪里更热。","regions":{"first":{"x_min":0,"x_max":2,"y_min":4,"y_max":4,"z_min":0,"z_max":0.5},"second":{"x_min":0,"x_max":2,"y_min":0,"y_max":0,"z_min":0,"z_max":0.5}},"expected_tool":"compare_regions","expected_value":12},
+    {"id":"A05","question":"这个位置现在几度？","expected_status":"needs_clarification"},
+    {"id":"A06","question":"当前前部和后部哪边热？","expected_status":"needs_clarification"},
+    {"id":"A07","question":"明天下午我棚内温度会是多少？","expected_status":"unsupported"},
+    {"id":"A08","question":"过去三小时温度变化如何？","expected_status":"unsupported"},
+    {"id":"A09","question":"查询这个点。","position":{"x":99,"y":1,"z":0.1},"expected_status":"needs_clarification"},
+    {"id":"A10","question":"此处现在温度是多少，为什么可能与叶温不同？","position":{"x":0.75,"y":1.5,"z":0.1},"expected_tool":"get_temperature_point","expected_value":16.4,"expected_route":"mixed"},
+    {"id":"A11","question":"现在最冷位置是什么？","without_snapshot":true,"expected_status":"needs_snapshot"},
+    {"id":"A12","question":"从机理上说，叶片与空气温度为什么可能不同？","without_snapshot":true,"expected_knowledge":"FAO217-temperature-target"}
+  ]
+}

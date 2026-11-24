@@ -24,9 +24,12 @@ import { useRoute } from 'vue-router'
 
 import { getJson } from '../api/client'
 import { useAsync } from '../composables/useAsync'
-import { MODELS, SYSTEM_TITLE } from '../design/copy'
+import { SYSTEM_TITLE } from '../design/copy'
 import { fmtClock } from '../design/format'
 import Icon from './Icon.vue'
+import AccountMenu from './AccountMenu.vue'
+import { useAuth } from '../composables/useAuth'
+const auth = useAuth()
 
 const health = useAsync(() => getJson<{ status: string; version: string }>('/api/health'))
 
@@ -39,7 +42,9 @@ const health = useAsync(() => getJson<{ status: string; version: string }>('/api
 onMounted(() => void health.run())
 
 const route = useRoute()
-const isLive = computed(() => route.path.startsWith('/live'))
+// 实时监测与 AgriSeek（含固定快照视图）共用同一套实时标题框。
+const isLive = computed(() => route.meta.theme === 'live')
+const isDeveloperWorkspace = computed(() => route.meta.workspace === 'developer')
 
 /**
  * 前后端连上没有 —— 这一条状态线要说的事（2026-10-16 用户裁定：
@@ -98,7 +103,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
                 vector-effect="non-scaling-stroke" />
       <polyline class="deco-secondary" points="575,0 604,29 628,29 637,36 945,36 976,6 1014,6"
                 fill="none" stroke="currentColor" stroke-width="1" vector-effect="non-scaling-stroke" />
-      <polyline class="deco-secondary" points="600,0 623,22 938,22 960,0 M1050,38 1100,38 1113,49 1140,49"
+      <path class="deco-secondary" d="M600,0 L623,22 L938,22 L960,0 M1050,38 L1100,38 L1113,49 L1140,49"
                 fill="none" stroke="currentColor" stroke-width="1" vector-effect="non-scaling-stroke" />
     </svg>
     <span v-if="isLive" class="header-energy" aria-hidden="true" />
@@ -113,25 +118,11 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       <slot v-if="!isLive" name="mode" />
     </div>
     <div class="right">
-      <!-- 训练模式的模型库入口位于左侧导航；实时模式保留顶栏快捷入口。 -->
-      <RouterLink v-if="isLive" class="to-models" to="/models"
-                  :title="MODELS.entry" :aria-label="MODELS.entry">
-        <!-- 档案盒。内联 SVG 而不是图标字体 / 图片：它要跟着 `.backend`
-             那行字一起对齐，而且 **`currentColor` 上色** —— 十六进制色
-             在这个仓里只许出现在 tokens.css 与 charts/scale.ts。 -->
-        <svg viewBox="0 0 16 16" width="16" height="16"
-             aria-hidden="true" focusable="false" fill="none"
-             stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
-          <path d="M2 3.5h12v2.5H2z" />
-          <path d="M3 6.5h10v7H3z" />
-          <path d="M6.5 9.2h3" />
-        </svg>
-      </RouterLink>
       <!-- 本机挂钟（2026-10-12）。⚠️ **与概览三格里的「本帧时刻」是两件事**：
            这一枚是「现在几点」、不会倒退；那一枚是「手上这一帧的数据时刻」、
            重启就回到第 0 帧。各自带标签，不合并。 -->
       <p v-if="isLive" class="clock">
-        <span class="clock-label">本机时间</span>
+        <span class="clock-label">系统时间</span>
         <span class="num">{{ fmtClock(now) }}</span>
       </p>
       <!-- 状态：**一枚点 + 一句话**，一块而不是两块（裁定 R2）。参考图右上角
@@ -150,6 +141,10 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         </template>
         <template v-else>后端：检查中</template>
       </p>
+      <RouterLink v-if="auth.isAdmin.value" class="workspace-entry" :to="isDeveloperWorkspace ? '/live' : '/data'">
+        <Icon :name="isDeveloperWorkspace ? 'cube' : 'gear'" />{{ isDeveloperWorkspace ? '返回用户视图' : '开发者后台' }}
+      </RouterLink>
+      <AccountMenu />
     </div>
   </header>
 </template>
@@ -166,10 +161,13 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 @media (max-width: 700px) {
   .titlebar:not(.live) { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 12px 16px; }
   .titlebar:not(.live) h1 { font-size: 18px; }
-  .titlebar:not(.live) .right { grid-column: 1; justify-self: start; }
+  .titlebar:not(.live) .right { grid-column: 1; justify-self: stretch; flex-wrap:wrap; }
   .titlebar:not(.live) .backend { border-left: 0; padding-left: 50px; }
 }
 .titlebar {
+  /* 账号下拉菜单需覆盖画布与助手页面的定位容器。 */
+  position: relative;
+  z-index: 20;
   /* 面走 `--header`，不走 `--leaf`（2026-10-12）：实时那一档的面是深蓝、
      强调色是青，两者在这一轮之前是同一个令牌。浅色档 `--header` 取 `var(--leaf)`，
      页①②③④ 像素不变。 */
@@ -212,15 +210,20 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
   color: var(--face-dim);
   font-size: var(--size-label);
 }
-.to-models {
-  color: var(--on-face);
+.workspace-entry {
+  color: var(--leaf);
   display: inline-flex;
   align-items: center;
-  /* 触摸目标：图标只有 16px，四周补出可点区域 */
-  padding: 2px;
-  border-radius: var(--radius);
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--steel);
+  border-radius: 4px;
+  font-size: 14px;
+  white-space: nowrap;
+  text-decoration: none;
 }
-.to-models:hover { color: var(--face-dim); }
+.workspace-entry:hover { border-color: var(--interact); }
+.titlebar.live .workspace-entry { color: var(--edge); border-color: var(--interact); background: var(--card); }
 
 /* 本机挂钟。次要文字那一档 —— 它是给「现在」对表用的，不是数据。 */
 .clock {

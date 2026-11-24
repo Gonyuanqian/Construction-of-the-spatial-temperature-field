@@ -64,7 +64,7 @@ function rule(src: string, selector: string): string {
 }
 
 const base = read('./base.css')
-const app = styleBlock(read('../App.vue'))
+const app = styleBlock(read('../components/AuthenticatedShell.vue'))
 const rail = styleBlock(read('../components/NavRail.vue'))
 
 describe('外壳：一张闭合的框', () => {

@@ -1,6 +1,8 @@
 # Java 业务服务
 
-当前迁移阶段：**统一部署与核心流程联调**，业务服务版本 0.5.0。Java 统一提供前端页面及业务接口，Python 执行训练与计算。已在独立库完成真实训练、保存、取消、实时恢复、自动播放、回退和浏览器联调；服务器运维及压力验收仍需结合环境安排。
+2026-11-22：新增 `/api/user/greenhouse-designs/{id}/control`，支持本人温室模拟设备、后台定时任务、运行时长和操作记录，以及持久化 AgriSeek 控制计划；确认后才创建任务。新增 Flyway V11，与 Python 的 `control_plan_version=1` 同步发布。当前没有真实硬件连接。完整接口、请求示例、调度和前端对接见[温室控制后端](../docs/development/47-greenhouse-control-backend.md)。
+
+当前业务服务版本 **0.6.0**，新增 Spring Security 账号权限、用户管理、地区棚体档案与自动匹配、气象模型发布与外部气象构场接口。Java 统一提供前端页面及业务接口，Python 执行训练与计算。前端登录和管理界面已接入，本机正式演示已完成备份和切换；详见 [切换记录](../docs/reports/auth-rollout-20261104.md)、[前端接入](../docs/development/23-login-role-navigation-and-users.md)和 [后端交接](../docs/development/22-users-and-weather-backend.md)。
 
 推荐从仓库根目录使用 `scripts/system.ps1 Build / Start / Stop / Restart / Status`。部署模式访问 8080，开发模式使用 `Start -Mode Dev` 访问 5173。发布包、配置、日志与回退见 [统一部署交接](../docs/development/05-deployment-and-acceptance.md)，实际范围见 [联调记录](../docs/development/06-migration-acceptance-20261019.md)。下文保留手动开发方式。
 
@@ -28,7 +30,10 @@ python -m uvicorn api.main:app --host 127.0.0.1 --port 8503
 ```powershell
 cd backend-java
 .\mvnw.cmd '-Dmaven.test.skip=true' package
-java -Dfile.encoding=UTF-8 -jar target/tfield-business-0.5.0.jar
+# 首次启动空账号库前，在当前终端设置实际管理员账号与安全密码：
+# $env:TFIELD_BOOTSTRAP_ADMIN_USERNAME='your_admin'
+# $env:TFIELD_BOOTSTRAP_ADMIN_PASSWORD='<实际密码，不要提交 Git>'
+java -Dfile.encoding=UTF-8 -jar target/tfield-business-0.6.0.jar
 ```
 
 前端在第三个终端运行：
@@ -52,10 +57,11 @@ npm run dev -- --host 127.0.0.1
 | `TFIELD_PYTHON_COMPUTE_TIMEOUT` | `600s` | 构场、诊断、准备管线等调用的超时 |
 | `TFIELD_MAX_REQUEST_BYTES` | `33554432` | 请求体大小上限，默认 32 MiB |
 | `TFIELD_API_TARGET` | `http://127.0.0.1:8080` | 前端开发代理目标，在前端终端或 `.env.local` 设置 |
+| `TFIELD_FRONTEND_ORIGINS` | `http://127.0.0.1:5173,http://localhost:5173` | Java 接受的明确前端来源，使用逗号分隔；独立端口预览需单独配置 |
 
 Java 启动环境设置 `TFIELD_MYSQL_HOST`、`TFIELD_MYSQL_PORT`、`TFIELD_MYSQL_DB`、`TFIELD_MYSQL_USER`、`TFIELD_MYSQL_PASSWORD`。默认主机为 `127.0.0.1:3306`，数据库为 `tfield_models`；仓库保留原有本机演示连接默认值。Java 也支持通过 `TFIELD_JDBC_URL` 指定完整 JDBC URL。Python 默认经 Java 读取模型，不直接写数据库。
 
-Flyway V1 创建数据集与工作区表；V2 创建训练任务表、扩展模型和结果引用；V3 明确幂等键区分大小写；V4 创建实时会话与操作表、工作区会话引用。模型 ID、JSON 与成品原样保留，缺少 artifact 列的老表会补列。`model` 与新增业务表现在仅由 Java 写入。
+Flyway V1 创建数据集与工作区表；V2 创建训练任务表、扩展模型和结果引用；V3 明确幂等键区分大小写；V4 创建实时会话与操作表；V5 新增账号、会话、气象部署和气象帧记录；V6 新增地区/尺寸、自动匹配唯一约束及历史快照，旧成员授权不再参与业务。详见 [地区档案契约](../docs/development/24-greenhouse-archive-matching.md)。原模型 ID、JSON 与成品保留。`model` 与新增业务表仅由 Java 写入。
 
 | 双方共用的配置 | 默认行为 |
 | --- | --- |
@@ -80,7 +86,7 @@ Flyway V1 创建数据集与工作区表；V2 创建训练任务表、扩展模�
 - 首次启动且工作区为空时，尝试接管 Python 当前选择：复制文件，并保留原签名以兼容旧模型。如果 Python 没有当前选择或不可用，工作区保持空态，可从原上传页面导入。
 - Python 计算请求绑定独立上下文；后台训练继承提交时的引用。训练进行中不允许经 Java 切换数据集，普通查询保留各自请求开始时的版本。
 - Java 或 Python 重启后，工作区选择可恢复；训练任务与已完成结果、实时会话的恢复见后文。计算管线对象仍在内存中。
-- 当前实现限一个 Java 实例、一个 Python 实例、一个默认工作区。数据和模型按请求绑定，多用户与多实例调度留待后续。
+- 原管理员训练和文件回放共用一个默认工作区。普通用户共享地区档案，气象帧和历史按账号/地区隔离；多管理员独立训练空间与多实例任务调度留待后续。旧 `/api/**` 训练/模型业务要求管理员 Bearer 令牌。
 
 完整协议及错误含义见 [数据集与工作区协议](../docs/development/contracts/dataset-workspace-v1.md)。
 
